@@ -1,5 +1,7 @@
 import { useState, useEffect } from 'react'
 import axios from 'axios'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 
 const AGENT_TYPES = [
   { value: 'research', label: 'Research (Gemini 2.5 Flash / Groq Llama 3.3)' },
@@ -199,7 +201,7 @@ function App() {
 
               {testResult && (
                 <div className="p-4 bg-[#1f2028] border border-white/5 text-gray-200 rounded-xl text-sm font-mono whitespace-pre-wrap leading-relaxed shadow-inner">
-                  {testResult}
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{testResult}</ReactMarkdown>
                 </div>
               )}
             </div>
