@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from app.routers.llm import router as llm_router
 
 app = FastAPI(title="Multi-Agent AI Product Builder API", version="0.1")
 
@@ -19,6 +20,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(llm_router)
+
 @app.get("/health")
 def health_check():
     return {"status": "ok", "version": "0.1"}
+
