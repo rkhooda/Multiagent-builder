@@ -38,10 +38,11 @@ def call_llm(messages: list, agent_type: str, max_tokens=4000) -> str:
             
             return resp.choices[0].message.content
         except Exception as e:
-            print(f"[LLM ERROR] Model {model} failed for agent={agent_type}: {str(e)}", flush=True)
-            # Fallback specifically on rate limits
-            if "429" in str(e) or "rate" in str(e).lower():
-                print(f"[LLM FALLBACK] Rate limited. Sleeping 2 seconds before retry...", flush=True)
+            err_msg = str(e).lower()
+            print(f"[LLM ERROR] Model {model} failed for agent={agent_type}: {err_msg}", flush=True)
+            # Fallback on rate limits (429) or service unavailable (503/UNAVAILABLE)
+            if "429" in err_msg or "rate" in err_msg or "503" in err_msg or "unavailable" in err_msg:
+                print("[LLM FALLBACK] Detected rate limit or service unavailable. Sleeping 2 seconds before retry…", flush=True)
                 time.sleep(2)
                 continue
             raise
