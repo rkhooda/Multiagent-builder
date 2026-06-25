@@ -7,6 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 from app.graph.pipeline import graph
 from app.graph.state import ProjectState
 from app.core.connection_manager import manager
+from app.core.database import insert_project, update_project_status, get_all_projects
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
 
@@ -72,15 +73,22 @@ async def run_graph_background(project_id: str, config: dict, initial_state=None
                     "preview": preview
                 })
                 
+                # Update SQLite database project status and current stage
+                update_project_status(project_id, "running", stage)
+                
         state_snapshot = graph.get_state(config)
         if state_snapshot.next:
             gate_name = state_snapshot.next[0]
+            # Update SQLite database project status
+            update_project_status(project_id, "awaiting_approval", gate_name)
             await manager.broadcast(project_id, {
                 "type": "gate_reached",
                 "gate": gate_name,
                 "status": "awaiting_approval"
             })
         else:
+            # Update SQLite database project status to completed
+            update_project_status(project_id, "completed", "completed")
             await manager.broadcast(project_id, {
                 "type": "pipeline_complete",
                 "project_id": project_id
@@ -89,6 +97,7 @@ async def run_graph_background(project_id: str, config: dict, initial_state=None
     except Exception as e:
         error_message = str(e)
         save_error_to_state(config, error_message)
+        update_project_status(project_id, "error", current_agent)
         await manager.broadcast(project_id, {
             "type": "error",
             "agent": current_agent,
@@ -133,6 +142,11 @@ def save_error_to_state(config, error_message: str):
     except Exception as db_err:
         print(f"[DB ERROR] Failed to save execution error to state: {db_err}", flush=True)
 
+@router.get("")
+def list_projects():
+    """Retrieve all projects from the SQLite database."""
+    return get_all_projects()
+
 @router.post("")
 async def create_project(request: ProjectCreateRequest):
     project_id = str(uuid.uuid4())
@@ -158,6 +172,9 @@ async def create_project(request: ProjectCreateRequest):
         log=[],
         errors=[]
     )
+    
+    # Insert initial project record into SQLite
+    insert_project(project_id, request.project_name, request.brief, "running", "research")
     
     # Run graph in background
     asyncio.create_task(run_graph_background(project_id, config, initial_state))
@@ -191,6 +208,10 @@ async def resume_project(project_id: str, request: ProjectResumeRequest):
         raise HTTPException(status_code=400, detail="Project is already completed and cannot be resumed")
         
     try:
+        # Update SQLite database project status to running
+        current_stage = state_snapshot.values.get("current_stage", "resume")
+        update_project_status(project_id, "running", current_stage)
+        
         # Update state with human decision and feedback
         graph.update_state(
             config,
