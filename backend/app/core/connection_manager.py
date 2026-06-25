@@ -17,11 +17,12 @@ class ConnectionManager:
         self.active.pop(project_id, None)
 
     async def broadcast(self, project_id: str, event: dict):
-        # Buffer the event
-        if project_id not in self.buffer:
-            self.buffer[project_id] = []
-        self.buffer[project_id].append(event)
-        self.buffer[project_id] = self.buffer[project_id][-10:]  # keep last 10
+        # Buffer the event if it is not a heartbeat
+        if event.get("type") != "heartbeat":
+            if project_id not in self.buffer:
+                self.buffer[project_id] = []
+            self.buffer[project_id].append(event)
+            self.buffer[project_id] = self.buffer[project_id][-10:]  # keep last 10
         # Send if client is connected
         ws = self.active.get(project_id)
         if ws:
