@@ -1,9 +1,12 @@
 import uuid
+import asyncio
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 from typing import List, Dict, Optional
+from concurrent.futures import ThreadPoolExecutor
 from app.graph.pipeline import graph
 from app.graph.state import ProjectState
+from app.core.connection_manager import manager
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
 
@@ -14,6 +17,83 @@ class ProjectCreateRequest(BaseModel):
 class ProjectResumeRequest(BaseModel):
     decision: str = Field(..., description="Decision: approve, edit, or reject")
     feedback: str = Field("", description="Optional human feedback")
+
+executor = ThreadPoolExecutor(max_workers=10)
+
+def get_next_event(iterator):
+    try:
+        return next(iterator)
+    except StopIteration:
+        return None
+
+async def run_graph_background(project_id: str, config: dict, initial_state=None):
+    loop = asyncio.get_running_loop()
+    current_agent = "unknown"
+    try:
+        stream_iterator = await loop.run_in_executor(
+            executor, 
+            lambda: graph.stream(initial_state, config)
+        )
+        
+        while True:
+            event = await loop.run_in_executor(executor, get_next_event, stream_iterator)
+            if event is None:
+                break
+                
+            for node_name, node_output in event.items():
+                if node_name == '__interrupt__':
+                    continue
+                
+                current_agent = node_name
+                if "gate" in node_name:
+                    continue
+                
+                stage = node_output.get("current_stage", node_name)
+                preview = ""
+                preview_fields = [
+                    "research_report", "requirements_doc", "tech_stack",
+                    "architecture_doc", "implementation_plan", "qa_report"
+                ]
+                for field in preview_fields:
+                    if field in node_output and node_output[field]:
+                        preview = str(node_output[field])[:200]
+                        break
+                
+                if not preview and "log" in node_output and node_output["log"]:
+                    preview = str(node_output["log"][-1])[:200]
+                
+                if not preview:
+                    preview = f"Completed agent node {node_name}"
+                
+                await manager.broadcast(project_id, {
+                    "type": "agent_complete",
+                    "agent": node_name,
+                    "stage": stage,
+                    "preview": preview
+                })
+                
+        state_snapshot = graph.get_state(config)
+        if state_snapshot.next:
+            gate_name = state_snapshot.next[0]
+            await manager.broadcast(project_id, {
+                "type": "gate_reached",
+                "gate": gate_name,
+                "status": "awaiting_approval"
+            })
+        else:
+            await manager.broadcast(project_id, {
+                "type": "pipeline_complete",
+                "project_id": project_id
+            })
+            
+    except Exception as e:
+        error_message = str(e)
+        save_error_to_state(config, error_message)
+        await manager.broadcast(project_id, {
+            "type": "error",
+            "agent": current_agent,
+            "message": error_message
+        })
 
 def serialize_project_state(state_snapshot, project_id: str) -> dict:
     """Centralized serialization of LangGraph state snapshot to API response."""
@@ -54,7 +134,7 @@ def save_error_to_state(config, error_message: str):
         print(f"[DB ERROR] Failed to save execution error to state: {db_err}", flush=True)
 
 @router.post("")
-def create_project(request: ProjectCreateRequest):
+async def create_project(request: ProjectCreateRequest):
     project_id = str(uuid.uuid4())
     config = {"configurable": {"thread_id": project_id}}
     
@@ -79,28 +159,15 @@ def create_project(request: ProjectCreateRequest):
         errors=[]
     )
     
-    try:
-        # Run the graph using graph.stream() until the first interrupt
-        for event in graph.stream(initial_state, config):
-            pass
-            
-        # Get the updated state from checkpointer
-        state_snapshot = graph.get_state(config)
-        if not state_snapshot.values:
-            raise HTTPException(status_code=500, detail="Failed to initialize project state")
-            
-        values = state_snapshot.values
-        status = "awaiting_approval" if state_snapshot.next else "completed"
-        
-        return {
-            "project_id": project_id,
-            "status": status,
-            "current_stage": values.get("current_stage", ""),
-            "log": values.get("log", [])
-        }
-    except Exception as e:
-        save_error_to_state(config, str(e))
-        raise HTTPException(status_code=500, detail=str(e))
+    # Run graph in background
+    asyncio.create_task(run_graph_background(project_id, config, initial_state))
+    
+    return {
+        "project_id": project_id,
+        "status": "running",
+        "current_stage": "research",
+        "log": []
+    }
 
 @router.get("/{project_id}")
 def get_project(project_id: str):
@@ -113,7 +180,7 @@ def get_project(project_id: str):
     return serialize_project_state(state_snapshot, project_id)
 
 @router.post("/{project_id}/resume")
-def resume_project(project_id: str, request: ProjectResumeRequest):
+async def resume_project(project_id: str, request: ProjectResumeRequest):
     config = {"configurable": {"thread_id": project_id}}
     state_snapshot = graph.get_state(config)
     
@@ -133,23 +200,10 @@ def resume_project(project_id: str, request: ProjectResumeRequest):
             }
         )
         
-        # Resume the graph using graph.stream()
-        for event in graph.stream(None, config):
-            pass
-            
-        # Fetch the updated state
-        updated_snapshot = graph.get_state(config)
-        values = updated_snapshot.values
-        status = "awaiting_approval" if updated_snapshot.next else "completed"
-        next_gate = updated_snapshot.next[0] if updated_snapshot.next else None
+        # Resume the graph in a background task
+        asyncio.create_task(run_graph_background(project_id, config))
         
-        return {
-            "project_id": project_id,
-            "status": status,
-            "current_stage": values.get("current_stage", ""),
-            "log": values.get("log", []),
-            "next_gate": next_gate
-        }
+        return {"status": "resumed"}
     except Exception as e:
         save_error_to_state(config, str(e))
         raise HTTPException(status_code=500, detail=str(e))
