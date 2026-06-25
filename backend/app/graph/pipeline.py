@@ -125,6 +125,9 @@ backend_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__
 db_path = os.path.join(backend_dir, "projects.db")
 
 conn = sqlite3.connect(db_path, check_same_thread=False)
+# Enable WAL (Write-Ahead Logging) mode and optimize concurrency pragmas
+conn.execute("PRAGMA journal_mode=WAL;")
+conn.execute("PRAGMA busy_timeout=5000;")
 memory = SqliteSaver(conn)
 
 # Compile the graph with interrupt_before gates

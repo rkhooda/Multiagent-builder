@@ -20,7 +20,8 @@ MODELS = {
 
 def call_llm(messages: list, agent_type: str, max_tokens=4000) -> str:
     primary, fallback = MODELS.get(agent_type, MODELS["research"])
-    for model in [primary, fallback]:
+    
+    for i, model in enumerate([primary, fallback]):
         try:
             resp = completion(
                 model=model,
@@ -39,11 +40,16 @@ def call_llm(messages: list, agent_type: str, max_tokens=4000) -> str:
             return resp.choices[0].message.content
         except Exception as e:
             err_msg = str(e).lower()
-            print(f"[LLM ERROR] Model {model} failed for agent={agent_type}: {err_msg}", flush=True)
-            # Fallback on rate limits (429) or service unavailable (503/UNAVAILABLE)
-            if "429" in err_msg or "rate" in err_msg or "503" in err_msg or "unavailable" in err_msg:
-                print("[LLM FALLBACK] Detected rate limit or service unavailable. Sleeping 2 seconds before retry…", flush=True)
-                time.sleep(2)
+            print(f"[LLM ERROR] Model {model} failed for agent={agent_type}: {e}", flush=True)
+            
+            # If we have an alternative fallback model remaining, proceed to it
+            if i == 0:
+                # If rate-limited or service-unavailable, sleep to let the provider cool down
+                if any(k in err_msg for k in ["429", "rate", "503", "unavailable", "limit"]):
+                    print("[LLM FALLBACK] Detected rate limit or service interruption. Sleeping 2s...", flush=True)
+                    time.sleep(2)
+                print(f"[LLM FALLBACK] Falling back to alternative model: {fallback}", flush=True)
                 continue
-            raise
+            raise RuntimeError(f"All models failed for agent_type={agent_type}. Last error: {e}")
+            
     raise RuntimeError(f"All models failed for agent_type={agent_type}")
