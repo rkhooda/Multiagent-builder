@@ -5,15 +5,17 @@ import sys
 backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(backend_dir)
 
-# Clean up old projects.db first so we test fresh creation
+# Clean up old projects.db first so we test fresh creation - commented out to avoid I/O conflict with running uvicorn
 backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 db_path = os.path.join(backend_dir, "projects.db")
-if os.path.exists(db_path):
-    print(f"Removing existing {db_path} for a clean test run...")
-    try:
-        os.remove(db_path)
-    except Exception as e:
-        print("Could not delete projects.db, skipping removal:", e)
+# if os.path.exists(db_path):
+#     print(f"Removing existing {db_path} for a clean test run...")
+#     try:
+#         os.remove(db_path)
+#     except Exception as e:
+#         print("Could not delete projects.db, skipping removal:", e)
+
+
 
 # Import graph AFTER database is cleaned up so we don't hold a handle to a deleted file
 from app.graph.pipeline import graph

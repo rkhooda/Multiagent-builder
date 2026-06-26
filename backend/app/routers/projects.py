@@ -107,8 +107,23 @@ async def run_graph_background(project_id: str, config: dict, initial_state=None
 def serialize_project_state(state_snapshot, project_id: str) -> dict:
     """Centralized serialization of LangGraph state snapshot to API response."""
     values = state_snapshot.values
-    status = "awaiting_approval" if state_snapshot.next else "completed"
-    next_gate = state_snapshot.next[0] if state_snapshot.next else None
+    
+    # Query database for the real status and stage
+    from app.core.database import get_db_connection
+    status = "running"
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT status FROM projects WHERE id = ?", (project_id,))
+        row = cursor.fetchone()
+        conn.close()
+        if row:
+            status = row["status"]
+    except Exception as db_err:
+        print(f"[DB ERROR] Failed to fetch project status: {db_err}")
+
+    next_gate = state_snapshot.next[0] if (state_snapshot.next and state_snapshot.next[0].startswith("human_gate_")) else None
+
     
     return {
         "project_id": values.get("project_id", project_id),

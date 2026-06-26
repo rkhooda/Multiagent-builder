@@ -1,26 +1,34 @@
 import os
 import sys
+import time
+import requests
 
-# Add backend directory to sys.path so we can import app and main
-backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.append(backend_dir)
+class LiveClient:
+    def __init__(self, base_url="http://127.0.0.1:8000"):
+        self.base_url = base_url
+    def post(self, path, json=None):
+        return requests.post(f"{self.base_url}{path}", json=json)
+    def get(self, path):
+        return requests.get(f"{self.base_url}{path}")
 
-# Clean up old projects.db for a clean test run
-db_path = os.path.join(backend_dir, "projects.db")
-if os.path.exists(db_path):
-    print(f"Removing existing {db_path} for a clean test run...")
-    try:
-        os.remove(db_path)
-    except Exception as e:
-        print("Could not delete projects.db:", e)
+client = LiveClient()
 
-from fastapi.testclient import TestClient
-from main import app
+def poll_project_until(project_id, target_status, max_wait=5.0):
+    start_time = time.time()
+    while time.time() - start_time < max_wait:
+        res = client.get(f"/api/projects/{project_id}")
+        if res.status_code == 200:
+            data = res.json()
+            if data["status"] == target_status:
+                return data
+        time.sleep(0.1)
+    # Fetch one last time to print actual status on failure
+    res = client.get(f"/api/projects/{project_id}")
+    assert res.status_code == 200, f"Project not found (got {res.status_code}): {res.text}"
+    raise AssertionError(f"Project did not reach {target_status}. Current status is: {res.json()['status']}")
 
-client = TestClient(app)
 
 def test_full_api_flow():
-
     print("\n=== 1. Creating a new project ===")
     create_payload = {
         "brief": "A collaborative whiteboarding application",
@@ -32,7 +40,12 @@ def test_full_api_flow():
     project_id = data["project_id"]
     print("Project Created Successfully!")
     print(f"Project ID: {project_id}")
-    print(f"Status: {data['status']}")
+    print(f"Initial POST response status: {data['status']}")
+    assert data["status"] == "running"
+    
+    # Poll until research agent runs and we pause at human_gate_1
+    data = poll_project_until(project_id, "awaiting_approval")
+    print(f"After research runs - Status: {data['status']}")
     print(f"Current Stage: {data['current_stage']}")
     print(f"Log: {data['log']}")
     
@@ -69,8 +82,12 @@ def test_full_api_flow():
         }
         response = client.post(f"/api/projects/{project_id}/resume", json=resume_payload)
         assert response.status_code == 200, f"Failed to resume project: {response.text}"
-        data = response.json()
-        print(f"Resumed Successfully!")
+        resume_data = response.json()
+        assert resume_data["status"] == "resumed"
+        
+        # Poll until the next gate is reached
+        data = poll_project_until(project_id, "awaiting_approval")
+        print(f"Resumed Successfully and paused!")
         print(f"Status: {data['status']}")
         print(f"Current Stage: {data['current_stage']}")
         print(f"Next Gate: {data['next_gate']}")
@@ -88,7 +105,11 @@ def test_full_api_flow():
     }
     response = client.post(f"/api/projects/{project_id}/resume", json=resume_payload)
     assert response.status_code == 200, f"Failed to resume project: {response.text}"
-    data = response.json()
+    resume_data = response.json()
+    assert resume_data["status"] == "resumed"
+    
+    # Poll until completed
+    data = poll_project_until(project_id, "completed")
     print("Resumed Successfully to Completion!")
     print(f"Status: {data['status']}")
     print(f"Current Stage: {data['current_stage']}")
@@ -106,5 +127,7 @@ def test_full_api_flow():
     assert data["next_gate"] is None
     print("✓ All checks pass! The entire pipeline flow works purely through API calls!")
 
+
 if __name__ == "__main__":
     test_full_api_flow()
+
