@@ -65,7 +65,10 @@ async def run_graph_background(project_id: str, config: dict, initial_state=None
                 
                 if not preview:
                     preview = f"Completed agent node {node_name}"
-                
+
+                if node_output.get("_agent_event"):
+                    continue
+                 
                 await manager.broadcast(project_id, {
                     "type": "agent_complete",
                     "agent": node_name,
