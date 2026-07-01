@@ -1,11 +1,23 @@
-import React, { useState } from 'react'
+import React, { useEffect, useState } from 'react'
 
-export default function ApprovalGate({ status, gateEvent, currentStage, eventsCount, onResume }) {
+export default function ApprovalGate({ status, gateEvent, currentStage, eventsCount, onResume, projectId }) {
   const [feedbackOpen, setFeedbackOpen] = useState(false)
   const [feedbackText, setFeedbackText] = useState('')
   const [submitting, setSubmitting] = useState(null) // 'approve' | 'edit' | null
+  const [projectState, setProjectState] = useState(null)
 
   const gateName = gateEvent?.gate || ''
+
+  useEffect(() => {
+    if (gateEvent && projectId) {
+      fetch(`http://localhost:8000/api/projects/${projectId}`)
+        .then((r) => r.json())
+        .then((state) => {
+          setProjectState(state)
+        })
+        .catch((err) => console.error('Failed to load project state:', err))
+    }
+  }, [gateEvent, projectId])
   
   // Derive gate title and description
   const getGateInfo = (name) => {
@@ -103,6 +115,15 @@ export default function ApprovalGate({ status, gateEvent, currentStage, eventsCo
 
         <h4 className="text-lg font-bold text-gray-800">{title}</h4>
         <p className="text-sm text-gray-600 leading-relaxed">{desc}</p>
+
+        {gateName === 'human_gate_1' && projectState?.research_report && (
+          <div className="mt-4">
+            <h3 className="font-semibold text-gray-700 mb-2">Research Report</h3>
+            <div className="bg-gray-50 rounded p-4 max-h-96 overflow-y-auto text-sm text-gray-600 whitespace-pre-wrap font-mono">
+              {projectState.research_report}
+            </div>
+          </div>
+        )}
 
         {submitting ? (
           <div className="text-sm text-blue-600 font-medium italic animate-pulse">

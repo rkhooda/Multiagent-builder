@@ -277,6 +277,7 @@ export default function ProjectDetailPage() {
             currentStage={currentStage}
             eventsCount={events.length}
             onResume={handleResume}
+            projectId={projectId}
           />
         </div>
       </div>
