@@ -8,3 +8,4 @@ langchain-groq
 langsmith
 pydantic
 langgraph-checkpoint-sqlite
+duckduckgo-search
