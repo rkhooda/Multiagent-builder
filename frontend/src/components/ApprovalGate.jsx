@@ -5,6 +5,7 @@ export default function ApprovalGate({ status, gateEvent, currentStage, eventsCo
   const [feedbackText, setFeedbackText] = useState('')
   const [submitting, setSubmitting] = useState(null) // 'approve' | 'edit' | null
   const [projectState, setProjectState] = useState(null)
+  const [activeTab, setActiveTab] = useState('requirements')
 
   const gateName = gateEvent?.gate || ''
 
@@ -116,12 +117,66 @@ export default function ApprovalGate({ status, gateEvent, currentStage, eventsCo
         <h4 className="text-lg font-bold text-gray-800">{title}</h4>
         <p className="text-sm text-gray-600 leading-relaxed">{desc}</p>
 
-        {gateName === 'human_gate_1' && projectState?.research_report && (
+        {gateName === 'human_gate_1' && (
           <div className="mt-4">
-            <h3 className="font-semibold text-gray-700 mb-2">Research Report</h3>
-            <div className="bg-gray-50 rounded p-4 max-h-96 overflow-y-auto text-sm text-gray-600 whitespace-pre-wrap font-mono">
-              {projectState.research_report}
+            <div className="flex gap-2 mb-3">
+              <button
+                onClick={() => setActiveTab('requirements')}
+                className={`px-3 py-1 text-sm rounded font-medium ${
+                  activeTab === 'requirements'
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                }`}
+              >
+                Requirements Doc
+              </button>
+              <button
+                onClick={() => setActiveTab('research')}
+                className={`px-3 py-1 text-sm rounded font-medium ${
+                  activeTab === 'research'
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                }`}
+              >
+                Research Report
+              </button>
+              <button
+                onClick={() => setActiveTab('techstack')}
+                className={`px-3 py-1 text-sm rounded font-medium ${
+                  activeTab === 'techstack'
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                }`}
+              >
+                Tech Stack
+              </button>
             </div>
+
+            <div className="bg-gray-50 rounded p-4 max-h-96 overflow-y-auto text-sm text-gray-700 whitespace-pre-wrap">
+              {activeTab === 'requirements' && (projectState?.requirements_doc || 'Loading requirements...')}
+              {activeTab === 'research' && (projectState?.research_report || 'Loading research...')}
+              {activeTab === 'techstack' && projectState?.tech_stack && (
+                <pre className="text-xs font-mono">
+                  {JSON.stringify(JSON.parse(projectState.tech_stack), null, 2)}
+                </pre>
+              )}
+              {activeTab === 'techstack' && !projectState?.tech_stack && 'Loading tech stack...'}
+            </div>
+
+            {activeTab === 'techstack' && projectState?.tech_stack && (() => {
+              try {
+                const stack = JSON.parse(projectState.tech_stack)
+                return (
+                  <div className="flex flex-wrap gap-2 mt-3">
+                    {[stack.frontend, stack.backend, stack.database, stack.auth].map((item, i) => (
+                      <span key={i} className="bg-blue-100 text-blue-700 px-2 py-1 rounded text-xs font-medium">
+                        {item}
+                      </span>
+                    ))}
+                  </div>
+                )
+              } catch { return null }
+            })()}
           </div>
         )}
 
