@@ -91,10 +91,11 @@ workflow.add_node("devops", devops)
 workflow.add_node("human_gate_4", human_gate_4)
 
 # Wire all edges
+# research → requirements run autonomously, then Gate 1 pauses for human review of both
 workflow.add_edge(START, "research")
-workflow.add_edge("research", "human_gate_1")
-workflow.add_edge("human_gate_1", "requirements")
-workflow.add_edge("requirements", "human_gate_2")
+workflow.add_edge("research", "requirements")
+workflow.add_edge("requirements", "human_gate_1")
+workflow.add_edge("human_gate_1", "human_gate_2")
 workflow.add_edge("human_gate_2", "architecture")
 workflow.add_edge("architecture", "planning")
 workflow.add_edge("planning", "human_gate_3")
