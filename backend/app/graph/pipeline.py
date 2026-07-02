@@ -5,17 +5,11 @@ from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.sqlite import SqliteSaver
 from app.graph.state import ProjectState
 from app.agents.research_agent import research_agent
+from app.agents.requirements_agent import requirements_agent
 
 def human_gate_1(state: ProjectState) -> Dict:
     # Empty pass-through function. LangGraph pauses before this node.
     return {}
-
-def requirements(state: ProjectState) -> Dict:
-    current_log = state.get("log") or []
-    return {
-        "log": current_log + ["requirements ran"],
-        "current_stage": "requirements"
-    }
 
 def human_gate_2(state: ProjectState) -> Dict:
     # Empty pass-through function. LangGraph pauses before this node.
@@ -84,7 +78,7 @@ workflow = StateGraph(ProjectState)
 # Add all nodes
 workflow.add_node("research", research_agent)
 workflow.add_node("human_gate_1", human_gate_1)
-workflow.add_node("requirements", requirements)
+workflow.add_node("requirements", requirements_agent)
 workflow.add_node("human_gate_2", human_gate_2)
 workflow.add_node("architecture", architecture)
 workflow.add_node("planning", planning)
