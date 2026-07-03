@@ -70,11 +70,13 @@ export default function ProjectDetailPage() {
     }
   }, [events])
 
-  // Derive the active gate_reached event
-  const activeGateEvent = events
-    .slice()
-    .reverse()
-    .find(e => e.type === 'gate_reached')
+  // Derive the active gate from persisted state first, then fall back to stream events
+  const activeGateEvent = projectMetadata?.next_gate
+    ? { type: 'gate_reached', gate: projectMetadata.next_gate }
+    : events
+      .slice()
+      .reverse()
+      .find(e => e.type === 'gate_reached')
 
   // Derive current stage from the latest agent_complete event
   const latestCompleteEvent = events
@@ -278,6 +280,7 @@ export default function ProjectDetailPage() {
             eventsCount={events.length}
             onResume={handleResume}
             projectId={projectId}
+            initialProjectState={projectMetadata}
           />
         </div>
       </div>

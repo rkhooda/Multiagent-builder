@@ -1,16 +1,24 @@
 import React, { useEffect, useState } from 'react'
+import MermaidDiagram from './MermaidDiagram'
 
-export default function ApprovalGate({ status, gateEvent, currentStage, eventsCount, onResume, projectId }) {
+export default function ApprovalGate({ status, gateEvent, currentStage, eventsCount, onResume, projectId, initialProjectState }) {
   const [feedbackOpen, setFeedbackOpen] = useState(false)
   const [feedbackText, setFeedbackText] = useState('')
   const [submitting, setSubmitting] = useState(null) // 'approve' | 'edit' | null
   const [projectState, setProjectState] = useState(null)
   const [activeTab, setActiveTab] = useState('requirements')
+  const [selectedFile, setSelectedFile] = useState('')
 
-  const gateName = gateEvent?.gate || ''
+  const gateName = projectState?.next_gate || gateEvent?.gate || ''
 
   useEffect(() => {
-    if (gateEvent && projectId) {
+    if (initialProjectState) {
+      setProjectState(initialProjectState)
+    }
+  }, [initialProjectState])
+
+  useEffect(() => {
+    if (projectId) {
       fetch(`http://localhost:8000/api/projects/${projectId}`)
         .then((r) => r.json())
         .then((state) => {
@@ -18,7 +26,114 @@ export default function ApprovalGate({ status, gateEvent, currentStage, eventsCo
         })
         .catch((err) => console.error('Failed to load project state:', err))
     }
-  }, [gateEvent, projectId])
+  }, [gateEvent, projectId, status, currentStage])
+
+  useEffect(() => {
+    if (gateName === 'human_gate_1') {
+      setActiveTab('requirements')
+    } else if (gateName === 'human_gate_2') {
+      setActiveTab('architecture')
+    }
+  }, [gateName])
+
+  const architectureDoc = projectState?.architecture_doc || ''
+  const generatedFiles = projectState?.generated_files || {}
+  const generatedFileEntries = Object.entries(generatedFiles)
+  const plannedFileEntries = (projectState?.file_list || []).map((file) => [file, ''])
+  const fileEntries = generatedFileEntries.length > 0 ? generatedFileEntries : plannedFileEntries
+  const activeFile = selectedFile && fileEntries.some(([file]) => file === selectedFile)
+    ? selectedFile
+    : fileEntries[0]?.[0] || ''
+  const activeFileContent = fileEntries.find(([file]) => file === activeFile)?.[1] || ''
+  const hasGeneratedFiles = generatedFileEntries.length > 0
+  const mermaidBlocks = []
+  const mermaidRegex = /```mermaid\s*([\s\S]*?)```/gi
+  let mermaidMatch
+  while ((mermaidMatch = mermaidRegex.exec(architectureDoc)) !== null) {
+    mermaidBlocks.push(mermaidMatch[1].trim())
+  }
+
+  const apiEndpointCount = (() => {
+    const apiSectionMatch = architectureDoc.match(/##\s*API Endpoints([\s\S]*?)(?:\n##\s|$)/i)
+    if (!apiSectionMatch) return 0
+    const rows = apiSectionMatch[1]
+      .split('\n')
+      .filter((line) => /^\|/.test(line.trim()))
+      .filter((line) => !line.includes(':---'))
+    return rows.length > 0 ? Math.max(rows.length - 1, 0) : 0
+  })()
+
+  useEffect(() => {
+    if (!activeFile && fileEntries.length > 0) {
+      setSelectedFile(fileEntries[0][0])
+    }
+  }, [activeFile, fileEntries])
+
+  const renderFileBrowser = () => {
+    if (fileEntries.length === 0) return null
+
+    return (
+      <div className="mt-4 rounded-lg border border-gray-200 bg-gray-50 p-3">
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <div>
+            <h5 className="text-sm font-bold text-gray-800">
+              {hasGeneratedFiles ? 'Generated Files' : 'Files to Generate'}
+            </h5>
+            <p className="text-xs text-gray-500">
+              {hasGeneratedFiles
+                ? 'Click a file to preview the generated code.'
+                : 'Architecture has identified these files; code contents will appear after coder agents generate them.'}
+            </p>
+          </div>
+          <span className="rounded bg-white px-2 py-1 font-mono text-xs font-semibold text-gray-600">
+            {fileEntries.length}
+          </span>
+        </div>
+
+        <div className="grid gap-3 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
+          <div className="max-h-72 overflow-y-auto rounded border border-gray-200 bg-white p-2">
+            {fileEntries.map(([file]) => {
+              const isActive = file === activeFile
+              const isBackend = file.includes('backend') || file.endsWith('.py')
+              const isFrontend = file.includes('frontend') || file.includes('src/') || file.endsWith('.jsx') || file.endsWith('.tsx')
+              const accent = isBackend ? 'text-blue-700' : isFrontend ? 'text-green-700' : 'text-orange-700'
+
+              return (
+                <button
+                  key={file}
+                  type="button"
+                  onClick={() => setSelectedFile(file)}
+                  className={`mb-1 block w-full rounded px-2 py-1.5 text-left font-mono text-[11px] leading-snug transition-colors ${
+                    isActive
+                      ? 'bg-gray-900 text-white'
+                      : `bg-white hover:bg-gray-100 ${accent}`
+                  }`}
+                  title={file}
+                >
+                  {file}
+                </button>
+              )
+            })}
+          </div>
+
+          <div className="max-h-72 overflow-auto rounded border border-gray-200 bg-white p-3">
+            <div className="mb-2 break-all font-mono text-xs font-semibold text-gray-700">
+              {activeFile || 'No file selected'}
+            </div>
+            {hasGeneratedFiles ? (
+              <pre className="whitespace-pre-wrap font-mono text-[11px] leading-relaxed text-gray-700">
+                {activeFileContent || '// This file is present but has no generated content yet.'}
+              </pre>
+            ) : (
+              <div className="rounded border border-dashed border-gray-300 bg-gray-50 p-3 text-xs leading-relaxed text-gray-500">
+                This file is planned by the architecture agent. Once coder agents run, the generated code for this path will show here.
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    )
+  }
   
   // Derive gate title and description
   const getGateInfo = (name) => {
@@ -180,6 +295,87 @@ export default function ApprovalGate({ status, gateEvent, currentStage, eventsCo
           </div>
         )}
 
+        {gateName === 'human_gate_2' && projectState?.architecture_doc && (
+          <div className="mt-4 space-y-4">
+            <div className="grid grid-cols-2 gap-3">
+              <div className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-center">
+                <div className="text-lg font-bold text-blue-700">
+                  {projectState.file_list?.length || 0}
+                </div>
+                <div className="text-xs text-blue-600">Files to Generate</div>
+              </div>
+              <div className="rounded-lg border border-green-200 bg-green-50 px-3 py-2 text-center">
+                <div className="text-lg font-bold text-green-700">{apiEndpointCount}</div>
+                <div className="text-xs text-green-600">API Endpoints</div>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap gap-2">
+              {[
+                { id: 'architecture', label: 'Architecture Doc' },
+                { id: 'diagrams', label: `Diagrams (${mermaidBlocks.length})` },
+                { id: 'filelist', label: `Files (${projectState.file_list?.length || 0})` }
+              ].map((tab) => (
+                <button
+                  key={tab.id}
+                  onClick={() => setActiveTab(tab.id)}
+                  className={`rounded-full px-3 py-1 text-sm font-medium transition-colors ${
+                    activeTab === tab.id
+                      ? 'bg-green-600 text-white'
+                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                  }`}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+
+            {activeTab === 'architecture' && (
+              <div className="max-h-96 overflow-y-auto rounded-lg bg-gray-50 p-4 font-mono text-xs leading-relaxed whitespace-pre-wrap text-gray-700">
+                {projectState.architecture_doc}
+              </div>
+            )}
+
+            {activeTab === 'diagrams' && (
+              <div className="max-h-96 space-y-4 overflow-y-auto">
+                {mermaidBlocks.length === 0 ? (
+                  <p className="text-sm text-gray-500">No Mermaid diagrams found in architecture output.</p>
+                ) : (
+                  mermaidBlocks.map((code, index) => (
+                    <MermaidDiagram
+                      key={`${index}-${code.slice(0, 24)}`}
+                      code={code}
+                      title={code.startsWith('erDiagram') ? 'Entity Relationship Diagram' : `Data Flow Diagram ${index + 1}`}
+                    />
+                  ))
+                )}
+              </div>
+            )}
+
+            {activeTab === 'filelist' && (
+              <div className="max-h-96 overflow-y-auto rounded-lg bg-gray-50 p-4">
+                <p className="mb-3 text-xs text-gray-500">
+                  These {projectState.file_list?.length || 0} files will be generated by the coder agents after you approve the implementation plan.
+                </p>
+                {(projectState.file_list || []).map((file, index) => {
+                  const isBackend = file.includes('backend') || file.endsWith('.py')
+                  const isFrontend = file.includes('frontend') || file.includes('src/') || file.endsWith('.jsx') || file.endsWith('.tsx')
+                  const isConfig = file.endsWith('.yml') || file.endsWith('.yaml') || file.endsWith('.json') || file === 'Dockerfile' || file.endsWith('.md')
+                  const color = isBackend ? 'text-blue-600' : isFrontend ? 'text-green-600' : isConfig ? 'text-orange-600' : 'text-gray-600'
+
+                  return (
+                    <div key={`${file}-${index}`} className={`py-0.5 font-mono text-xs ${color}`}>
+                      {file}
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
+        {renderFileBrowser()}
+
         {submitting ? (
           <div className="text-sm text-blue-600 font-medium italic animate-pulse">
             Pipeline resuming...
@@ -248,6 +444,8 @@ export default function ApprovalGate({ status, gateEvent, currentStage, eventsCo
           {currentStage || 'Initializing...'}
         </div>
       </div>
+
+      {renderFileBrowser()}
 
       <div className="border-t border-gray-100 pt-3 flex justify-between items-center text-xs text-gray-500">
         <span>Events Streamed:</span>
