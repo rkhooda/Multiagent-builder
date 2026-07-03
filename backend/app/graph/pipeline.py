@@ -6,6 +6,7 @@ from langgraph.checkpoint.sqlite import SqliteSaver
 from app.graph.state import ProjectState
 from app.agents.research_agent import research_agent
 from app.agents.requirements_agent import requirements_agent
+from app.agents.architecture_agent import architecture_agent
 
 def human_gate_1(state: ProjectState) -> Dict:
     # Empty pass-through function. LangGraph pauses before this node.
@@ -14,13 +15,6 @@ def human_gate_1(state: ProjectState) -> Dict:
 def human_gate_2(state: ProjectState) -> Dict:
     # Empty pass-through function. LangGraph pauses before this node.
     return {}
-
-def architecture(state: ProjectState) -> Dict:
-    current_log = state.get("log") or []
-    return {
-        "log": current_log + ["architecture ran"],
-        "current_stage": "architecture"
-    }
 
 def planning(state: ProjectState) -> Dict:
     current_log = state.get("log") or []
@@ -80,7 +74,7 @@ workflow.add_node("research", research_agent)
 workflow.add_node("human_gate_1", human_gate_1)
 workflow.add_node("requirements", requirements_agent)
 workflow.add_node("human_gate_2", human_gate_2)
-workflow.add_node("architecture", architecture)
+workflow.add_node("architecture", architecture_agent)
 workflow.add_node("planning", planning)
 workflow.add_node("human_gate_3", human_gate_3)
 workflow.add_node("frontend_code", frontend_code)
@@ -91,11 +85,11 @@ workflow.add_node("devops", devops)
 workflow.add_node("human_gate_4", human_gate_4)
 
 # Wire all edges
-# research → requirements run autonomously, then Gate 1 pauses for human review of both
+# research pauses at Gate 1, requirements pauses at Gate 2, then architecture continues
 workflow.add_edge(START, "research")
-workflow.add_edge("research", "requirements")
-workflow.add_edge("requirements", "human_gate_1")
-workflow.add_edge("human_gate_1", "human_gate_2")
+workflow.add_edge("research", "human_gate_1")
+workflow.add_edge("human_gate_1", "requirements")
+workflow.add_edge("requirements", "human_gate_2")
 workflow.add_edge("human_gate_2", "architecture")
 workflow.add_edge("architecture", "planning")
 workflow.add_edge("planning", "human_gate_3")
