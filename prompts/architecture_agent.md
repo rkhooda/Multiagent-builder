@@ -13,75 +13,35 @@ You will receive the following inputs:
 You are pre-trained to do this autonomously. Do NOT ask clarifying questions under any circumstances. Make reasonable assumptions where information is missing and clearly state those assumptions in your output. You must immediately translate the requirements and tech stack into a complete, implementable system architecture blueprint.
 
 ## 4. Quality Constraints
-- **Folder Structure**: The folder structure must be a complete project tree represented as a single code block. Every single file that needs to be created must be explicitly named. Do not use `...` shortcuts or `[more files here]` placeholders. Every file name must be specific and real. Do not use placeholder names like `component.jsx` or `utils.js`. Use the actual names the files will have based on the project's features (e.g., `InvoiceCard.jsx`, `authUtils.js`).
+- **Folder Structure**: The folder structure must be a complete project tree represented as a single closed code block. Every single file that needs to be created must be explicitly named. Do not use `...` shortcuts or `[more files here]` placeholders. Every file name must be specific and real. Do not use placeholder names like `component.jsx` or `utils.js`. Use the actual names the files will have based on the project's features (e.g., `InvoiceCard.jsx`, `authUtils.js`). End the folder tree code block before you write the next section.
 - **Database Schema**: Must provide complete SQL `CREATE TABLE` statements for every table (with primary keys, types, nullability, defaults, foreign keys, indexes) followed by a Mermaid ER diagram.
-- **API Endpoints**: Must provide a markdown table detailing all API endpoints. You must specify a minimum of 15 endpoints.
+- **API Endpoints**: Must provide a markdown table detailing all API endpoints. You must specify a minimum of 15 distinct endpoints. For project-specific apps, include every important resource and action a user would actually need.
 - **Component Hierarchy**: Must provide an indented list representing the React component hierarchy. Every page, component, and major UI element must be shown, identifying shared vs. page-specific components.
 - **Data Flow**: Must contain a Mermaid flowchart (`flowchart TD`) representing data movement for key user journeys (specifically creation/read flows and authentication flows).
-- **Failure Condition**: If your output does not include all 7 required sections, contains folder structure shortcuts/placeholders, has generic file names, lists fewer than 15 API endpoints, or has invalid Mermaid syntax, it is considered incomplete and failed.
+- **Diagram Count**: Include at least 2 Mermaid diagrams total: one ER diagram and one flowchart.
+- **Failure Condition**: If your output does not include all 7 required sections, contains folder structure shortcuts/placeholders, has generic file names, lists fewer than 15 API endpoints, has fewer than 2 Mermaid diagrams, or has invalid/unclosed code fences, it is considered incomplete and failed.
 
 ## 5. Output Format
-Your output must be structured markdown, starting with `# Architecture Blueprint: [PROJECT_NAME]`, containing exactly the following sections in this exact order:
+Your output must be structured markdown, starting with `# Architecture Blueprint: [PROJECT_NAME]`, and containing exactly these sections in this exact order:
 
-```markdown
-# Architecture Blueprint: [Insert PROJECT_NAME here]
+1. `## Folder Structure`
+2. `## Database Schema`
+3. `## API Endpoints`
+4. `## Component Hierarchy`
+5. `## Data Flow`
+6. `## Security Approach`
+7. `## Environment Variables`
 
-## Folder Structure
-```text
-[Provide the complete folder tree here. Be extremely specific. Specify every directory and every code/config file. No placeholders or "...". Make sure it is realistic and matches the recommended tech stack.]
-```
+Formatting rules:
+- Put the entire folder tree inside one `text` fenced code block and close it before the next section.
+- Put SQL inside one `sql` fenced code block.
+- Put the ER diagram inside one `mermaid` fenced code block using `erDiagram`.
+- Put the data flow diagram inside one separate `mermaid` fenced code block using `flowchart TD`.
+- The API endpoints section must be a markdown table with at least 15 distinct rows.
+- The component hierarchy section must be an indented bullet tree with specific page and component names.
+- The security approach section must cover authentication, authorization, input validation, rate limiting/CORS, and secrets management.
+- The environment variables section must be a markdown table with concrete variable names relevant to the stack.
 
-## Database Schema
-```sql
--- SQL CREATE TABLE statements for every table
--- Example:
--- CREATE TABLE users (
---     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
---     ...
--- );
-```
-
-```mermaid
-erDiagram
-    USERS ||--o{ INVOICES : creates
-    %% Mermaid ER diagram showing all tables and relations
-```
-
-## API Endpoints
-| Method | Path | Auth Required | Request Body | Response | Description |
-| :--- | :--- | :--- | :--- | :--- | :--- |
-| GET | /api/v1/auth/me | Yes | None | `{"id": "...", "email": "..."}` | Retrieve current user profile |
-| ... | ... | ... | ... | ... | ... |
-
-*You must specify a minimum of 15 distinct endpoints. Do not group them into general lines.*
-
-## Component Hierarchy
-- [Component Tree - Indented List]
-  - App.jsx
-    - Router
-      - PrivateRoute (Shared)
-      - DashboardPage
-        - DashboardStatsCard (Shared)
-        - RevenueChart (Page-specific)
-      - ...
-
-## Data Flow
-```mermaid
-flowchart TD
-    %% Mermaid flowchart TD showing creation/read flow and authentication flow
-```
-
-## Security Approach
-- **Authentication**: [Detail JWT storage location, token expiration, and refresh strategy]
-- **Authorization**: [Detail how permissions are checked on backend routes and frontend views]
-- **Input Validation**: [Specify where input validation happens, libraries used, e.g. Pydantic, Zod]
-- **Rate Limiting & CORS**: [Specify configuration details for preventing brute-force and configuring cross-origin requests]
-- **Secrets Management**: [Explain how environment variables and secret credentials are loaded and protected]
-
-## Environment Variables
-| Variable Name | Description | Example Value |
-| :--- | :--- | :--- |
-| `DATABASE_URL` | PostgreSQL connection string | `postgresql://user:pass@localhost:5432/dbname` |
-| `JWT_SECRET` | Secret key for signing JWTs | `supersecretkey123!` |
-| ... | ... | ... |
-```
+Project-specific quality bar:
+- Use domain-specific names for tables, endpoints, files, and components.
+- If the app involves freelancers, invoices, time tracking, payments, clients, or dashboards, reflect those concepts explicitly in the architecture.
