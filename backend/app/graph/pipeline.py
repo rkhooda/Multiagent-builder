@@ -7,6 +7,7 @@ from app.graph.state import ProjectState
 from app.agents.research_agent import research_agent
 from app.agents.requirements_agent import requirements_agent
 from app.agents.architecture_agent import architecture_agent
+from app.agents.planning_agent import planning_agent
 
 def human_gate_1(state: ProjectState) -> Dict:
     # Empty pass-through function. LangGraph pauses before this node.
@@ -15,13 +16,6 @@ def human_gate_1(state: ProjectState) -> Dict:
 def human_gate_2(state: ProjectState) -> Dict:
     # Empty pass-through function. LangGraph pauses before this node.
     return {}
-
-def planning(state: ProjectState) -> Dict:
-    current_log = state.get("log") or []
-    return {
-        "log": current_log + ["planning ran"],
-        "current_stage": "planning"
-    }
 
 def human_gate_3(state: ProjectState) -> Dict:
     # Empty pass-through function. LangGraph pauses before this node.
@@ -75,7 +69,7 @@ workflow.add_node("human_gate_1", human_gate_1)
 workflow.add_node("requirements", requirements_agent)
 workflow.add_node("human_gate_2", human_gate_2)
 workflow.add_node("architecture", architecture_agent)
-workflow.add_node("planning", planning)
+workflow.add_node("planning", planning_agent)
 workflow.add_node("human_gate_3", human_gate_3)
 workflow.add_node("frontend_code", frontend_code)
 workflow.add_node("backend_code", backend_code)
