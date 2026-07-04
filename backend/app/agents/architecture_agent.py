@@ -191,13 +191,16 @@ CRITICAL REQUIREMENTS:
 
     from ..core.connection_manager import manager
 
+    preview = architecture_doc[:200].replace("\n", " ").strip()
     manager.broadcast_sync(
         project_id,
         {
             "type": "agent_complete",
             "agent": "architecture",
             "stage": "architecture",
-            "output_preview": architecture_doc[:200].replace("\n", " ").strip(),
+            "preview": preview,
+            "output_preview": preview,
+            "content": architecture_doc,
             "file_count": len(file_list),
             "diagram_count": len(diagrams),
             "doc_length": len(architecture_doc),

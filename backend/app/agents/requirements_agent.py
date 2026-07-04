@@ -147,11 +147,14 @@ At the very end of your response, output the tech stack as a JSON code block."""
 
     # ── Broadcast via WebSocket ───────────────────────────────────
     from ..core.connection_manager import manager
+    preview = response[:200].replace('\n', ' ').strip()
     manager.broadcast_sync(project_id, {
         "type": "agent_complete",
         "agent": "requirements",
         "stage": "requirements",
-        "output_preview": response[:200].replace('\n', ' ').strip(),
+        "preview": preview,
+        "output_preview": preview,
+        "content": response,
         "tech_stack": tech_stack_dict,
         "doc_length": len(response)
     })

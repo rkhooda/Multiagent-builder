@@ -109,6 +109,7 @@ Generate the complete research report now. Cover every required section thorough
         "stage": "research",
         "preview": preview,
         "output_preview": preview,
+        "content": report,
         "report_length": len(report),
         "has_web_search": len(search_context) > 0,
     }

@@ -3,6 +3,45 @@ import { useParams, Link } from 'react-router-dom'
 import { useProjectStream } from '../hooks/useProjectStream'
 import ApprovalGate from '../components/ApprovalGate'
 
+function EventOutput({ event, defaultExpanded = true }) {
+  const [expanded, setExpanded] = useState(defaultExpanded)
+  const fullContent = event.content || event.preview || event.output_preview || ''
+  const shortPreview = event.preview || event.output_preview || fullContent
+
+  if (!fullContent) return null
+
+  return (
+    <div className="my-2 rounded border border-gray-100 bg-gray-50">
+      <div className="flex items-center justify-between gap-3 border-b border-gray-200 px-3 py-2">
+        <span className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">
+          Agent Output
+        </span>
+        <button
+          type="button"
+          onClick={() => setExpanded((value) => !value)}
+          className="text-[11px] font-semibold text-blue-600 hover:text-blue-700"
+        >
+          {expanded ? 'Collapse' : 'Expand'}
+        </button>
+      </div>
+
+      {expanded ? (
+        <div className="max-h-96 overflow-auto p-3">
+          <pre className="whitespace-pre-wrap break-words font-mono text-sm leading-relaxed text-gray-600">
+            {fullContent}
+          </pre>
+        </div>
+      ) : (
+        <div className="p-3">
+          <p className="whitespace-pre-wrap break-words font-mono text-sm leading-relaxed text-gray-600 line-clamp-4">
+            {shortPreview}
+          </p>
+        </div>
+      )}
+    </div>
+  )
+}
+
 export default function ProjectDetailPage() {
   const { projectId } = useParams()
   
@@ -175,7 +214,7 @@ export default function ProjectDetailPage() {
     )
   }
 
-  const name = projectMetadata ? projectMetadata.name : 'Project Pipeline'
+  const name = projectMetadata ? projectMetadata.project_name : 'Project Pipeline'
   const displayStatus = status === 'connecting' || status === 'reconnecting' ? 'running' : status === 'done' ? 'completed' : status
 
   return (
@@ -252,10 +291,8 @@ export default function ProjectDetailPage() {
                           </span>
                         </div>
 
-                        {event.preview && (
-                          <p className="text-sm text-gray-600 leading-relaxed font-mono bg-gray-50 p-2.5 rounded border border-gray-100 my-2 overflow-x-auto whitespace-pre-wrap">
-                            {event.preview}
-                          </p>
+                        {(event.content || event.preview || event.output_preview) && (
+                          <EventOutput event={event} />
                         )}
 
                         <div className="text-[10px] text-gray-400 mt-2 font-medium">

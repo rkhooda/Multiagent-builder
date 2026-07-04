@@ -38,7 +38,8 @@ export function useProjectStream(projectId) {
             existing.type === event.type &&
             existing.agent === event.agent &&
             existing.stage === event.stage &&
-            existing.preview === event.preview
+            existing.preview === event.preview &&
+            existing.content === event.content
           )
           if (exists) return prev
           return [...prev, { ...event, timestamp: new Date().toISOString() }]
