@@ -1,5 +1,6 @@
 import uuid
 import asyncio
+import json
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 from typing import List, Dict, Optional
@@ -51,20 +52,24 @@ async def run_graph_background(project_id: str, config: dict, initial_state=None
                 
                 stage = node_output.get("current_stage", node_name)
                 preview = ""
+                content = ""
                 preview_fields = [
                     "research_report", "requirements_doc", "tech_stack",
                     "architecture_doc", "implementation_plan", "qa_report"
                 ]
                 for field in preview_fields:
                     if field in node_output and node_output[field]:
-                        preview = str(node_output[field])[:200]
+                        content = str(node_output[field])
+                        preview = content[:200]
                         break
                 
                 if not preview and "log" in node_output and node_output["log"]:
                     preview = str(node_output["log"][-1])[:200]
+                    content = str(node_output["log"][-1])
                 
                 if not preview:
                     preview = f"Completed agent node {node_name}"
+                    content = preview
 
                 if node_output.get("_agent_event"):
                     continue
@@ -73,7 +78,9 @@ async def run_graph_background(project_id: str, config: dict, initial_state=None
                     "type": "agent_complete",
                     "agent": node_name,
                     "stage": stage,
-                    "preview": preview
+                    "preview": preview,
+                    "output_preview": preview,
+                    "content": content
                 })
                 
                 # Update SQLite database project status and current stage
@@ -238,7 +245,16 @@ async def resume_project(project_id: str, request: ProjectResumeRequest):
                 "human_feedback": request.feedback
             }
         )
-        
+
+        if (
+            state_snapshot.next[0] == "human_gate_3"
+            and request.decision == "approve"
+            and request.feedback.startswith("MODIFIED_PLAN:")
+        ):
+            modified_plan = request.feedback[len("MODIFIED_PLAN:"):]
+            json.loads(modified_plan)
+            graph.update_state(config, {"implementation_plan": modified_plan})
+
         # Resume the graph in a background task
         asyncio.create_task(run_graph_background(project_id, config))
         
