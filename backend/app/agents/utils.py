@@ -166,3 +166,70 @@ def extract_mermaid_diagrams(text: str) -> List[dict]:
         diagram_type = "erDiagram" if "erDiagram" in code else "flowchart"
         diagrams.append({"type": diagram_type, "code": code})
     return diagrams
+
+
+def parse_and_validate_plan(llm_response: str) -> tuple[object, list[str]]:
+    """
+    Extract, parse, and validate the implementation plan JSON from LLM response.
+
+    Returns (ImplementationPlan, errors_list).
+    If errors_list is empty, the plan is valid.
+    If errors is non-empty, ImplementationPlan may be None or partially valid.
+    """
+    from ..models.task_schema import TaskSchema, ImplementationPlan
+
+    errors = []
+
+    array_match = re.search(r'\[\s*\{[\s\S]*\}\s*\]', llm_response)
+    if not array_match:
+        errors.append("No JSON array found in LLM response")
+        return None, errors
+
+    raw_json = array_match.group(0)
+
+    try:
+        task_list = json.loads(raw_json)
+    except json.JSONDecodeError as e:
+        errors.append(f"JSON parse error: {e}")
+        fixed = re.sub(r',\s*([}\]])', r'\1', raw_json)
+        try:
+            task_list = json.loads(fixed)
+            errors = []
+        except json.JSONDecodeError:
+            return None, errors
+
+    if not isinstance(task_list, list):
+        errors.append("Expected a JSON array at the top level")
+        return None, errors
+
+    if len(task_list) == 0:
+        errors.append("Task list is empty")
+        return None, errors
+
+    validated_tasks = []
+    task_errors = []
+
+    for i, raw_task in enumerate(task_list):
+        try:
+            task = TaskSchema(**raw_task)
+            validated_tasks.append(task)
+        except Exception as e:
+            task_id = raw_task.get("id", "unknown") if isinstance(raw_task, dict) else "unknown"
+            task_errors.append(f"Task {i} ({task_id}): {e}")
+
+    if task_errors:
+        errors.extend(task_errors[:5])
+
+    if not validated_tasks:
+        errors.append("No tasks passed validation")
+        return None, errors
+
+    plan = ImplementationPlan(tasks=validated_tasks)
+    deps_valid, dep_errors = plan.validate_dependencies()
+    if not deps_valid:
+        errors.extend(dep_errors[:5])
+
+    print(
+        f"[Utils] Plan parsed: {len(validated_tasks)}/{len(task_list)} tasks valid, {len(errors)} errors"
+    )
+    return plan, errors

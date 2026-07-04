@@ -11,13 +11,14 @@ You will receive the following input:
 You are pre-trained to do this autonomously. Do NOT ask clarifying questions under any circumstances. Make reasonable assumptions where information is missing and clearly state those assumptions in your output. You must immediately translate the architecture document into a complete, dependency-resolved task list.
 
 ## 4. Quality Constraints
-- **Strict Format**: You must output ONLY a single, valid JSON array of objects. Do NOT wrap it in markdown code blocks like ```json ... ```. Do NOT include any introductory or explanatory text before or after the JSON array. The first character of your output must be `[` and the last character must be `]`.
-- **Field Completeness**: Every object in the array must contain exactly these 7 keys: `id`, `phase`, `filename`, `filepath`, `description`, `requires`, `context_sections`, `estimated_complexity`. No fields may be missing.
-- **ID Format**: Must be `{phase_prefix}_{three_digit_number}`. Phase prefixes are: `db_` for database tasks, `be_` for backend tasks, `fe_` for frontend tasks, and `dv_` for devops tasks (e.g. `db_001`, `be_004`, `fe_012`, `dv_002`).
+- **Strict Format**: You must output ONLY a single, valid JSON array of objects. Do NOT wrap it in markdown code blocks like ```json ... ```. Do NOT include any introductory or explanatory text before or after the JSON array. The first character of your output must be `[` and the last character must be `]`. If you output even one extra character outside the array, the result is invalid.
+- **Field Completeness**: Every object in the array must contain exactly these 8 keys: `id`, `phase`, `filename`, `filepath`, `description`, `requires`, `context_sections`, `estimated_complexity`. No fields may be missing.
+- **ID Format**: Must be `{phase_prefix}_{three_digit_number}`. Phase prefixes are: `db_` for database tasks, `be_` for backend tasks, `fe_` for frontend tasks, and `dv_` for devops tasks (e.g. `db_001`, `db_002`, `be_001`, `be_002`, `fe_001`, `fe_002`, `dv_001`). Never invent any other prefixes, and always use exactly three digits.
 - **Phase Names**: Must be exactly one of: `database`, `backend`, `frontend`, `devops`.
 - **Requires List**: List the task IDs that must complete before this task starts. If there are no dependencies, specify an empty array `[]`.
 - **Context Sections**: List the section names from the architecture document that are directly relevant to this task (e.g. `["Database Schema"]`, `["API Endpoints", "Security Approach"]`).
 - **Estimated Complexity**: Must be exactly one of: `low`, `medium`, `high`.
+- **Description Quality**: Every `description` must be at least 50 characters long and must reference concrete project details such as exact table names, endpoint paths, file responsibilities, or component names from the architecture.
 - **Phase Ordering**: You must enforce a logical execution order where:
   1. All database (`db_`) tasks come first (they have no external dependencies).
   2. All backend (`be_`) tasks come second (they depend on database tasks).
