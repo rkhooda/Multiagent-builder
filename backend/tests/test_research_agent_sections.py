@@ -1,6 +1,6 @@
 """
-Tests the research agent with different optional section combinations.
-Usage: cd backend && python tests/test_research_agent_sections.py
+Final verification test for optional sections behaviour.
+Usage: cd backend && python3 tests/test_research_agent_sections.py
 """
 import sys
 import os
@@ -12,95 +12,96 @@ load_dotenv()
 
 from app.agents.research_agent import research_agent
 
-BASE_STATE = {
-    "project_id": "test-sections",
+BASE = {
+    "project_id": "test-001",
     "project_name": "FreelanceFlow",
     "brief": "A web app for freelancers to track billable hours and generate Stripe invoices.",
     "log": [],
     "errors": [],
 }
 
-TEST_CASES = [
+CASES = [
     {
-        "label": "Defaults only (no optional sections)",
-        "optional_sections": json.dumps(
-            {"existing_solutions": False, "target_users": False, "market_risks": False}
-        ),
+        "label": "NO checkboxes selected — only 5 permanent sections",
+        "optional_sections": json.dumps({"existing_solutions": False, "target_users": False, "market_risks": False}),
         "must_contain": [
             "## Problem Space",
             "## Technical Landscape",
+            "## Key Risks",
+            "### Technical Risks",
+            "### Execution Risks",
             "## Recommended Approach",
             "## Research Confidence Score",
         ],
-        "must_not_contain": [
-            "## Existing Solutions",
-            "## Target Users",
-            "Market Risks",
-        ],
+        "must_not_contain": ["## Existing Solutions", "## Target Users", "### Market Risks"],
     },
     {
-        "label": "Competitors + Market Risks only",
-        "optional_sections": json.dumps(
-            {"existing_solutions": True, "target_users": False, "market_risks": True}
-        ),
+        "label": "ONLY Existing Solutions checked",
+        "optional_sections": json.dumps({"existing_solutions": True, "target_users": False, "market_risks": False}),
+        "must_contain": ["## Problem Space", "## Existing Solutions", "## Recommended Approach"],
+        "must_not_contain": ["## Target Users", "### Market Risks"],
+    },
+    {
+        "label": "ONLY Target Users checked",
+        "optional_sections": json.dumps({"existing_solutions": False, "target_users": True, "market_risks": False}),
+        "must_contain": ["## Problem Space", "## Target Users", "## Recommended Approach"],
+        "must_not_contain": ["## Existing Solutions", "### Market Risks"],
+    },
+    {
+        "label": "ONLY Market Risks checked",
+        "optional_sections": json.dumps({"existing_solutions": False, "target_users": False, "market_risks": True}),
+        "must_contain": ["## Problem Space", "### Market Risks", "## Recommended Approach"],
+        "must_not_contain": ["## Existing Solutions", "## Target Users"],
+    },
+    {
+        "label": "ALL checkboxes selected — all 8 sections",
+        "optional_sections": json.dumps({"existing_solutions": True, "target_users": True, "market_risks": True}),
         "must_contain": [
             "## Problem Space",
             "## Existing Solutions",
-            "Market Risks",
-            "## Recommended Approach",
-        ],
-        "must_not_contain": ["## Target Users"],
-    },
-    {
-        "label": "All sections enabled",
-        "optional_sections": json.dumps(
-            {"existing_solutions": True, "target_users": True, "market_risks": True}
-        ),
-        "must_contain": [
-            "## Problem Space",
-            "## Existing Solutions",
             "## Target Users",
-            "Market Risks",
+            "## Technical Landscape",
+            "### Market Risks",
+            "### Execution Risks",
             "## Recommended Approach",
+            "## Research Confidence Score",
         ],
         "must_not_contain": [],
     },
 ]
 
-all_passed = True
+overall = True
 
-for i, case in enumerate(TEST_CASES):
+for i, case in enumerate(CASES):
     print(f"\n{'='*60}")
-    print(f"TEST {i+1}: {case['label']}")
+    print(f"CASE {i+1}: {case['label']}")
     print("=" * 60)
 
-    state = {**BASE_STATE, "optional_sections": case["optional_sections"]}
+    state = {**BASE, "optional_sections": case["optional_sections"], "project_id": f"test-{i+1}"}
     result = research_agent(state)
     report = result["research_report"]
-
     print(f"Report length: {len(report)} chars")
+
     case_passed = True
 
-    for must in case["must_contain"]:
-        found = must.lower() in report.lower()
-        status = "✅" if found else "❌"
+    for heading in case["must_contain"]:
+        found = heading.lower() in report.lower()
+        print(f"  {'✅' if found else '❌'} Present:  '{heading}'")
         if not found:
             case_passed = False
-            all_passed = False
-        print(f"  {status} Contains '{must}'")
+            overall = False
 
-    for must_not in case["must_not_contain"]:
-        found = must_not.lower() in report.lower()
-        status = "❌ FOUND (should be absent)" if found else "✅ Correctly absent"
+    for heading in case["must_not_contain"]:
+        found = heading.lower() in report.lower()
+        print(f"  {'❌ FOUND — should be absent' if found else '✅'} Absent:   '{heading}'")
         if found:
             case_passed = False
-            all_passed = False
-        print(f"  {status}: '{must_not}'")
+            overall = False
 
-    print(f"\n  Result: {'✅ PASSED' if case_passed else '❌ FAILED'}")
+    print(f"\n  → {'✅ PASSED' if case_passed else '❌ FAILED'}")
 
 print(f"\n{'='*60}")
-print(f"OVERALL: {'✅ ALL TESTS PASSED' if all_passed else '❌ SOME TESTS FAILED'}")
+print(f"FINAL RESULT: {'✅ ALL 5 CASES PASSED' if overall else '❌ FAILURES — do not merge to main'}")
 print("=" * 60)
 
-sys.exit(0 if all_passed else 1)
+sys.exit(0 if overall else 1)
