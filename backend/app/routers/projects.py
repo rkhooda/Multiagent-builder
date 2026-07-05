@@ -12,9 +12,15 @@ from app.core.database import insert_project, update_project_status, get_all_pro
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
 
+class OptionalSections(BaseModel):
+    existing_solutions: bool = False
+    target_users: bool = False
+    market_risks: bool = False
+
 class ProjectCreateRequest(BaseModel):
     brief: str
     project_name: str
+    optional_sections: Optional[OptionalSections] = None
 
 class ProjectResumeRequest(BaseModel):
     decision: str = Field(..., description="Decision: approve, edit, or reject")
@@ -176,12 +182,19 @@ def list_projects():
 async def create_project(request: ProjectCreateRequest):
     project_id = str(uuid.uuid4())
     config = {"configurable": {"thread_id": project_id}}
-    
+
+    optional_sections_dict = (
+        request.optional_sections.model_dump()
+        if request.optional_sections
+        else {"existing_solutions": False, "target_users": False, "market_risks": False}
+    )
+
     # Build initial ProjectState
     initial_state = ProjectState(
         project_id=project_id,
         brief=request.brief,
         project_name=request.project_name,
+        optional_sections=json.dumps(optional_sections_dict),
         research_report="",
         requirements_doc="",
         tech_stack="",
