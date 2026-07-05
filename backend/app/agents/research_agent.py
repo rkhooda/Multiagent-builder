@@ -12,79 +12,118 @@ SYSTEM_PROMPT = (
 ).read_text(encoding="utf-8")
 
 
-def build_optional_sections_block(optional_sections_str: str) -> str:
+def build_report_structure_block(optional_sections_str: str) -> str:
     """
-    Build an instruction block injected into the user message.
+    Builds the REPORT_STRUCTURE block injected into the user message at runtime.
 
-    Flags each optional section as true/false so the LLM knows exactly what
-    is allowed. When a section is enabled, its full format spec is appended
-    so the LLM knows how to write it — keeping format knowledge out of the
-    system prompt and therefore out of reach when the section is disabled.
+    The system prompt contains ZERO information about optional sections.
+    This function is the single source of truth for what gets written.
+
+    Permanent sections are always included.
+    Optional sections are only included when their flag is True.
     """
     try:
         sections = json.loads(optional_sections_str) if optional_sections_str else {}
-    except json.JSONDecodeError:
+    except (json.JSONDecodeError, TypeError):
         sections = {}
 
     include_existing = sections.get("existing_solutions", False)
-    include_users = sections.get("target_users", False)
-    include_market = sections.get("market_risks", False)
+    include_users    = sections.get("target_users", False)
+    include_market   = sections.get("market_risks", False)
 
-    lines = [
-        "─────────────────────────────────────",
-        "OPTIONAL SECTIONS (read carefully):",
-        f"  include_existing_solutions: {'true' if include_existing else 'false'}",
-        f"  include_target_users: {'true' if include_users else 'false'}",
-        f"  include_market_risks: {'true' if include_market else 'false'}",
-        "",
-    ]
+    # Each entry: (heading, format_instructions)
+    section_specs = []
 
-    if not any([include_existing, include_users, include_market]):
-        lines += [
-            "No optional sections are enabled.",
-            "Output ONLY the permanent sections: Problem Space, Technical Landscape,",
-            "Key Risks (Technical Risks + Execution Risks), Recommended Approach,",
-            "Research Confidence Score.",
-            "DO NOT write ## Existing Solutions & Competitors, ## Target Users,",
-            "or ### Market Risks under any circumstances.",
-        ]
-    else:
-        lines.append("The following optional sections are ENABLED — include them:")
-        if include_existing:
-            lines += [
-                "",
-                "## Existing Solutions & Competitors",
-                "A competitive analysis table with at minimum 4 real competitors.",
-                "Columns: Competitor/Solution | Strengths | Weaknesses | Market Position",
-            ]
-        if include_users:
-            lines += [
-                "",
-                "## Target Users",
-                "Include: Primary User Persona title, Job Title/Description,",
-                "3 numbered Main Pain Points, Current Workarounds, What Success Looks Like.",
-            ]
-        if include_market:
-            lines += [
-                "",
-                "### Market Risks (subsection under ## Key Risks, before Execution Risks)",
-                "At minimum 2 market-specific risks: competition, adoption, pricing, regulation.",
-            ]
+    # PERMANENT 1 — Problem Space
+    section_specs.append((
+        "## Problem Space",
+        "Write 2-3 detailed paragraphs (minimum 250 words) on the core problem being solved. "
+        "Explain why it exists, why it remains unsolved, and what current pain points are. "
+        "Be specific to this project — no generic filler."
+    ))
 
-        disabled = []
-        if not include_existing:
-            disabled.append("## Existing Solutions & Competitors")
-        if not include_users:
-            disabled.append("## Target Users")
-        if not include_market:
-            disabled.append("### Market Risks")
-        if disabled:
-            lines += [
-                "",
-                f"FORBIDDEN — do not write: {', '.join(disabled)}",
-            ]
+    # OPTIONAL — Existing Solutions & Competitors
+    if include_existing:
+        section_specs.append((
+            "## Existing Solutions & Competitors",
+            "Write a markdown table with exactly these columns: "
+            "Competitor/Solution | Strengths | Weaknesses | Market Position. "
+            "Include a minimum of 4 real competitors or real solution categories. "
+            "Every entry must be a real, named product or recognisable solution type. "
+            "After the table, write one paragraph summarising the competitive gap this project can exploit."
+        ))
 
-    lines.append("─────────────────────────────────────")
+    # OPTIONAL — Target Users
+    if include_users:
+        section_specs.append((
+            "## Target Users",
+            "Define the primary user persona using this exact structure:\n"
+            "- **Primary User Persona**: [descriptive title]\n"
+            "- **Job Title/Description**: [who they are and their daily responsibilities]\n"
+            "- **Main Pain Points**: numbered list of at least 3 specific pain points\n"
+            "- **Current Workarounds**: how they cope with the problem today\n"
+            "- **What Success Looks Like**: the ideal outcome for them"
+        ))
+
+    # PERMANENT 2 — Technical Landscape
+    section_specs.append((
+        "## Technical Landscape",
+        "Write 2-3 detailed paragraphs on relevant technologies, frameworks, libraries, APIs, "
+        "and industry standards in this domain. Identify how similar products handle data flow, "
+        "integrations, or compliance. Mention standard architectures common for this category."
+    ))
+
+    # PERMANENT 3 — Key Risks (always contains Technical + Execution Risks)
+    key_risks_format = (
+        "Use the heading ## Key Risks with these sub-sections:\n\n"
+        "### Technical Risks\n"
+        "Numbered list of exactly 2 technical risks. Each entry: risk name, detailed description, impact.\n\n"
+    )
+    if include_market:
+        key_risks_format += (
+            "### Market Risks\n"
+            "Numbered list of exactly 2 market risks covering competition, adoption challenges, "
+            "or pricing pressure. Each entry: risk name, detailed description, impact.\n\n"
+        )
+    key_risks_format += (
+        "### Execution Risks\n"
+        "Numbered list of exactly 2 execution risks covering team, timeline, or scope challenges. "
+        "Each entry: risk name, detailed description, impact."
+    )
+    section_specs.append(("## Key Risks", key_risks_format))
+
+    # PERMANENT 4 — Recommended Approach
+    section_specs.append((
+        "## Recommended Approach",
+        "Write 2-3 detailed paragraphs on the recommended solution strategy. "
+        "Describe specific features, architecture concepts, or UX patterns that differentiate "
+        "a good solution from competitors. Explain why this approach minimises the risks above."
+    ))
+
+    # PERMANENT 5 — Research Confidence Score
+    section_specs.append((
+        "## Research Confidence Score",
+        "Write exactly:\n"
+        "**Score**: [High / Medium / Low]\n"
+        "**Justification**: [One paragraph justifying the score, referencing market clarity, "
+        "technical complexity, and depth of existing solutions]"
+    ))
+
+    # Assemble the REPORT_STRUCTURE block
+    lines = ["REPORT_STRUCTURE:"]
+    lines.append("Write the sections below in this exact order. Write ONLY these sections.")
+    lines.append(f"Total sections to write: {len(section_specs)}")
+    lines.append("")
+
+    for i, (heading, instructions) in enumerate(section_specs, 1):
+        lines.append(f"--- Section {i}: {heading} ---")
+        lines.append(instructions)
+        lines.append("")
+
+    lines.append("END OF REPORT_STRUCTURE.")
+    lines.append("")
+    lines.append("Do not write any section not listed above. Do not add headings not listed above.")
+
     return "\n".join(lines)
 
 
@@ -95,8 +134,8 @@ def research_agent(state: dict) -> dict:
     Reads: state['brief'], state['project_name'], state['optional_sections']
     Writes: state['research_report'], state['log'], state['current_stage']
 
-    Calls the LLM with optional DuckDuckGo web search enrichment. Validates
-    required sections and output length, and retries once if incomplete.
+    The system prompt is completely blind to optional sections. All section
+    control lives in the REPORT_STRUCTURE block injected into the user message.
     """
     brief = state.get("brief", "")
     project_name = state.get("project_name", "Unknown Project")
@@ -105,86 +144,86 @@ def research_agent(state: dict) -> dict:
     log = list(state.get("log", []))
     errors = list(state.get("errors", []))
 
-    print(f"[ResearchAgent] Starting for project: {project_name}")
+    print(f"[ResearchAgent] Starting: {project_name}")
     print(f"[ResearchAgent] Optional sections: {optional_sections_str}")
-    log.append(
-        f"research_agent: started for project '{project_name}', optional_sections={optional_sections_str}"
-    )
+    log.append(f"research_agent: started, optional_sections={optional_sections_str}")
 
+    # Web search enrichment
     search_context = ""
-    search_queries = [
-        f"{project_name} competitors alternatives",
-        f"{project_name} market solutions open source",
-    ]
+    try:
+        results = web_search(f"{project_name} software market", max_results=5)
+        if results:
+            search_context = "\n\nWEB SEARCH CONTEXT (supplementary only — use to enrich your analysis):\n"
+            search_context += format_search_results(results)
+            log.append(f"research_agent: web search returned {len(results)} results")
+    except Exception as e:
+        print(f"[ResearchAgent] Web search skipped: {e}")
 
-    all_results = []
-    for query in search_queries:
-        results = web_search(query, max_results=4)
-        all_results.extend(results)
-
-    if all_results:
-        search_context = "\n\n" + format_search_results(all_results[:8])
-        log.append(f"research_agent: enriched with {len(all_results)} web search results")
-        print(f"[ResearchAgent] Web search returned {len(all_results)} results")
-    else:
-        log.append("research_agent: web search returned no results, proceeding without enrichment")
-        print("[ResearchAgent] No web search results, proceeding with brief only")
-
-    optional_sections_block = build_optional_sections_block(optional_sections_str)
+    # Build the runtime report structure — this is the only place optional sections exist
+    report_structure_block = build_report_structure_block(optional_sections_str)
 
     user_content = f"""PROJECT NAME: {project_name}
 
 PROJECT BRIEF:
 {brief}
 
-{optional_sections_block}
+{report_structure_block}
 {search_context}
 
-Generate the complete research report now following all format requirements and the optional section rules above. Be specific to this project — do not write generic content that could apply to any app."""
+Now write the research report. Start immediately with # Research Report: {project_name}
+Write only the sections listed in REPORT_STRUCTURE above. Nothing else."""
 
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": user_content},
     ]
 
-    print("[ResearchAgent] Calling LLM (primary attempt)...")
+    print("[ResearchAgent] Calling LLM...")
     report = call_llm(messages, "research", max_tokens=4000)
 
-    min_length = 600
-    is_valid, missing_sections = validate_research_report(report, optional_sections_str)
-    if len(report) < min_length or not is_valid:
-        print(
-            f"[ResearchAgent] Output incomplete (length={len(report)}, missing={missing_sections}), retrying..."
-        )
-        log.append(
-            f"research_agent: output incomplete (length={len(report)}, missing={missing_sections}), retrying"
-        )
+    # Post-generation forbidden section check
+    try:
+        sections = json.loads(optional_sections_str) if optional_sections_str else {}
+    except Exception:
+        sections = {}
 
-        messages.append({"role": "assistant", "content": report})
-        messages.append(
-            {
+    forbidden_checks = []
+    if not sections.get("existing_solutions", False):
+        forbidden_checks.append("## Existing Solutions")
+    if not sections.get("target_users", False):
+        forbidden_checks.append("## Target Users")
+    if not sections.get("market_risks", False):
+        forbidden_checks.append("### Market Risks")
+
+    for heading in forbidden_checks:
+        if heading.lower() in report.lower():
+            print(f"[ResearchAgent] WARNING: forbidden section '{heading}' found — sending correction")
+            log.append(f"research_agent: WARNING forbidden section '{heading}' appeared — correcting")
+            messages.append({"role": "assistant", "content": report})
+            messages.append({
                 "role": "user",
                 "content": (
-                    f"Your previous response was {len(report)} characters long and missed these sections: "
-                    f"{missing_sections or 'none'}. "
-                    "The research report must include ALL permanent sections: Problem Space, Technical Landscape, "
-                    "Key Risks (Technical Risks + Execution Risks), Recommended Approach, and Research Confidence Score. "
-                    f"Also follow the OPTIONAL SECTIONS block exactly as specified above. "
-                    "Do not summarise — write the full content in the required markdown structure."
+                    f"Your report contains the section '{heading}' but it was NOT in the REPORT_STRUCTURE list. "
+                    "Remove it completely and output the corrected full report. "
+                    "Write only the sections that were listed in the REPORT_STRUCTURE block."
                 ),
-            }
-        )
-        report = call_llm(messages, "research", max_tokens=4000)
-        is_valid, missing_sections = validate_research_report(report, optional_sections_str)
+            })
+            report = call_llm(messages, "research", max_tokens=4000)
+            break
 
-        if len(report) < min_length or not is_valid:
-            error_msg = (
-                "research_agent: output still incomplete after retry "
-                f"(length={len(report)}, missing={missing_sections})"
-            )
-            log.append(error_msg)
-            errors.append(error_msg)
-            print(f"[ResearchAgent] WARNING: {error_msg}")
+    # Length check
+    MIN_LENGTH = 500
+    if len(report) < MIN_LENGTH:
+        log.append(f"research_agent: output too short ({len(report)} chars), retrying")
+        messages.append({"role": "assistant", "content": report})
+        messages.append({
+            "role": "user",
+            "content": "Your response is too short. Write each section thoroughly with at least 150 words per section.",
+        })
+        report = call_llm(messages, "research", max_tokens=4000)
+
+    log.append(f"research_agent: completed — {len(report)} chars")
+    print(f"[ResearchAgent] Done. Length: {len(report)} chars")
 
     preview = report[:200].replace("\n", " ").strip()
     event = {
@@ -199,9 +238,6 @@ Generate the complete research report now following all format requirements and 
         "has_web_search": len(search_context) > 0,
     }
     manager.broadcast_sync(project_id, event)
-
-    log.append(f"research_agent: completed - generated {len(report)} char report")
-    print(f"[ResearchAgent] Completed. Report length: {len(report)} chars")
 
     return {
         "research_report": report,
