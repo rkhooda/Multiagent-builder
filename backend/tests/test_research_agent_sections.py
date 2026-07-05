@@ -1,5 +1,5 @@
 """
-Final verification test for optional sections behaviour.
+Verification test for optional sections behaviour + report quality.
 Usage: cd backend && python3 tests/test_research_agent_sections.py
 """
 import sys
@@ -70,6 +70,30 @@ CASES = [
     },
 ]
 
+
+def check_quality(report: str, case_label: str) -> bool:
+    print(f"\n  Quality checks for: {case_label}")
+    quality_checks = [
+        (len(report) >= 800, f"Length >= 800 chars (got {len(report)})"),
+        ("## Problem Space" in report, "Problem Space present"),
+        ("## Technical Landscape" in report, "Technical Landscape present"),
+        ("## Recommended Approach" in report, "Recommended Approach present"),
+        ("## Research Confidence Score" in report, "Research Confidence Score present"),
+        ("**Score**" in report, "Confidence Score has Score field"),
+        (report.startswith("# Research Report:"), "Report starts with correct heading"),
+        (not report.strip().startswith("Here is"), "No preamble before title"),
+        (len([line for line in report.split('\n') if line.strip().startswith('##')]) >= 4,
+         "At least 4 section headings present"),
+    ]
+    all_ok = True
+    for condition, label in quality_checks:
+        status = "✅" if condition else "❌"
+        if not condition:
+            all_ok = False
+        print(f"    {status} {label}")
+    return all_ok
+
+
 overall = True
 
 for i, case in enumerate(CASES):
@@ -98,7 +122,12 @@ for i, case in enumerate(CASES):
             case_passed = False
             overall = False
 
-    print(f"\n  → {'✅ PASSED' if case_passed else '❌ FAILED'}")
+    quality_ok = check_quality(report, case["label"])
+    if not quality_ok:
+        case_passed = False
+        overall = False
+
+    print(f"\n  -> {'✅ PASSED' if case_passed else '❌ FAILED'}")
 
 print(f"\n{'='*60}")
 print(f"FINAL RESULT: {'✅ ALL 5 CASES PASSED' if overall else '❌ FAILURES — do not merge to main'}")
