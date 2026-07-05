@@ -1,16 +1,42 @@
 import React, { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 
+const OPTIONAL_SECTION_CONFIG = [
+  {
+    key: 'existing_solutions',
+    label: 'Existing Solutions & Competitors',
+    description: 'Include a competitive analysis table with real market alternatives',
+  },
+  {
+    key: 'target_users',
+    label: 'Target Users',
+    description: 'Include a detailed user persona with pain points and current workarounds',
+  },
+  {
+    key: 'market_risks',
+    label: 'Market Risks',
+    description: 'Include market-specific risks like competition, adoption, and pricing pressure',
+  },
+]
+
 export default function NewProjectPage() {
   const navigate = useNavigate()
-  
+
   const [projectName, setProjectName] = useState('')
   const [projectBrief, setProjectBrief] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [optionalSections, setOptionalSections] = useState({
+    existing_solutions: false,
+    target_users: false,
+    market_risks: false,
+  })
+
+  const toggleSection = (key) => {
+    setOptionalSections((prev) => ({ ...prev, [key]: !prev[key] }))
+  }
 
   const handleSubmit = async () => {
-    // Validate fields
     if (!projectName.trim()) {
       setError('Project Name is required.')
       return
@@ -32,6 +58,11 @@ export default function NewProjectPage() {
         body: JSON.stringify({
           project_name: projectName,
           brief: projectBrief,
+          optional_sections: {
+            existing_solutions: optionalSections.existing_solutions,
+            target_users: optionalSections.target_users,
+            market_risks: optionalSections.market_risks,
+          },
         }),
       })
 
@@ -41,7 +72,6 @@ export default function NewProjectPage() {
 
       const data = await res.json()
       if (data && data.project_id) {
-        // Redirect to detail page
         navigate(`/projects/${data.project_id}`)
       } else {
         throw new Error('No project_id returned in response')
@@ -99,6 +129,36 @@ export default function NewProjectPage() {
             <p className="mt-2 text-xs text-gray-500 leading-relaxed">
               Tip: include your target users, core features, and any tech preferences. Avoid vague one-liners.
             </p>
+          </div>
+
+          {/* Research Sections */}
+          <div>
+            <p className="text-sm font-semibold text-gray-700 mb-1">Research Sections</p>
+            <p className="text-xs text-gray-500 mb-3">
+              The following sections are always included: Problem Space, Technical Landscape,
+              Execution Risks, Recommended Approach, Confidence Score. Select any additional
+              sections you need:
+            </p>
+            <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 space-y-4">
+              {OPTIONAL_SECTION_CONFIG.map(({ key, label, description }) => (
+                <label
+                  key={key}
+                  className="flex items-start gap-3 cursor-pointer"
+                >
+                  <input
+                    type="checkbox"
+                    checked={optionalSections[key]}
+                    onChange={() => toggleSection(key)}
+                    disabled={loading}
+                    className="mt-0.5 h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer flex-shrink-0"
+                  />
+                  <div>
+                    <span className="block text-sm font-medium text-gray-800">{label}</span>
+                    <span className="block text-xs text-gray-500 mt-0.5">{description}</span>
+                  </div>
+                </label>
+              ))}
+            </div>
           </div>
 
           {/* Error Message */}
