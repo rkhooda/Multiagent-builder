@@ -14,8 +14,12 @@ SYSTEM_PROMPT = (
 
 def build_optional_sections_block(optional_sections_str: str) -> str:
     """
-    Parse the optional_sections JSON from state and format it as a clear
-    instruction block to inject into the user message.
+    Build an instruction block injected into the user message.
+
+    Flags each optional section as true/false so the LLM knows exactly what
+    is allowed. When a section is enabled, its full format spec is appended
+    so the LLM knows how to write it — keeping format knowledge out of the
+    system prompt and therefore out of reach when the section is disabled.
     """
     try:
         sections = json.loads(optional_sections_str) if optional_sections_str else {}
@@ -26,25 +30,62 @@ def build_optional_sections_block(optional_sections_str: str) -> str:
     include_users = sections.get("target_users", False)
     include_market = sections.get("market_risks", False)
 
-    block = "OPTIONAL SECTIONS:\n"
-    block += f"- include_existing_solutions: {'true' if include_existing else 'false'}\n"
-    block += f"- include_target_users: {'true' if include_users else 'false'}\n"
-    block += f"- include_market_risks: {'true' if include_market else 'false'}\n"
+    lines = [
+        "─────────────────────────────────────",
+        "OPTIONAL SECTIONS (read carefully):",
+        f"  include_existing_solutions: {'true' if include_existing else 'false'}",
+        f"  include_target_users: {'true' if include_users else 'false'}",
+        f"  include_market_risks: {'true' if include_market else 'false'}",
+        "",
+    ]
 
-    enabled = []
-    if include_existing:
-        enabled.append("Existing Solutions & Competitors")
-    if include_users:
-        enabled.append("Target Users")
-    if include_market:
-        enabled.append("Market Risks")
-
-    if enabled:
-        block += f"\nInclude these optional sections in your report: {', '.join(enabled)}."
+    if not any([include_existing, include_users, include_market]):
+        lines += [
+            "No optional sections are enabled.",
+            "Output ONLY the permanent sections: Problem Space, Technical Landscape,",
+            "Key Risks (Technical Risks + Execution Risks), Recommended Approach,",
+            "Research Confidence Score.",
+            "DO NOT write ## Existing Solutions & Competitors, ## Target Users,",
+            "or ### Market Risks under any circumstances.",
+        ]
     else:
-        block += "\nNo optional sections requested. Include only the permanent default sections."
+        lines.append("The following optional sections are ENABLED — include them:")
+        if include_existing:
+            lines += [
+                "",
+                "## Existing Solutions & Competitors",
+                "A competitive analysis table with at minimum 4 real competitors.",
+                "Columns: Competitor/Solution | Strengths | Weaknesses | Market Position",
+            ]
+        if include_users:
+            lines += [
+                "",
+                "## Target Users",
+                "Include: Primary User Persona title, Job Title/Description,",
+                "3 numbered Main Pain Points, Current Workarounds, What Success Looks Like.",
+            ]
+        if include_market:
+            lines += [
+                "",
+                "### Market Risks (subsection under ## Key Risks, before Execution Risks)",
+                "At minimum 2 market-specific risks: competition, adoption, pricing, regulation.",
+            ]
 
-    return block
+        disabled = []
+        if not include_existing:
+            disabled.append("## Existing Solutions & Competitors")
+        if not include_users:
+            disabled.append("## Target Users")
+        if not include_market:
+            disabled.append("### Market Risks")
+        if disabled:
+            lines += [
+                "",
+                f"FORBIDDEN — do not write: {', '.join(disabled)}",
+            ]
+
+    lines.append("─────────────────────────────────────")
+    return "\n".join(lines)
 
 
 def research_agent(state: dict) -> dict:
