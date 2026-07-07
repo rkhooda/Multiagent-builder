@@ -11,15 +11,22 @@ export function useProjectStream(projectId) {
     let isMounted = true
     let reconnectTimeout = null
 
+    const closeSocket = (socket) => {
+      if (!socket) return
+      socket.onopen = null
+      socket.onmessage = null
+      socket.onclose = null
+      socket.onerror = null
+      socket.close()
+    }
+
     const connect = () => {
       if (!isMounted) return
-      
-      // Close existing socket if open
+
       if (ws.current) {
-        ws.current.close()
+        closeSocket(ws.current)
       }
 
-      console.log(`Connecting to WebSocket for project: ${projectId}`)
       ws.current = new WebSocket(`ws://localhost:8000/ws/projects/${projectId}`)
       
       ws.current.onopen = () => {
@@ -67,9 +74,8 @@ export function useProjectStream(projectId) {
     return () => {
       isMounted = false
       if (reconnectTimeout) clearTimeout(reconnectTimeout)
-      if (ws.current) {
-        ws.current.close()
-      }
+      closeSocket(ws.current)
+      ws.current = null
     }
   }, [projectId])
 
