@@ -14,7 +14,7 @@ MIN_TASKS = 8
 
 def _get_planning_max_tokens(file_count: int) -> int:
     """Scale output budget for large architectures that need one task per file."""
-    return min(16000, max(4500, file_count * 220))
+    return min(32000, max(4500, file_count * 300))
 
 
 def planning_agent(state: dict) -> dict:
@@ -73,7 +73,7 @@ def planning_agent(state: dict) -> dict:
     required_filepaths = set(file_list)
     planning_max_tokens = _get_planning_max_tokens(len(file_list))
 
-    truncated_arch = truncate_for_context(architecture_doc, max_chars=5000)
+    truncated_arch = truncate_for_context(architecture_doc, max_chars=12000)
     if len(truncated_arch) < len(architecture_doc):
         log.append("planning_agent: architecture doc truncated to fit context")
 
