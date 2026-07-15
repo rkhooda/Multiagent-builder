@@ -9,12 +9,12 @@ load_dotenv(dotenv_path=os.path.join(os.path.dirname(os.path.dirname(__file__)),
 MODELS = {
     "research":     ("gemini/gemini-2.5-flash", "groq/llama-3.3-70b-versatile"),
     "requirements": ("gemini/gemini-2.5-flash", "openrouter/cohere/north-mini-code:free"),
-    "architecture": ("openrouter/qwen/qwen3-coder:free", "openrouter/nvidia/nemotron-3-super-120b-a12b:free"),
+    "architecture": ("openrouter/qwen/qwen3-coder:free", "groq/llama-3.3-70b-versatile"),
     "planning":     ("gemini/gemini-2.5-flash", "groq/llama-3.3-70b-versatile"),
     "frontend_code":("openrouter/qwen/qwen3-coder:free", "openrouter/cohere/north-mini-code:free"),
     "backend_code": ("openrouter/cohere/north-mini-code:free", "openrouter/qwen/qwen3-coder:free"),
     "database":     ("groq/llama-3.3-70b-versatile", "openrouter/qwen/qwen3-coder:free"),
-    "qa":           ("openrouter/deepseek/deepseek-r1:free", "gemini/gemini-2.5-flash"),
+    "qa":           ("openrouter/nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free", "gemini/gemini-2.5-flash"),
     "devops":       ("groq/llama-3.3-70b-versatile", "gemini/gemini-2.5-flash"),
 }
 
