@@ -14,11 +14,11 @@ MODELS = {
     "frontend_code":("openrouter/qwen/qwen3-coder:free", "openrouter/cohere/north-mini-code:free"),
     "backend_code": ("openrouter/cohere/north-mini-code:free", "openrouter/qwen/qwen3-coder:free"),
     "database":     ("groq/llama-3.3-70b-versatile", "openrouter/qwen/qwen3-coder:free"),
-    "qa":           ("openrouter/google/gemma-4-31b-it:free", "gemini/gemini-2.5-flash"),
+    "qa":           ("openrouter/deepseek/deepseek-r1:free", "gemini/gemini-2.5-flash"),
     "devops":       ("groq/llama-3.3-70b-versatile", "gemini/gemini-2.5-flash"),
 }
 
-def call_llm(messages: list, agent_type: str, max_tokens=4000) -> str:
+def call_llm(messages: list, agent_type: str, max_tokens=4000, timeout=None) -> str:
     primary, fallback = MODELS.get(agent_type, MODELS["research"])
     last_error = None
 
@@ -29,7 +29,8 @@ def call_llm(messages: list, agent_type: str, max_tokens=4000) -> str:
                     model=model,
                     messages=messages,
                     max_tokens=max_tokens,
-                    temperature=0.3
+                    temperature=0.3,
+                    timeout=timeout
                 )
                 tokens_used = 0
                 if hasattr(resp, 'usage') and resp.usage:

@@ -16,6 +16,7 @@ class ProjectState(TypedDict):
     file_list: List[str]           # list of file paths to generate
     generated_files: Dict[str, str] # filepath -> code content
     qa_report: str
+    qa_issues_count: int
     devops_files: Dict[str, str]
 
     # Control fields
