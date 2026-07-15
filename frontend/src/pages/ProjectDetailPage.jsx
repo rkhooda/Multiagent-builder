@@ -52,6 +52,9 @@ export default function ProjectDetailPage() {
   const { events, setEvents, status, setStatus, resumePipeline } = useProjectStream(projectId)
   const bottomRef = useRef(null)
 
+  // Count files written so far
+  const fileCount = events.filter(e => e.type === 'file_written').length
+
   // Fetch project metadata
   const fetchMetadata = async () => {
     try {
@@ -149,6 +152,11 @@ export default function ProjectDetailPage() {
           border: 'border-l-4 border-orange-500',
           badge: 'bg-orange-100 text-orange-800'
         }
+      case 'file_written':
+        return {
+          border: 'border-l-4 border-blue-500',
+          badge: 'bg-blue-100 text-blue-800'
+        }
       case 'error':
         return {
           border: 'border-l-4 border-red-500',
@@ -231,6 +239,11 @@ export default function ProjectDetailPage() {
           <span className={`px-2.5 py-1 text-xs font-semibold rounded-full border ${getStatusBadgeStyle(displayStatus)}`}>
             {displayStatus.replace('_', ' ').toUpperCase()}
           </span>
+          {fileCount > 0 && (
+            <span className="px-2.5 py-1 text-xs font-semibold rounded-full bg-green-100 text-green-800 border border-green-200">
+              {fileCount} files generated
+            </span>
+          )}
           <Link
             to="/"
             className="text-xs font-semibold text-gray-600 hover:text-gray-900 bg-gray-50 border border-gray-200 px-3 py-1.5 rounded transition-colors"
@@ -246,9 +259,15 @@ export default function ProjectDetailPage() {
         <div className="w-[65%] flex flex-col h-full border-r border-gray-200 bg-white">
           <div className="bg-gray-50 px-6 py-3 border-b border-gray-200 flex justify-between items-center">
             <h3 className="text-sm font-semibold text-gray-700">Live Agent Stream</h3>
-            <span className="text-xs text-gray-500 bg-gray-200 px-2 py-0.5 rounded font-mono">
-              Status: {status}
-            </span>
+            <div className="flex items-center gap-3">
+              <span className="text-xs text-gray-500 bg-gray-200 px-2 py-0.5 rounded font-mono">
+                Status: {status}
+              </span>
+              {/* File counter badge */}
+              <span className="text-xs text-gray-600 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded font-mono">
+                {events.filter(e => e.type === 'file_written').length} files generated
+              </span>
+            </div>
           </div>
 
           <div className="flex-1 overflow-y-auto p-6 space-y-4">
@@ -268,6 +287,28 @@ export default function ProjectDetailPage() {
               <div className="space-y-4 relative before:absolute before:top-2 before:bottom-2 before:left-[13px] before:w-[2px] before:bg-gray-100">
                 {events.map((event, index) => {
                   const styles = getEventStyle(event.type)
+                  
+                  // Special rendering for file_written events
+                  if (event.type === 'file_written') {
+                    return (
+                      <div key={index} className="relative flex items-start space-x-4 pl-8">
+                        <span className="absolute left-0.5 top-1.5 h-6.5 w-6.5 rounded-full border-4 border-white flex items-center justify-center shadow-xs bg-green-500" />
+                        <div className="flex-1 bg-white p-3 rounded-lg border border-green-100 shadow-xs border-l-4 border-green-500">
+                          <div className="flex items-center gap-2">
+                            <span className="text-green-500 text-sm">✓</span>
+                            <span className="font-mono text-xs text-gray-700">{event.filepath}</span>
+                            {event.progress && (
+                              <span className="text-gray-400 text-xs ml-auto font-mono">{event.progress}</span>
+                            )}
+                          </div>
+                          <div className="text-[10px] text-gray-400 mt-1 font-medium">
+                            {formatTime(event.timestamp)}
+                          </div>
+                        </div>
+                      </div>
+                    )
+                  }
+                  
                   return (
                     <div 
                       key={index} 
