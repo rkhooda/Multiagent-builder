@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react'
+import ReactMarkdown from 'react-markdown'
 import MermaidDiagram from './MermaidDiagram'
 import TaskPlanViewer from './TaskPlanViewer'
 
@@ -404,6 +405,32 @@ export default function ApprovalGate({ status, gateEvent, currentStage, eventsCo
                 setModifiedPlan(JSON.stringify(includedTasks))
               }}
             />
+          </div>
+        )}
+
+        {gateName === 'human_gate_4' && (
+          <div className="mt-4">
+            <div className="mb-3 flex items-center gap-2">
+              <span className="text-sm font-bold text-gray-800">QA Report</span>
+              <span
+                className={`rounded-full px-2 py-0.5 text-xs font-semibold ${
+                  (projectState?.qa_issues_count || 0) === 0
+                    ? 'bg-green-100 text-green-700'
+                    : 'bg-orange-100 text-orange-700'
+                }`}
+              >
+                {projectState?.qa_issues_count ?? 0} issue{(projectState?.qa_issues_count ?? 0) === 1 ? '' : 's'} found
+              </span>
+            </div>
+            <ScrollableOutput>
+              {projectState?.qa_report ? (
+                <div className="prose prose-sm max-w-none">
+                  <ReactMarkdown>{projectState.qa_report}</ReactMarkdown>
+                </div>
+              ) : (
+                'Loading QA report...'
+              )}
+            </ScrollableOutput>
           </div>
         )}
 
