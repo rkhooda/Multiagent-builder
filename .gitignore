@@ -7,3 +7,4 @@ venv/
 *.pyc
 .DS_Store
 projects.db*
+server.log
