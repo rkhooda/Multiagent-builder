@@ -233,3 +233,49 @@ def parse_and_validate_plan(llm_response: str) -> tuple[object, list[str]]:
         f"[Utils] Plan parsed: {len(validated_tasks)}/{len(task_list)} tasks valid, {len(errors)} errors"
     )
     return plan, errors
+
+
+def get_tasks_for_phase(implementation_plan_str: str, phase: str) -> list[dict]:
+    """
+    Parses the implementation_plan JSON string and returns only tasks
+    matching the given phase ('database', 'backend', 'frontend', 'devops').
+    Returns empty list if plan is invalid or no matching tasks found.
+    """
+    import json
+    try:
+        all_tasks = json.loads(implementation_plan_str)
+    except (json.JSONDecodeError, TypeError):
+        print(f"[Utils] Could not parse implementation_plan for phase filtering")
+        return []
+
+    if not isinstance(all_tasks, list):
+        return []
+
+    matching = [t for t in all_tasks if t.get("phase") == phase]
+    print(f"[Utils] Found {len(matching)} tasks for phase '{phase}'")
+    return matching
+
+
+def get_completed_file_content(generated_files: dict, task_ids: list[str], all_tasks: list[dict]) -> str:
+    """
+    Given a list of task IDs this task depends on, look up their filepaths
+    and return the already-generated content for context injection.
+    Used so dependent files (e.g. a router that imports from models.py)
+    have access to what was already generated.
+    """
+    if not task_ids:
+        return ""
+
+    task_by_id = {t["id"]: t for t in all_tasks}
+    context_parts = []
+
+    for tid in task_ids:
+        task = task_by_id.get(tid)
+        if not task:
+            continue
+        filepath = task.get("filepath")
+        content = generated_files.get(filepath)
+        if content:
+            context_parts.append(f"--- Already generated: {filepath} ---\n{content}\n")
+
+    return "\n".join(context_parts)
