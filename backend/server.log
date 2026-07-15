@@ -1,0 +1,506 @@
+/Users/rkhooda/Desktop/Coding/Projects/multiagent-builder/backend/venv/lib/python3.9/site-packages/urllib3/__init__.py:35: NotOpenSSLWarning: urllib3 v2 only supports OpenSSL 1.1.1+, currently the 'ssl' module is compiled with 'LibreSSL 2.8.3'. See: https://github.com/urllib3/urllib3/issues/3020
+  warnings.warn(
+/Users/rkhooda/Desktop/Coding/Projects/multiagent-builder/backend/venv/lib/python3.9/site-packages/langgraph/cache/base/__init__.py:8: LangChainPendingDeprecationWarning: The default value of `allowed_objects` will change in a future version. Pass an explicit value (e.g., allowed_objects='messages' or allowed_objects='core') to suppress this warning.
+  from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
+INFO:     Started server process [18452]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+INFO:     127.0.0.1:57961 - "POST /api/projects HTTP/1.1" 200 OK
+/Users/rkhooda/Desktop/Coding/Projects/multiagent-builder/backend/app/agents/search.py:12: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  with DDGS() as ddgs:
+/Users/rkhooda/Desktop/Coding/Projects/multiagent-builder/backend/app/agents/search.py:12: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  with DDGS() as ddgs:
+/Users/rkhooda/Desktop/Coding/Projects/multiagent-builder/backend/app/agents/search.py:12: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  with DDGS() as ddgs:
+/Users/rkhooda/Desktop/Coding/Projects/multiagent-builder/backend/app/agents/search.py:12: RuntimeWarning: This package (`duckduckgo_search`) has been renamed to `ddgs`! Use `pip install ddgs` instead.
+  with DDGS() as ddgs:
+[ResearchAgent] Starting: FreelanceFlow
+[ResearchAgent] Optional sections: {"existing_solutions": false, "target_users": false, "market_risks": false}
+[ResearchAgent] Running targeted web search for: FreelanceFlow
+[ResearchAgent] Web search: no results, proceeding without enrichment
+[ResearchAgent] Calling LLM...
+[LLM] agent=research model=gemini/gemini-2.5-flash tokens_used=6311
+[ResearchAgent] Done. Length: 13160 chars
+INFO:     127.0.0.1:57989 - "POST /api/projects/25ac28ed-78e7-466c-b745-921cb24ce758/resume HTTP/1.1" 200 OK
+[RequirementsAgent] Starting for project: FreelanceFlow
+[RequirementsAgent] Research report truncated to fit context window
+[RequirementsAgent] Calling LLM (primary attempt)...
+[LLM] agent=requirements model=gemini/gemini-2.5-flash tokens_used=6316
+[RequirementsAgent] Extracting tech stack JSON...
+[Utils] Tech stack parsed successfully: React 18 + Vite + TailwindCSS / FastAPI (Python 3.11+)
+[RequirementsAgent] Tech stack: React 18 + Vite + TailwindCSS / FastAPI (Python 3.11+) / PostgreSQL
+[RequirementsAgent] Completed. Doc length: 7999 chars
+INFO:     127.0.0.1:57992 - "POST /api/projects/25ac28ed-78e7-466c-b745-921cb24ce758/resume HTTP/1.1" 200 OK
+[ArchitectureAgent] Starting for project: FreelanceFlow
+[ArchitectureAgent] Calling DeepSeek V3 via OpenRouter...
+
+[1;31mProvider List: https://docs.litellm.ai/docs/providers[0m
+
+
+[1;31mProvider List: https://docs.litellm.ai/docs/providers[0m
+
+
+[1;31mGive Feedback / Get Help: https://github.com/BerriAI/litellm/issues/new[0m
+LiteLLM.Info: If you need to debug this error, use `litellm._turn_on_debug()'.
+
+
+[1;31mProvider List: https://docs.litellm.ai/docs/providers[0m
+
+[LLM ERROR] Model openrouter/qwen/qwen3-coder:free failed for agent=architecture attempt=1: litellm.RateLimitError: RateLimitError: OpenrouterException - {"error":{"message":"Provider returned error","code":429,"metadata":{"raw":"qwen/qwen3-coder:free is temporarily rate-limited upstream. Please retry shortly, or add your own key to accumulate your rate limits: https://openrouter.ai/settings/integrations","provider_name":"Venice","is_byok":false,"retry_after_seconds":26,"retry_after_seconds_raw":25.059,"headers":{"Retry-After":"26"}}},"user_id":"user_3FSTI9iYclTdmPjm64Y2fZyO5Mc"}
+[LLM RETRY] Retrying model openrouter/qwen/qwen3-coder:free in 2s due to transient error...
+
+[1;31mProvider List: https://docs.litellm.ai/docs/providers[0m
+
+
+[1;31mProvider List: https://docs.litellm.ai/docs/providers[0m
+
+
+[1;31mGive Feedback / Get Help: https://github.com/BerriAI/litellm/issues/new[0m
+LiteLLM.Info: If you need to debug this error, use `litellm._turn_on_debug()'.
+
+
+[1;31mProvider List: https://docs.litellm.ai/docs/providers[0m
+
+[LLM ERROR] Model openrouter/qwen/qwen3-coder:free failed for agent=architecture attempt=2: litellm.RateLimitError: RateLimitError: OpenrouterException - {"error":{"message":"Provider returned error","code":429,"metadata":{"raw":"qwen/qwen3-coder:free is temporarily rate-limited upstream. Please retry shortly, or add your own key to accumulate your rate limits: https://openrouter.ai/settings/integrations","provider_name":"Venice","is_byok":false,"retry_after_seconds":23,"retry_after_seconds_raw":22.364,"headers":{"Retry-After":"23"}}},"user_id":"user_3FSTI9iYclTdmPjm64Y2fZyO5Mc"}
+[LLM RETRY] Retrying model openrouter/qwen/qwen3-coder:free in 4s due to transient error...
+
+[1;31mProvider List: https://docs.litellm.ai/docs/providers[0m
+
+
+[1;31mProvider List: https://docs.litellm.ai/docs/providers[0m
+
+
+[1;31mGive Feedback / Get Help: https://github.com/BerriAI/litellm/issues/new[0m
+LiteLLM.Info: If you need to debug this error, use `litellm._turn_on_debug()'.
+
+
+[1;31mProvider List: https://docs.litellm.ai/docs/providers[0m
+
+[LLM ERROR] Model openrouter/qwen/qwen3-coder:free failed for agent=architecture attempt=3: litellm.RateLimitError: RateLimitError: OpenrouterException - {"error":{"message":"Provider returned error","code":429,"metadata":{"raw":"qwen/qwen3-coder:free is temporarily rate-limited upstream. Please retry shortly, or add your own key to accumulate your rate limits: https://openrouter.ai/settings/integrations","provider_name":"Venice","is_byok":false,"retry_after_seconds":18,"retry_after_seconds_raw":17.741,"headers":{"Retry-After":"18"}}},"user_id":"user_3FSTI9iYclTdmPjm64Y2fZyO5Mc"}
+[LLM FALLBACK] Falling back to alternative model: openrouter/nvidia/nemotron-3-super-120b-a12b:free
+
+[1;31mProvider List: https://docs.litellm.ai/docs/providers[0m
+
+
+[1;31mProvider List: https://docs.litellm.ai/docs/providers[0m
+
+
+[1;31mGive Feedback / Get Help: https://github.com/BerriAI/litellm/issues/new[0m
+LiteLLM.Info: If you need to debug this error, use `litellm._turn_on_debug()'.
+
+
+[1;31mProvider List: https://docs.litellm.ai/docs/providers[0m
+
+[LLM ERROR] Model openrouter/nvidia/nemotron-3-super-120b-a12b:free failed for agent=architecture attempt=1: litellm.RateLimitError: RateLimitError: OpenrouterException - {"error":{"message":"Provider returned error","code":429,"metadata":{"raw":"nvidia/nemotron-3-super-120b-a12b:free is temporarily rate-limited upstream. Please retry shortly, or add your own key to accumulate your rate limits: https://openrouter.ai/settings/integrations","provider_name":"Nvidia","is_byok":false}},"user_id":"user_3FSTI9iYclTdmPjm64Y2fZyO5Mc"}
+[LLM RETRY] Retrying model openrouter/nvidia/nemotron-3-super-120b-a12b:free in 2s due to transient error...
+
+[1;31mProvider List: https://docs.litellm.ai/docs/providers[0m
+
+
+[1;31mProvider List: https://docs.litellm.ai/docs/providers[0m
+
+
+[1;31mGive Feedback / Get Help: https://github.com/BerriAI/litellm/issues/new[0m
+LiteLLM.Info: If you need to debug this error, use `litellm._turn_on_debug()'.
+
+
+[1;31mProvider List: https://docs.litellm.ai/docs/providers[0m
+
+[LLM ERROR] Model openrouter/nvidia/nemotron-3-super-120b-a12b:free failed for agent=architecture attempt=2: litellm.RateLimitError: RateLimitError: OpenrouterException - {"error":{"message":"Provider returned error","code":429,"metadata":{"raw":"nvidia/nemotron-3-super-120b-a12b:free is temporarily rate-limited upstream. Please retry shortly, or add your own key to accumulate your rate limits: https://openrouter.ai/settings/integrations","provider_name":"Nvidia","is_byok":false}},"user_id":"user_3FSTI9iYclTdmPjm64Y2fZyO5Mc"}
+[LLM RETRY] Retrying model openrouter/nvidia/nemotron-3-super-120b-a12b:free in 4s due to transient error...
+
+[1;31mProvider List: https://docs.litellm.ai/docs/providers[0m
+
+
+[1;31mProvider List: https://docs.litellm.ai/docs/providers[0m
+
+
+[1;31mGive Feedback / Get Help: https://github.com/BerriAI/litellm/issues/new[0m
+LiteLLM.Info: If you need to debug this error, use `litellm._turn_on_debug()'.
+
+
+[1;31mProvider List: https://docs.litellm.ai/docs/providers[0m
+
+[LLM ERROR] Model openrouter/nvidia/nemotron-3-super-120b-a12b:free failed for agent=architecture attempt=3: litellm.RateLimitError: RateLimitError: OpenrouterException - {"error":{"message":"Provider returned error","code":429,"metadata":{"raw":"nvidia/nemotron-3-super-120b-a12b:free is temporarily rate-limited upstream. Please retry shortly, or add your own key to accumulate your rate limits: https://openrouter.ai/settings/integrations","provider_name":"Nvidia","is_byok":false}},"user_id":"user_3FSTI9iYclTdmPjm64Y2fZyO5Mc"}
+INFO:     127.0.0.1:57999 - "POST /api/projects/25ac28ed-78e7-466c-b745-921cb24ce758/resume HTTP/1.1" 200 OK
+[ArchitectureAgent] Starting for project: FreelanceFlow
+[ArchitectureAgent] Calling DeepSeek V3 via OpenRouter...
+
+[1;31mProvider List: https://docs.litellm.ai/docs/providers[0m
+
+
+[1;31mProvider List: https://docs.litellm.ai/docs/providers[0m
+
+
+[1;31mGive Feedback / Get Help: https://github.com/BerriAI/litellm/issues/new[0m
+LiteLLM.Info: If you need to debug this error, use `litellm._turn_on_debug()'.
+
+
+[1;31mProvider List: https://docs.litellm.ai/docs/providers[0m
+
+[LLM ERROR] Model openrouter/qwen/qwen3-coder:free failed for agent=architecture attempt=1: litellm.RateLimitError: RateLimitError: OpenrouterException - {"error":{"message":"Provider returned error","code":429,"metadata":{"raw":"qwen/qwen3-coder:free is temporarily rate-limited upstream. Please retry shortly, or add your own key to accumulate your rate limits: https://openrouter.ai/settings/integrations","provider_name":"Venice","is_byok":false,"retry_after_seconds":26,"retry_after_seconds_raw":25.324,"headers":{"Retry-After":"26"}}},"user_id":"user_3FSTI9iYclTdmPjm64Y2fZyO5Mc"}
+[LLM RETRY] Retrying model openrouter/qwen/qwen3-coder:free in 2s due to transient error...
+
+[1;31mProvider List: https://docs.litellm.ai/docs/providers[0m
+
+
+[1;31mProvider List: https://docs.litellm.ai/docs/providers[0m
+
+
+[1;31mGive Feedback / Get Help: https://github.com/BerriAI/litellm/issues/new[0m
+LiteLLM.Info: If you need to debug this error, use `litellm._turn_on_debug()'.
+
+
+[1;31mProvider List: https://docs.litellm.ai/docs/providers[0m
+
+[LLM ERROR] Model openrouter/qwen/qwen3-coder:free failed for agent=architecture attempt=2: litellm.RateLimitError: RateLimitError: OpenrouterException - {"error":{"message":"Provider returned error","code":429,"metadata":{"raw":"qwen/qwen3-coder:free is temporarily rate-limited upstream. Please retry shortly, or add your own key to accumulate your rate limits: https://openrouter.ai/settings/integrations","provider_name":"Venice","is_byok":false,"retry_after_seconds":23,"retry_after_seconds_raw":22.602,"headers":{"Retry-After":"23"}}},"user_id":"user_3FSTI9iYclTdmPjm64Y2fZyO5Mc"}
+[LLM RETRY] Retrying model openrouter/qwen/qwen3-coder:free in 4s due to transient error...
+
+[1;31mProvider List: https://docs.litellm.ai/docs/providers[0m
+
+
+[1;31mProvider List: https://docs.litellm.ai/docs/providers[0m
+
+
+[1;31mGive Feedback / Get Help: https://github.com/BerriAI/litellm/issues/new[0m
+LiteLLM.Info: If you need to debug this error, use `litellm._turn_on_debug()'.
+
+
+[1;31mProvider List: https://docs.litellm.ai/docs/providers[0m
+
+[LLM ERROR] Model openrouter/qwen/qwen3-coder:free failed for agent=architecture attempt=3: litellm.RateLimitError: RateLimitError: OpenrouterException - {"error":{"message":"Provider returned error","code":429,"metadata":{"raw":"qwen/qwen3-coder:free is temporarily rate-limited upstream. Please retry shortly, or add your own key to accumulate your rate limits: https://openrouter.ai/settings/integrations","provider_name":"Venice","is_byok":false,"retry_after_seconds":18,"retry_after_seconds_raw":17.918,"headers":{"Retry-After":"18"}}},"user_id":"user_3FSTI9iYclTdmPjm64Y2fZyO5Mc"}
+[LLM FALLBACK] Falling back to alternative model: openrouter/nvidia/nemotron-3-super-120b-a12b:free
+
+[1;31mProvider List: https://docs.litellm.ai/docs/providers[0m
+
+
+[1;31mProvider List: https://docs.litellm.ai/docs/providers[0m
+
+INFO:     127.0.0.1:58002 - "POST /api/projects/25ac28ed-78e7-466c-b745-921cb24ce758/resume HTTP/1.1" 200 OK
+[ArchitectureAgent] Starting for project: FreelanceFlow
+[ArchitectureAgent] Calling DeepSeek V3 via OpenRouter...
+
+[1;31mProvider List: https://docs.litellm.ai/docs/providers[0m
+
+
+[1;31mProvider List: https://docs.litellm.ai/docs/providers[0m
+
+
+[1;31mGive Feedback / Get Help: https://github.com/BerriAI/litellm/issues/new[0m
+LiteLLM.Info: If you need to debug this error, use `litellm._turn_on_debug()'.
+
+
+[1;31mProvider List: https://docs.litellm.ai/docs/providers[0m
+
+[LLM ERROR] Model openrouter/qwen/qwen3-coder:free failed for agent=architecture attempt=1: litellm.RateLimitError: RateLimitError: OpenrouterException - {"error":{"message":"Provider returned error","code":429,"metadata":{"raw":"qwen/qwen3-coder:free is temporarily rate-limited upstream. Please retry shortly, or add your own key to accumulate your rate limits: https://openrouter.ai/settings/integrations","provider_name":"Venice","is_byok":false,"retry_after_seconds":16,"retry_after_seconds_raw":15.519,"headers":{"Retry-After":"16"}}},"user_id":"user_3FSTI9iYclTdmPjm64Y2fZyO5Mc"}
+[LLM RETRY] Retrying model openrouter/qwen/qwen3-coder:free in 2s due to transient error...
+
+[1;31mProvider List: https://docs.litellm.ai/docs/providers[0m
+
+
+[1;31mProvider List: https://docs.litellm.ai/docs/providers[0m
+
+
+[1;31mGive Feedback / Get Help: https://github.com/BerriAI/litellm/issues/new[0m
+LiteLLM.Info: If you need to debug this error, use `litellm._turn_on_debug()'.
+
+
+[1;31mProvider List: https://docs.litellm.ai/docs/providers[0m
+
+[LLM ERROR] Model openrouter/qwen/qwen3-coder:free failed for agent=architecture attempt=2: litellm.RateLimitError: RateLimitError: OpenrouterException - {"error":{"message":"Provider returned error","code":429,"metadata":{"raw":"qwen/qwen3-coder:free is temporarily rate-limited upstream. Please retry shortly, or add your own key to accumulate your rate limits: https://openrouter.ai/settings/integrations","provider_name":"Venice","is_byok":false,"retry_after_seconds":13,"retry_after_seconds_raw":12.861,"headers":{"Retry-After":"13"}}},"user_id":"user_3FSTI9iYclTdmPjm64Y2fZyO5Mc"}
+[LLM RETRY] Retrying model openrouter/qwen/qwen3-coder:free in 4s due to transient error...
+
+[1;31mProvider List: https://docs.litellm.ai/docs/providers[0m
+
+
+[1;31mProvider List: https://docs.litellm.ai/docs/providers[0m
+
+
+[1;31mGive Feedback / Get Help: https://github.com/BerriAI/litellm/issues/new[0m
+LiteLLM.Info: If you need to debug this error, use `litellm._turn_on_debug()'.
+
+
+[1;31mProvider List: https://docs.litellm.ai/docs/providers[0m
+
+[LLM ERROR] Model openrouter/qwen/qwen3-coder:free failed for agent=architecture attempt=3: litellm.RateLimitError: RateLimitError: OpenrouterException - {"error":{"message":"Provider returned error","code":429,"metadata":{"raw":"qwen/qwen3-coder:free is temporarily rate-limited upstream. Please retry shortly, or add your own key to accumulate your rate limits: https://openrouter.ai/settings/integrations","provider_name":"Venice","is_byok":false,"retry_after_seconds":9,"retry_after_seconds_raw":8.175,"headers":{"Retry-After":"9"}}},"user_id":"user_3FSTI9iYclTdmPjm64Y2fZyO5Mc"}
+[LLM FALLBACK] Falling back to alternative model: openrouter/nvidia/nemotron-3-super-120b-a12b:free
+
+[1;31mProvider List: https://docs.litellm.ai/docs/providers[0m
+
+
+[1;31mProvider List: https://docs.litellm.ai/docs/providers[0m
+
+[LLM] agent=architecture model=openrouter/nvidia/nemotron-3-super-120b-a12b:free tokens_used=7055
+
+[1;31mProvider List: https://docs.litellm.ai/docs/providers[0m
+
+[Utils] Could not find folder structure code block in architecture doc
+
+[1;31mProvider List: https://docs.litellm.ai/docs/providers[0m
+
+
+[1;31mProvider List: https://docs.litellm.ai/docs/providers[0m
+
+
+[1;31mGive Feedback / Get Help: https://github.com/BerriAI/litellm/issues/new[0m
+LiteLLM.Info: If you need to debug this error, use `litellm._turn_on_debug()'.
+
+
+[1;31mProvider List: https://docs.litellm.ai/docs/providers[0m
+
+[LLM ERROR] Model openrouter/qwen/qwen3-coder:free failed for agent=architecture attempt=1: litellm.RateLimitError: RateLimitError: OpenrouterException - {"error":{"message":"Provider returned error","code":429,"metadata":{"raw":"qwen/qwen3-coder:free is temporarily rate-limited upstream. Please retry shortly, or add your own key to accumulate your rate limits: https://openrouter.ai/settings/integrations","provider_name":"Venice","is_byok":false,"retry_after_seconds":30,"retry_after_seconds_raw":29.239,"headers":{"Retry-After":"30"}}},"user_id":"user_3FSTI9iYclTdmPjm64Y2fZyO5Mc"}
+[LLM RETRY] Retrying model openrouter/qwen/qwen3-coder:free in 2s due to transient error...
+
+[1;31mProvider List: https://docs.litellm.ai/docs/providers[0m
+
+
+[1;31mProvider List: https://docs.litellm.ai/docs/providers[0m
+
+
+[1;31mGive Feedback / Get Help: https://github.com/BerriAI/litellm/issues/new[0m
+LiteLLM.Info: If you need to debug this error, use `litellm._turn_on_debug()'.
+
+
+[1;31mProvider List: https://docs.litellm.ai/docs/providers[0m
+
+[LLM ERROR] Model openrouter/qwen/qwen3-coder:free failed for agent=architecture attempt=2: litellm.RateLimitError: RateLimitError: OpenrouterException - {"error":{"message":"Provider returned error","code":429,"metadata":{"raw":"qwen/qwen3-coder:free is temporarily rate-limited upstream. Please retry shortly, or add your own key to accumulate your rate limits: https://openrouter.ai/settings/integrations","provider_name":"Venice","is_byok":false,"retry_after_seconds":27,"retry_after_seconds_raw":26.449,"headers":{"Retry-After":"27"}}},"user_id":"user_3FSTI9iYclTdmPjm64Y2fZyO5Mc"}
+[LLM RETRY] Retrying model openrouter/qwen/qwen3-coder:free in 4s due to transient error...
+
+[1;31mProvider List: https://docs.litellm.ai/docs/providers[0m
+
+
+[1;31mProvider List: https://docs.litellm.ai/docs/providers[0m
+
+
+[1;31mGive Feedback / Get Help: https://github.com/BerriAI/litellm/issues/new[0m
+LiteLLM.Info: If you need to debug this error, use `litellm._turn_on_debug()'.
+
+
+[1;31mProvider List: https://docs.litellm.ai/docs/providers[0m
+
+[LLM ERROR] Model openrouter/qwen/qwen3-coder:free failed for agent=architecture attempt=3: litellm.RateLimitError: RateLimitError: OpenrouterException - {"error":{"message":"Provider returned error","code":429,"metadata":{"raw":"qwen/qwen3-coder:free is temporarily rate-limited upstream. Please retry shortly, or add your own key to accumulate your rate limits: https://openrouter.ai/settings/integrations","provider_name":"Venice","is_byok":false,"retry_after_seconds":22,"retry_after_seconds_raw":21.828,"headers":{"Retry-After":"22"}}},"user_id":"user_3FSTI9iYclTdmPjm64Y2fZyO5Mc"}
+[LLM FALLBACK] Falling back to alternative model: openrouter/nvidia/nemotron-3-super-120b-a12b:free
+
+[1;31mProvider List: https://docs.litellm.ai/docs/providers[0m
+
+
+[1;31mProvider List: https://docs.litellm.ai/docs/providers[0m
+
+
+[1;31mGive Feedback / Get Help: https://github.com/BerriAI/litellm/issues/new[0m
+LiteLLM.Info: If you need to debug this error, use `litellm._turn_on_debug()'.
+
+
+[1;31mProvider List: https://docs.litellm.ai/docs/providers[0m
+
+[LLM ERROR] Model openrouter/nvidia/nemotron-3-super-120b-a12b:free failed for agent=architecture attempt=1: litellm.RateLimitError: RateLimitError: OpenrouterException - {"error":{"message":"Provider returned error","code":429,"metadata":{"raw":"nvidia/nemotron-3-super-120b-a12b:free is temporarily rate-limited upstream. Please retry shortly, or add your own key to accumulate your rate limits: https://openrouter.ai/settings/integrations","provider_name":"Nvidia","is_byok":false}},"user_id":"user_3FSTI9iYclTdmPjm64Y2fZyO5Mc"}
+[LLM RETRY] Retrying model openrouter/nvidia/nemotron-3-super-120b-a12b:free in 2s due to transient error...
+
+[1;31mProvider List: https://docs.litellm.ai/docs/providers[0m
+
+
+[1;31mProvider List: https://docs.litellm.ai/docs/providers[0m
+
+
+[1;31mGive Feedback / Get Help: https://github.com/BerriAI/litellm/issues/new[0m
+LiteLLM.Info: If you need to debug this error, use `litellm._turn_on_debug()'.
+
+
+[1;31mProvider List: https://docs.litellm.ai/docs/providers[0m
+
+[LLM ERROR] Model openrouter/nvidia/nemotron-3-super-120b-a12b:free failed for agent=architecture attempt=2: litellm.RateLimitError: RateLimitError: OpenrouterException - {"error":{"message":"Provider returned error","code":429,"metadata":{"raw":"nvidia/nemotron-3-super-120b-a12b:free is temporarily rate-limited upstream. Please retry shortly, or add your own key to accumulate your rate limits: https://openrouter.ai/settings/integrations","provider_name":"Nvidia","is_byok":false}},"user_id":"user_3FSTI9iYclTdmPjm64Y2fZyO5Mc"}
+[LLM RETRY] Retrying model openrouter/nvidia/nemotron-3-super-120b-a12b:free in 4s due to transient error...
+
+[1;31mProvider List: https://docs.litellm.ai/docs/providers[0m
+
+
+[1;31mProvider List: https://docs.litellm.ai/docs/providers[0m
+
+[LLM] agent=architecture model=openrouter/nvidia/nemotron-3-super-120b-a12b:free tokens_used=12239
+
+[1;31mProvider List: https://docs.litellm.ai/docs/providers[0m
+
+[Utils] Parsed 111 files from folder structure
+[ArchitectureAgent] Parsing folder structure to extract file list...
+[Utils] Parsed 111 files from folder structure
+[ArchitectureAgent] File list: 111 files extracted
+[ArchitectureAgent] Mermaid diagrams found: 2
+[ArchitectureAgent] Completed. Doc: 16937 chars, Files: 111
+[PlanningAgent] Starting for project: FreelanceFlow
+[PlanningAgent] Calling Gemini 2.5 Flash for task plan...
+[LLM] agent=architecture model=openrouter/nvidia/nemotron-3-super-120b-a12b:free tokens_used=7055
+
+[1;31mProvider List: https://docs.litellm.ai/docs/providers[0m
+
+[Utils] Parsed 56 files from folder structure
+
+[1;31mProvider List: https://docs.litellm.ai/docs/providers[0m
+
+
+[1;31mProvider List: https://docs.litellm.ai/docs/providers[0m
+
+
+[1;31mGive Feedback / Get Help: https://github.com/BerriAI/litellm/issues/new[0m
+LiteLLM.Info: If you need to debug this error, use `litellm._turn_on_debug()'.
+
+
+[1;31mProvider List: https://docs.litellm.ai/docs/providers[0m
+
+[LLM ERROR] Model openrouter/qwen/qwen3-coder:free failed for agent=architecture attempt=1: litellm.RateLimitError: RateLimitError: OpenrouterException - {"error":{"message":"Provider returned error","code":429,"metadata":{"raw":"qwen/qwen3-coder:free is temporarily rate-limited upstream. Please retry shortly, or add your own key to accumulate your rate limits: https://openrouter.ai/settings/integrations","provider_name":"Venice","is_byok":false,"retry_after_seconds":5,"retry_after_seconds_raw":4.381,"headers":{"Retry-After":"5"}}},"user_id":"user_3FSTI9iYclTdmPjm64Y2fZyO5Mc"}
+[LLM RETRY] Retrying model openrouter/qwen/qwen3-coder:free in 2s due to transient error...
+
+[1;31mProvider List: https://docs.litellm.ai/docs/providers[0m
+
+
+[1;31mProvider List: https://docs.litellm.ai/docs/providers[0m
+
+
+[1;31mGive Feedback / Get Help: https://github.com/BerriAI/litellm/issues/new[0m
+LiteLLM.Info: If you need to debug this error, use `litellm._turn_on_debug()'.
+
+
+[1;31mProvider List: https://docs.litellm.ai/docs/providers[0m
+
+[LLM ERROR] Model openrouter/qwen/qwen3-coder:free failed for agent=architecture attempt=2: litellm.RateLimitError: RateLimitError: OpenrouterException - {"error":{"message":"Provider returned error","code":429,"metadata":{"raw":"qwen/qwen3-coder:free is temporarily rate-limited upstream. Please retry shortly, or add your own key to accumulate your rate limits: https://openrouter.ai/settings/integrations","provider_name":"Venice","is_byok":false,"retry_after_seconds":2,"retry_after_seconds_raw":1.697,"headers":{"Retry-After":"2"}}},"user_id":"user_3FSTI9iYclTdmPjm64Y2fZyO5Mc"}
+[LLM RETRY] Retrying model openrouter/qwen/qwen3-coder:free in 4s due to transient error...
+
+[1;31mProvider List: https://docs.litellm.ai/docs/providers[0m
+
+
+[1;31mProvider List: https://docs.litellm.ai/docs/providers[0m
+
+
+[1;31mGive Feedback / Get Help: https://github.com/BerriAI/litellm/issues/new[0m
+LiteLLM.Info: If you need to debug this error, use `litellm._turn_on_debug()'.
+
+
+[1;31mProvider List: https://docs.litellm.ai/docs/providers[0m
+
+[LLM ERROR] Model openrouter/qwen/qwen3-coder:free failed for agent=architecture attempt=3: litellm.RateLimitError: RateLimitError: OpenrouterException - {"error":{"message":"Provider returned error","code":429,"metadata":{"raw":"qwen/qwen3-coder:free is temporarily rate-limited upstream. Please retry shortly, or add your own key to accumulate your rate limits: https://openrouter.ai/settings/integrations","provider_name":"Venice","is_byok":false,"retry_after_seconds":28,"retry_after_seconds_raw":27.038,"headers":{"Retry-After":"28"}}},"user_id":"user_3FSTI9iYclTdmPjm64Y2fZyO5Mc"}
+[LLM FALLBACK] Falling back to alternative model: openrouter/nvidia/nemotron-3-super-120b-a12b:free
+
+[1;31mProvider List: https://docs.litellm.ai/docs/providers[0m
+
+
+[1;31mProvider List: https://docs.litellm.ai/docs/providers[0m
+
+
+[1;31mGive Feedback / Get Help: https://github.com/BerriAI/litellm/issues/new[0m
+LiteLLM.Info: If you need to debug this error, use `litellm._turn_on_debug()'.
+
+
+[1;31mProvider List: https://docs.litellm.ai/docs/providers[0m
+
+[LLM ERROR] Model openrouter/nvidia/nemotron-3-super-120b-a12b:free failed for agent=architecture attempt=1: litellm.RateLimitError: RateLimitError: OpenrouterException - {"error":{"message":"Provider returned error","code":429,"metadata":{"raw":"nvidia/nemotron-3-super-120b-a12b:free is temporarily rate-limited upstream. Please retry shortly, or add your own key to accumulate your rate limits: https://openrouter.ai/settings/integrations","provider_name":"Nvidia","is_byok":false}},"user_id":"user_3FSTI9iYclTdmPjm64Y2fZyO5Mc"}
+[LLM RETRY] Retrying model openrouter/nvidia/nemotron-3-super-120b-a12b:free in 2s due to transient error...
+
+[1;31mProvider List: https://docs.litellm.ai/docs/providers[0m
+
+
+[1;31mProvider List: https://docs.litellm.ai/docs/providers[0m
+
+INFO:     127.0.0.1:58009 - "GET /api/projects/25ac28ed-78e7-466c-b745-921cb24ce758 HTTP/1.1" 200 OK
+[LLM] agent=planning model=gemini/gemini-2.5-flash tokens_used=29573
+[Utils] Plan parsed: 111/112 tasks valid, 1 errors
+[PlanningAgent] Plan complete: {'total': 111, 'database': 14, 'backend': 40, 'frontend': 57, 'devops': 0, 'low_complexity': 29, 'medium_complexity': 59, 'high_complexity': 23}
+INFO:     127.0.0.1:58021 - "GET /api/projects/25ac28ed-78e7-466c-b745-921cb24ce758 HTTP/1.1" 200 OK
+[LLM] agent=architecture model=openrouter/nvidia/nemotron-3-super-120b-a12b:free tokens_used=7898
+
+[1;31mProvider List: https://docs.litellm.ai/docs/providers[0m
+
+[Utils] Parsed 153 files from folder structure
+
+[1;31mProvider List: https://docs.litellm.ai/docs/providers[0m
+
+
+[1;31mProvider List: https://docs.litellm.ai/docs/providers[0m
+
+
+[1;31mGive Feedback / Get Help: https://github.com/BerriAI/litellm/issues/new[0m
+LiteLLM.Info: If you need to debug this error, use `litellm._turn_on_debug()'.
+
+
+[1;31mProvider List: https://docs.litellm.ai/docs/providers[0m
+
+[LLM ERROR] Model openrouter/qwen/qwen3-coder:free failed for agent=architecture attempt=1: litellm.RateLimitError: RateLimitError: OpenrouterException - {"error":{"message":"Provider returned error","code":429,"metadata":{"raw":"qwen/qwen3-coder:free is temporarily rate-limited upstream. Please retry shortly, or add your own key to accumulate your rate limits: https://openrouter.ai/settings/integrations","provider_name":"Venice","is_byok":false,"retry_after_seconds":10,"retry_after_seconds_raw":9.057,"headers":{"Retry-After":"10"}}},"user_id":"user_3FSTI9iYclTdmPjm64Y2fZyO5Mc"}
+[LLM RETRY] Retrying model openrouter/qwen/qwen3-coder:free in 2s due to transient error...
+
+[1;31mProvider List: https://docs.litellm.ai/docs/providers[0m
+
+
+[1;31mProvider List: https://docs.litellm.ai/docs/providers[0m
+
+
+[1;31mGive Feedback / Get Help: https://github.com/BerriAI/litellm/issues/new[0m
+LiteLLM.Info: If you need to debug this error, use `litellm._turn_on_debug()'.
+
+
+[1;31mProvider List: https://docs.litellm.ai/docs/providers[0m
+
+[LLM ERROR] Model openrouter/qwen/qwen3-coder:free failed for agent=architecture attempt=2: litellm.RateLimitError: RateLimitError: OpenrouterException - {"error":{"message":"Provider returned error","code":429,"metadata":{"raw":"qwen/qwen3-coder:free is temporarily rate-limited upstream. Please retry shortly, or add your own key to accumulate your rate limits: https://openrouter.ai/settings/integrations","provider_name":"Venice","is_byok":false,"retry_after_seconds":6,"retry_after_seconds_raw":5.397,"headers":{"Retry-After":"6"}}},"user_id":"user_3FSTI9iYclTdmPjm64Y2fZyO5Mc"}
+[LLM RETRY] Retrying model openrouter/qwen/qwen3-coder:free in 4s due to transient error...
+
+[1;31mProvider List: https://docs.litellm.ai/docs/providers[0m
+
+
+[1;31mProvider List: https://docs.litellm.ai/docs/providers[0m
+
+
+[1;31mGive Feedback / Get Help: https://github.com/BerriAI/litellm/issues/new[0m
+LiteLLM.Info: If you need to debug this error, use `litellm._turn_on_debug()'.
+
+
+[1;31mProvider List: https://docs.litellm.ai/docs/providers[0m
+
+[LLM ERROR] Model openrouter/qwen/qwen3-coder:free failed for agent=architecture attempt=3: litellm.RateLimitError: RateLimitError: OpenrouterException - {"error":{"message":"Provider returned error","code":429,"metadata":{"raw":"qwen/qwen3-coder:free is temporarily rate-limited upstream. Please retry shortly, or add your own key to accumulate your rate limits: https://openrouter.ai/settings/integrations","provider_name":"Venice","is_byok":false,"retry_after_seconds":1,"retry_after_seconds_raw":0.565,"headers":{"Retry-After":"1"}}},"user_id":"user_3FSTI9iYclTdmPjm64Y2fZyO5Mc"}
+[LLM FALLBACK] Falling back to alternative model: openrouter/nvidia/nemotron-3-super-120b-a12b:free
+
+[1;31mProvider List: https://docs.litellm.ai/docs/providers[0m
+
+
+[1;31mProvider List: https://docs.litellm.ai/docs/providers[0m
+
+
+[1;31mGive Feedback / Get Help: https://github.com/BerriAI/litellm/issues/new[0m
+LiteLLM.Info: If you need to debug this error, use `litellm._turn_on_debug()'.
+
+
+[1;31mProvider List: https://docs.litellm.ai/docs/providers[0m
+
+[LLM ERROR] Model openrouter/nvidia/nemotron-3-super-120b-a12b:free failed for agent=architecture attempt=1: litellm.RateLimitError: RateLimitError: OpenrouterException - {"error":{"message":"Provider returned error","code":429,"metadata":{"raw":"nvidia/nemotron-3-super-120b-a12b:free is temporarily rate-limited upstream. Please retry shortly, or add your own key to accumulate your rate limits: https://openrouter.ai/settings/integrations","provider_name":"Nvidia","is_byok":false}},"user_id":"user_3FSTI9iYclTdmPjm64Y2fZyO5Mc"}
+[LLM RETRY] Retrying model openrouter/nvidia/nemotron-3-super-120b-a12b:free in 2s due to transient error...
+
+[1;31mProvider List: https://docs.litellm.ai/docs/providers[0m
+
+
+[1;31mProvider List: https://docs.litellm.ai/docs/providers[0m
+
+
+[1;31mGive Feedback / Get Help: https://github.com/BerriAI/litellm/issues/new[0m
+LiteLLM.Info: If you need to debug this error, use `litellm._turn_on_debug()'.
+
+
+[1;31mProvider List: https://docs.litellm.ai/docs/providers[0m
+
+[LLM ERROR] Model openrouter/nvidia/nemotron-3-super-120b-a12b:free failed for agent=architecture attempt=2: litellm.RateLimitError: RateLimitError: OpenrouterException - {"error":{"message":"Provider returned error","code":429,"metadata":{"raw":"nvidia/nemotron-3-super-120b-a12b:free is temporarily rate-limited upstream. Please retry shortly, or add your own key to accumulate your rate limits: https://openrouter.ai/settings/integrations","provider_name":"Nvidia","is_byok":false}},"user_id":"user_3FSTI9iYclTdmPjm64Y2fZyO5Mc"}
+[LLM RETRY] Retrying model openrouter/nvidia/nemotron-3-super-120b-a12b:free in 4s due to transient error...
+
+[1;31mProvider List: https://docs.litellm.ai/docs/providers[0m
+
+
+[1;31mProvider List: https://docs.litellm.ai/docs/providers[0m
+
+
+[1;31mGive Feedback / Get Help: https://github.com/BerriAI/litellm/issues/new[0m
+LiteLLM.Info: If you need to debug this error, use `litellm._turn_on_debug()'.
+
+
+[1;31mProvider List: https://docs.litellm.ai/docs/providers[0m
+
+[LLM ERROR] Model openrouter/nvidia/nemotron-3-super-120b-a12b:free failed for agent=architecture attempt=3: litellm.APIError: APIError: OpenrouterException - Upstream error from Nvidia: ResourceExhausted: Worker local total request limit reached (33/32)
+INFO:     127.0.0.1:58025 - "GET /api/projects/25ac28ed-78e7-466c-b745-921cb24ce758 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58027 - "GET /api/projects/25ac28ed-78e7-466c-b745-921cb24ce758 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58029 - "GET /api/projects/25ac28ed-78e7-466c-b745-921cb24ce758 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58033 - "GET /api/projects/25ac28ed-78e7-466c-b745-921cb24ce758 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58058 - "GET /api/projects/25ac28ed-78e7-466c-b745-921cb24ce758 HTTP/1.1" 200 OK
