@@ -8,6 +8,8 @@ from app.agents.research_agent import research_agent
 from app.agents.requirements_agent import requirements_agent
 from app.agents.architecture_agent import architecture_agent
 from app.agents.planning_agent import planning_agent
+from app.agents.database_agent import database_agent
+from app.agents.devops_agent import devops_agent
 
 def human_gate_1(state: ProjectState) -> Dict:
     # Empty pass-through function. LangGraph pauses before this node.
@@ -35,25 +37,11 @@ def backend_code(state: ProjectState) -> Dict:
         "current_stage": "backend_code"
     }
 
-def database(state: ProjectState) -> Dict:
-    current_log = state.get("log") or []
-    return {
-        "log": current_log + ["database ran"],
-        "current_stage": "database"
-    }
-
 def qa(state: ProjectState) -> Dict:
     current_log = state.get("log") or []
     return {
         "log": current_log + ["qa ran"],
         "current_stage": "qa"
-    }
-
-def devops(state: ProjectState) -> Dict:
-    current_log = state.get("log") or []
-    return {
-        "log": current_log + ["devops ran"],
-        "current_stage": "devops"
     }
 
 def human_gate_4(state: ProjectState) -> Dict:
@@ -73,9 +61,9 @@ workflow.add_node("planning", planning_agent)
 workflow.add_node("human_gate_3", human_gate_3)
 workflow.add_node("frontend_code", frontend_code)
 workflow.add_node("backend_code", backend_code)
-workflow.add_node("database", database)
+workflow.add_node("database", database_agent)
 workflow.add_node("qa", qa)
-workflow.add_node("devops", devops)
+workflow.add_node("devops", devops_agent)
 workflow.add_node("human_gate_4", human_gate_4)
 
 # Wire all edges
