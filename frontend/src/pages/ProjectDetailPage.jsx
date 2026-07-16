@@ -61,6 +61,10 @@ export default function ProjectDetailPage() {
   const [projectMetadata, setProjectMetadata] = useState(null)
   const [metadataLoading, setMetadataLoading] = useState(true)
   const [metadataError, setMetadataError] = useState('')
+  // Which gate (if any) is currently re-running with human feedback. While set,
+  // the gate card stays mounted showing its regenerating overlay instead of
+  // being swapped out for the live feed.
+  const [regeneratingGate, setRegeneratingGate] = useState(null)
   
   const { events, setEvents, status, setStatus, resumePipeline } = useProjectStream(projectId)
   const bottomRef = useRef(null)
@@ -137,7 +141,9 @@ export default function ProjectDetailPage() {
     const lastEvent = events[events.length - 1]
     if (!lastEvent) return
     if (['gate_reached', 'pipeline_complete', 'project_cancelled', 'error'].includes(lastEvent.type)) {
-      fetchMetadata()
+      // Clear the regenerating flag only after fresh metadata lands, so the
+      // gate card never unmounts (and loses its diff/overlay state) in between.
+      fetchMetadata().then(() => setRegeneratingGate(null))
     }
   }, [events])
 
@@ -165,8 +171,14 @@ export default function ProjectDetailPage() {
   const currentStage = latestCompleteEvent ? latestCompleteEvent.stage : (projectMetadata ? projectMetadata.current_stage : '')
 
   const handleResume = async (decision, feedback) => {
-    // If approving or editing, first set status back to connecting/running
-    setStatus('connecting')
+    const currentGate = projectMetadata?.next_gate || ''
+    if (decision === 'edit' && (currentGate === 'human_gate_1' || currentGate === 'human_gate_2')) {
+      // Feedback re-run loops back to this same gate — keep its card mounted
+      // (with the regenerating overlay) rather than swapping to the live feed.
+      setRegeneratingGate(currentGate)
+    } else {
+      setStatus('connecting')
+    }
     await resumePipeline(decision, feedback)
     // Refetch metadata after a short delay to sync current stage and status
     setTimeout(() => {
@@ -263,8 +275,12 @@ export default function ProjectDetailPage() {
   const name = projectMetadata ? projectMetadata.project_name : 'Project Pipeline'
   const displayStatus = status === 'connecting' || status === 'reconnecting' ? 'running' : status === 'done' ? 'completed' : status
 
-  const gateName = projectMetadata?.next_gate || activeGateEvent?.gate || ''
-  const isFullWidthGate = displayStatus === 'awaiting_approval' && (gateName === 'human_gate_1' || gateName === 'human_gate_2')
+  // While a feedback re-run is in flight, next_gate goes null in refetches —
+  // fall back to the gate we were on so its card stays mounted.
+  const gateName = regeneratingGate || projectMetadata?.next_gate || activeGateEvent?.gate || ''
+  const isFullWidthGate =
+    (displayStatus === 'awaiting_approval' || regeneratingGate) &&
+    (gateName === 'human_gate_1' || gateName === 'human_gate_2')
 
   return (
     <div className="flex flex-col h-full bg-[#f9fafb]">

@@ -65,10 +65,13 @@ export default function Gate1Approval({ projectId, projectState, status, onResum
     if (status !== 'awaiting_approval') {
       hasLeftApprovalRef.current = true
     } else if (hasLeftApprovalRef.current) {
+      // Back at the gate after a feedback re-run — open the diff so the
+      // changes are immediately visible.
+      if (regenerating) setShowDiff(true)
       setRegenerating(false)
       hasLeftApprovalRef.current = false
     }
-  }, [status])
+  }, [status, regenerating])
 
   const handleApprove = async () => {
     setSubmitting('approve')

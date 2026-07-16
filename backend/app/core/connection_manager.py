@@ -8,6 +8,17 @@ class ConnectionManager:
         self.active: dict[str, WebSocket] = {}
         self.buffer: dict[str, list] = {}  # last 10 events per project
         self.loops: dict[str, asyncio.AbstractEventLoop] = {}
+        self._seq = 0
+
+    def _stamp(self, event: dict) -> dict:
+        # Give every fresh event a unique seq so two otherwise-identical events
+        # (e.g. gate_reached for the same gate after a feedback re-run) are
+        # distinguishable client-side. Buffered events resent on reconnect keep
+        # their original seq, so the client can still dedupe redeliveries.
+        if event.get("type") == "heartbeat" or "seq" in event:
+            return event
+        self._seq += 1
+        return {**event, "seq": self._seq}
 
     async def connect(self, project_id: str, ws: WebSocket):
         await ws.accept()
@@ -22,6 +33,7 @@ class ConnectionManager:
         self.loops.pop(project_id, None)
 
     async def broadcast(self, project_id: str, event: dict):
+        event = self._stamp(event)
         # Buffer the event if it is not a heartbeat
         if event.get("type") != "heartbeat":
             if project_id not in self.buffer:
@@ -41,6 +53,7 @@ class ConnectionManager:
         Sync-safe broadcast for use inside synchronous agent functions.
         Uses the running event loop if available, otherwise creates a new one.
         """
+        event = self._stamp(event)
         if event.get("type") != "heartbeat":
             if project_id not in self.buffer:
                 self.buffer[project_id] = []
