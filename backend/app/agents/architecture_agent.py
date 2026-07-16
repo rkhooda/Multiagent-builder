@@ -232,4 +232,5 @@ CRITICAL REQUIREMENTS:
         "current_stage": "planning",
         "human_feedback": "",
         "human_decision": "",
+        "_agent_event": True,
     }

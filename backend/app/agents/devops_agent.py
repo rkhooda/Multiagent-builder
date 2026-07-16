@@ -170,5 +170,6 @@ Generate the complete file content now. Output ONLY the raw file content — no 
         "devops_files": devops_files,
         "log": log,
         "errors": errors,
-        "current_stage": "qa"
+        "current_stage": "qa",
+        "_agent_event": True
     }

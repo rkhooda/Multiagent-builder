@@ -159,5 +159,6 @@ Generate the complete file content now. Output ONLY the raw file code — no exp
         "generated_files": generated_files,
         "log": log,
         "errors": errors,
-        "current_stage": "backend_code"
+        "current_stage": "backend_code",
+        "_agent_event": True
     }

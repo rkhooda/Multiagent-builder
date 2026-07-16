@@ -183,5 +183,6 @@ At the very end of your response, output the tech stack as a JSON code block."""
         "errors": errors,
         "current_stage": "architecture",
         "human_feedback": "",
-        "human_decision": ""
+        "human_decision": "",
+        "_agent_event": True
     }

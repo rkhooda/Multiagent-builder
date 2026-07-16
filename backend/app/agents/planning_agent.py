@@ -213,4 +213,5 @@ CRITICAL RULES:
         "log": log,
         "errors": errors,
         "current_stage": "frontend_code",
+        "_agent_event": True,
     }

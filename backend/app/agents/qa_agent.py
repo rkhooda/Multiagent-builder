@@ -288,5 +288,6 @@ def qa_agent(state: dict) -> dict:
         "qa_issues_count": qa_issues_count,
         "log": log,
         "errors": errors,
-        "current_stage": "devops"
+        "current_stage": "devops",
+        "_agent_event": True
     }
