@@ -192,3 +192,65 @@ cost in this pipeline's wall-clock time, not model latency itself.
   `npx vite build` (clean) and by reading back the final project state's `qa_report` field.
 - See Warning #5 for the one real quality gap found: bracket-format parsing is brittle against
   models that don't follow the exact requested format.
+
+## Day 13 observations
+
+Scope: replace the stub approval modal with rich Gate 1 (research + requirements) and Gate 2
+(architecture) approval UIs, backed by real conditional routing in LangGraph (approve / edit /
+reject). Task 0 triage found no Day 12 blockers — research/requirements/architecture never
+crashed in either prior run, so no fixes were needed before starting.
+
+### Pipeline restructure
+The gate boundaries were moved to match the UI spec: previously `human_gate_1` sat between
+`research` and `requirements` (reviewing research only), and `human_gate_2` sat between
+`requirements` and `architecture` (reviewing requirements only). Today's brief wanted Gate 1 to
+review research + requirements together, and Gate 2 to review architecture alone. Re-wired to
+`research -> requirements -> human_gate_1 -> architecture -> human_gate_2 -> planning`. Verified
+against a live run (project `0bef33f9-847b-4ec5-b025-295c89ec3f3d`) that both `research_report`
+and `requirements_doc` are populated by the time gate 1 pauses.
+
+### Conditional routing + feedback loop — verified live, all paths work
+- **Reject**: gate 1 reject on project `bf4087c7-bbde-449a-a68a-1e5623666865` routed to a new
+  `cancelled` node -> `END`; final project status correctly became `cancelled` (not
+  `completed`), confirmed via `GET /api/projects/{id}`.
+- **Edit**: submitting `{"decision":"edit","feedback":"Add a requirement for dark mode support"}`
+  at gate 1 re-ran `requirements_agent` with the old doc + feedback injected, the graph looped
+  back and re-paused at `human_gate_1` again, `previous_versions.requirements_doc` captured the
+  exact old doc (5466 chars, byte-for-byte length match), and `human_feedback`/`human_decision`
+  were both cleared to `""` afterward — confirmed the model addressed the feedback (mentions
+  "dark"/"theme" in the regenerated doc, just not the literal phrase "dark mode").
+- **Direct edit (PATCH)**: `PATCH /api/projects/{id}/state` with
+  `{"field":"requirements_doc","content":"PATCHED TEST CONTENT"}` overwrote the field in the
+  paused graph state instantly, no LLM call. Approving afterward correctly fed the patched
+  (deliberately garbage) text into `architecture_agent` — no `requirements_doc is empty` warning
+  appeared in the log, proving the edited value — not a stale cached one — is what flows
+  downstream. (Architecture output was generic/low-quality as a direct result of the garbage
+  test input; that's expected test fallout, not a bug.)
+
+### Frontend
+`Gate1Approval.jsx` / `Gate2Approval.jsx` render full-width (not the old cramped 35% sidebar
+modal) when the project is awaiting approval at gate 1/2. Verified visually via a live browser
+check (Playwright) against project `0bef33f9-847b-4ec5-b025-295c89ec3f3d` at gate 2: folder tree,
+API endpoints markdown table, Mermaid ER diagram (rendered as an actual SVG showing
+USER/TODO/NOTIFICATION with relationship labels), collapsible SQL block, and the Security Notes
+markdown list all rendered correctly with zero console errors (one pre-existing benign
+StrictMode double-mount WebSocket warning, unrelated to today's work).
+
+### Known gaps / left for later
+- The architecture markdown section parser (`splitArchitectureSections` in `Gate2Approval.jsx`)
+  splits on `## ` headings and keyword-matches section names (`folder`, `api`, `database`,
+  `security`). It has a whole-document Mermaid-aware fallback if parsing fails, but this hasn't
+  been exercised against a real parse failure yet — only the happy path was observed live today.
+- Gate 3 (planning) and Gate 4 (QA/devops) still use the older `ApprovalGate.jsx` component
+  as-is; only gates 1 and 2 were in scope for today.
+- Gate 1's inline-edit + diff-view interaction wasn't visually verified in the browser today
+  (only backend PATCH + curl-level checks) — worth a follow-up visual pass before considering the
+  editing UX fully done.
+
+**Update**: Gate 1 was visually verified live (project `14e1209b-a8c1-48f9-a962-300534a8e093`,
+Playwright browser check) — two-panel layout renders correctly, tech stack card shows as a clean
+grid (not raw JSON), sticky action bar visible, and the inline Edit toggle works: clicking
+"✏️ Edit" swaps the requirements panel to a pre-filled textarea with Save/Discard, and Discard
+correctly reverts to the rendered markdown view with 0 console errors. The remaining unverified
+item is the diff view specifically (red/green line rendering) — not exercised in a live browser
+today, only unit-level confidence from the `diff` package's `diffLines` API and code review.
