@@ -8,3 +8,4 @@ venv/
 .DS_Store
 projects.db*
 server.log
+.playwright-mcp/
