@@ -26,6 +26,12 @@ class ProjectResumeRequest(BaseModel):
     decision: str = Field(..., description="Decision: approve, edit, or reject")
     feedback: str = Field("", description="Optional human feedback")
 
+EDITABLE_STATE_FIELDS = {"requirements_doc", "architecture_doc"}
+
+class ProjectStateEditRequest(BaseModel):
+    field: str = Field(..., description="State field to overwrite")
+    content: str = Field(..., description="New content for the field")
+
 executor = ThreadPoolExecutor(max_workers=10)
 
 def get_next_event(iterator):
@@ -103,12 +109,20 @@ async def run_graph_background(project_id: str, config: dict, initial_state=None
                 "status": "awaiting_approval"
             })
         else:
-            # Update SQLite database project status to completed
-            update_project_status(project_id, "completed", "completed")
-            await manager.broadcast(project_id, {
-                "type": "pipeline_complete",
-                "project_id": project_id
-            })
+            final_decision = state_snapshot.values.get("human_decision", "")
+            if final_decision == "reject":
+                update_project_status(project_id, "cancelled", "cancelled")
+                await manager.broadcast(project_id, {
+                    "type": "project_cancelled",
+                    "project_id": project_id
+                })
+            else:
+                # Update SQLite database project status to completed
+                update_project_status(project_id, "completed", "completed")
+                await manager.broadcast(project_id, {
+                    "type": "pipeline_complete",
+                    "project_id": project_id
+                })
             
     except Exception as e:
         error_message = str(e)
@@ -155,6 +169,7 @@ def serialize_project_state(state_snapshot, project_id: str) -> dict:
         "qa_report": values.get("qa_report", ""),
         "qa_issues_count": values.get("qa_issues_count", 0),
         "devops_files": values.get("devops_files", {}),
+        "previous_versions": values.get("previous_versions", {}),
         "current_stage": values.get("current_stage", ""),
         "human_feedback": values.get("human_feedback", ""),
         "human_decision": values.get("human_decision", ""),
@@ -235,6 +250,27 @@ def get_project(project_id: str):
         raise HTTPException(status_code=404, detail="Project not found")
         
     return serialize_project_state(state_snapshot, project_id)
+
+@router.patch("/{project_id}/state")
+def edit_project_state(project_id: str, request: ProjectStateEditRequest):
+    if request.field not in EDITABLE_STATE_FIELDS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"field must be one of {sorted(EDITABLE_STATE_FIELDS)}"
+        )
+
+    config = {"configurable": {"thread_id": project_id}}
+    state_snapshot = graph.get_state(config)
+
+    if not state_snapshot.values:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    if not state_snapshot.next:
+        raise HTTPException(status_code=400, detail="Project is not awaiting approval and cannot be edited")
+
+    graph.update_state(config, {request.field: request.content})
+
+    return {"status": "updated", "field": request.field}
 
 @router.post("/{project_id}/resume")
 async def resume_project(project_id: str, request: ProjectResumeRequest):
