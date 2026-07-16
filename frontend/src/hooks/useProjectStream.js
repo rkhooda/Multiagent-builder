@@ -40,14 +40,17 @@ export function useProjectStream(projectId) {
         if (event.type === 'heartbeat') return  // ignore keepalives
         
         setEvents(prev => {
-          // Avoid duplicate events if any
-          const exists = prev.some(existing => 
-            existing.type === event.type &&
-            existing.agent === event.agent &&
-            existing.stage === event.stage &&
-            existing.preview === event.preview &&
-            existing.content === event.content
-          )
+          // Avoid re-adding an exact re-delivery of the same event (e.g. buffered
+          // events resent on reconnect). Compare the full payload, not a fixed
+          // subset of fields — gate_reached/pipeline_complete events have no
+          // agent/stage/preview/content, so comparing only those fields made
+          // every gate_reached event look identical to the first one ever seen,
+          // silently dropping gate 2/3/4 and leaving the UI stuck on gate 1.
+          const eventKey = JSON.stringify(event)
+          const exists = prev.some(existing => {
+            const { timestamp, ...rest } = existing
+            return JSON.stringify(rest) === eventKey
+          })
           if (exists) return prev
           return [...prev, { ...event, timestamp: new Date().toISOString() }]
         })

@@ -211,6 +211,18 @@ export default function ApprovalGate({ status, gateEvent, currentStage, eventsCo
   }
 
   // Render based on state
+  if (status === 'cancelled') {
+    return (
+      <div className="bg-white rounded-lg border border-gray-200 shadow-sm p-6 text-center space-y-3">
+        <div className="text-4xl">🚫</div>
+        <h3 className="text-xl font-bold text-gray-900">Project Cancelled</h3>
+        <p className="text-sm text-gray-600">
+          This project was cancelled at a human approval gate and will not continue.
+        </p>
+      </div>
+    )
+  }
+
   if (status === 'done' || status === 'completed') {
     return (
       <div className="bg-white rounded-lg border border-gray-200 shadow-sm p-6 text-center space-y-4">

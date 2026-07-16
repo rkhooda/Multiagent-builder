@@ -1,41 +1,52 @@
 import React, { useEffect, useState, useRef } from 'react'
 import { useParams, Link } from 'react-router-dom'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import { useProjectStream } from '../hooks/useProjectStream'
 import ApprovalGate from '../components/ApprovalGate'
 import Gate1Approval from '../components/gates/Gate1Approval'
 import Gate2Approval from '../components/gates/Gate2Approval'
 
-function EventOutput({ event, defaultExpanded = true }) {
+const MARKDOWN_AGENTS = new Set(['research', 'requirements', 'architecture', 'qa', 'planning'])
+
+function EventOutput({ event, defaultExpanded = false }) {
   const [expanded, setExpanded] = useState(defaultExpanded)
   const fullContent = event.content || event.preview || event.output_preview || ''
-  const shortPreview = event.preview || event.output_preview || fullContent
+  const shortPreview = (event.preview || event.output_preview || fullContent).slice(0, 160)
+  const isMarkdown = MARKDOWN_AGENTS.has(event.agent)
 
   if (!fullContent) return null
 
   return (
     <div className="my-2 rounded border border-gray-100 bg-gray-50">
-      <div className="flex items-center justify-between gap-3 border-b border-gray-200 px-3 py-2">
+      <button
+        type="button"
+        onClick={() => setExpanded((value) => !value)}
+        className="flex w-full items-center justify-between gap-3 border-b border-gray-200 px-3 py-2 text-left"
+      >
         <span className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">
           Agent Output
         </span>
-        <button
-          type="button"
-          onClick={() => setExpanded((value) => !value)}
-          className="text-[11px] font-semibold text-blue-600 hover:text-blue-700"
-        >
-          {expanded ? 'Collapse' : 'Expand'}
-        </button>
-      </div>
+        <span className="text-[11px] font-semibold text-blue-600 hover:text-blue-700">
+          {expanded ? 'Collapse' : 'Click to view full output'}
+        </span>
+      </button>
 
       {expanded ? (
         <div className="max-h-96 overflow-auto p-3">
-          <pre className="whitespace-pre-wrap break-words font-mono text-sm leading-relaxed text-gray-600">
-            {fullContent}
-          </pre>
+          {isMarkdown ? (
+            <div className="prose prose-sm max-w-none">
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>{fullContent}</ReactMarkdown>
+            </div>
+          ) : (
+            <pre className="whitespace-pre-wrap break-words font-mono text-sm leading-relaxed text-gray-600">
+              {fullContent}
+            </pre>
+          )}
         </div>
       ) : (
         <div className="p-3">
-          <p className="whitespace-pre-wrap break-words font-mono text-sm leading-relaxed text-gray-600 line-clamp-4">
+          <p className="whitespace-pre-wrap break-words font-mono text-xs leading-relaxed text-gray-500 line-clamp-2">
             {shortPreview}
           </p>
         </div>
@@ -69,17 +80,26 @@ export default function ProjectDetailPage() {
       setProjectMetadata(data)
       
       // If we have existing logs in the project details, pre-populate the events list
-      // so the page doesn't look empty when reloaded
+      // so the page doesn't look empty when reloaded. Log lines look like
+      // "planning_agent: started ..." / "planning_agent: validation failed ..." /
+      // "planning_agent: completed - 47 tasks ...". Keep only the LAST line per
+      // agent (its final outcome) so reloading doesn't show a "started"/"retrying"/
+      // "completed" card stack for every agent — one clean card per agent instead.
       if (data.log && data.log.length > 0 && events.length === 0) {
-        const initialEvents = data.log.map((logStr, index) => {
-          // Parse stage/agent name if possible from log string
-          // Typical log: "research ran" or similar
-          const parts = logStr.split(' ')
-          const stageName = parts[0] || 'agent'
+        const lastLineByAgent = new Map()
+        const agentOrder = []
+        data.log.forEach((logStr) => {
+          const match = logStr.match(/^([a-zA-Z0-9]+?)(?:_agent)?:\s*/)
+          const agentKey = match ? match[1] : 'agent'
+          if (!lastLineByAgent.has(agentKey)) agentOrder.push(agentKey)
+          lastLineByAgent.set(agentKey, logStr)
+        })
+        const initialEvents = agentOrder.map((agentKey) => {
+          const logStr = lastLineByAgent.get(agentKey)
           return {
             type: 'agent_complete',
-            agent: stageName,
-            stage: stageName,
+            agent: agentKey,
+            stage: agentKey,
             preview: logStr,
             timestamp: new Date().toISOString()
           }
@@ -92,6 +112,10 @@ export default function ProjectDetailPage() {
         setStatus('done')
       } else if (data.status === 'awaiting_approval') {
         setStatus('awaiting_approval')
+      } else if (data.status === 'cancelled') {
+        setStatus('cancelled')
+      } else if (data.status === 'running') {
+        setStatus((prev) => (prev === 'awaiting_approval' || prev === 'done' ? 'connecting' : prev))
       }
     } catch (err) {
       console.error(err)
@@ -106,6 +130,16 @@ export default function ProjectDetailPage() {
       fetchMetadata()
     }
   }, [projectId])
+
+  // Keep projectMetadata (and its next_gate) in sync as the pipeline advances on its own —
+  // otherwise the gate card can get stuck showing a stage that already finished.
+  useEffect(() => {
+    const lastEvent = events[events.length - 1]
+    if (!lastEvent) return
+    if (['gate_reached', 'pipeline_complete', 'project_cancelled', 'error'].includes(lastEvent.type)) {
+      fetchMetadata()
+    }
+  }, [events])
 
   // Scroll to bottom when events update
   useEffect(() => {
@@ -183,6 +217,8 @@ export default function ProjectDetailPage() {
         return 'bg-blue-100 text-blue-800 border-blue-200'
       case 'error':
         return 'bg-red-100 text-red-800 border-red-200'
+      case 'cancelled':
+        return 'bg-gray-200 text-gray-700 border-gray-300'
       default:
         return 'bg-gray-100 text-gray-800 border-gray-200'
     }
