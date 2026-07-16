@@ -2,6 +2,8 @@ import React, { useEffect, useState, useRef } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { useProjectStream } from '../hooks/useProjectStream'
 import ApprovalGate from '../components/ApprovalGate'
+import Gate1Approval from '../components/gates/Gate1Approval'
+import Gate2Approval from '../components/gates/Gate2Approval'
 
 function EventOutput({ event, defaultExpanded = true }) {
   const [expanded, setExpanded] = useState(defaultExpanded)
@@ -225,6 +227,9 @@ export default function ProjectDetailPage() {
   const name = projectMetadata ? projectMetadata.project_name : 'Project Pipeline'
   const displayStatus = status === 'connecting' || status === 'reconnecting' ? 'running' : status === 'done' ? 'completed' : status
 
+  const gateName = projectMetadata?.next_gate || activeGateEvent?.gate || ''
+  const isFullWidthGate = displayStatus === 'awaiting_approval' && (gateName === 'human_gate_1' || gateName === 'human_gate_2')
+
   return (
     <div className="flex flex-col h-full bg-[#f9fafb]">
       {/* Project Header Bar */}
@@ -253,7 +258,30 @@ export default function ProjectDetailPage() {
         </div>
       </div>
 
-      {/* Main Two-Column Layout */}
+      {isFullWidthGate ? (
+        <div className="flex-1 overflow-y-auto p-6">
+          <div className="mx-auto max-w-6xl rounded-lg border border-orange-200 bg-white p-6 shadow-sm">
+            {gateName === 'human_gate_1' ? (
+              <Gate1Approval
+                projectId={projectId}
+                projectState={projectMetadata}
+                status={displayStatus}
+                onResume={handleResume}
+                onRefresh={fetchMetadata}
+              />
+            ) : (
+              <Gate2Approval
+                projectId={projectId}
+                projectState={projectMetadata}
+                status={displayStatus}
+                onResume={handleResume}
+                onRefresh={fetchMetadata}
+              />
+            )}
+          </div>
+        </div>
+      ) : (
+      /* Main Two-Column Layout */
       <div className="flex-1 flex overflow-hidden">
         {/* Left Column: Live Event Timeline */}
         <div className="w-[65%] flex flex-col h-full border-r border-gray-200 bg-white">
@@ -362,6 +390,7 @@ export default function ProjectDetailPage() {
           />
         </div>
       </div>
+      )}
     </div>
   )
 }
