@@ -256,6 +256,18 @@ def get_tasks_for_phase(implementation_plan_str: str, phase: str) -> list[dict]:
     return matching
 
 
+def build_feedback_prompt(previous_output: str, feedback: str) -> str:
+    """
+    Builds the standard feedback-regeneration prompt appended to an agent's
+    normal user message when re-running a stage after a human 'edit' decision.
+    """
+    return (
+        f"PREVIOUS OUTPUT:\n{previous_output}\n\n"
+        f"HUMAN FEEDBACK:\n{feedback}\n\n"
+        "Regenerate the document addressing the feedback. Keep what was good, fix what was wrong."
+    )
+
+
 def get_completed_file_content(generated_files: dict, task_ids: list[str], all_tasks: list[dict]) -> str:
     """
     Given a list of task IDs this task depends on, look up their filepaths

@@ -24,6 +24,27 @@ def human_gate_3(state: ProjectState) -> Dict:
     # Empty pass-through function. LangGraph pauses before this node.
     return {}
 
+def cancelled(state: ProjectState) -> Dict:
+    log = list(state.get("log") or [])
+    log.append("project cancelled by user at approval gate")
+    return {"log": log, "current_stage": "cancelled"}
+
+def route_gate_1(state: ProjectState) -> str:
+    decision = state.get("human_decision", "")
+    if decision == "edit":
+        return "requirements"
+    if decision == "reject":
+        return "cancelled"
+    return "architecture"
+
+def route_gate_2(state: ProjectState) -> str:
+    decision = state.get("human_decision", "")
+    if decision == "edit":
+        return "architecture"
+    if decision == "reject":
+        return "cancelled"
+    return "planning"
+
 def frontend_code(state: ProjectState) -> Dict:
     current_log = state.get("log") or []
     return {
@@ -59,15 +80,25 @@ workflow.add_node("database", database_agent)
 workflow.add_node("qa", qa_agent)
 workflow.add_node("devops", devops_agent)
 workflow.add_node("human_gate_4", human_gate_4)
+workflow.add_node("cancelled", cancelled)
 
 # Wire all edges
-# research pauses at Gate 1, requirements pauses at Gate 2, then architecture continues
+# Gate 1 reviews research + requirements together; Gate 2 reviews architecture.
 workflow.add_edge(START, "research")
-workflow.add_edge("research", "human_gate_1")
-workflow.add_edge("human_gate_1", "requirements")
-workflow.add_edge("requirements", "human_gate_2")
-workflow.add_edge("human_gate_2", "architecture")
-workflow.add_edge("architecture", "planning")
+workflow.add_edge("research", "requirements")
+workflow.add_edge("requirements", "human_gate_1")
+workflow.add_conditional_edges(
+    "human_gate_1",
+    route_gate_1,
+    {"architecture": "architecture", "requirements": "requirements", "cancelled": "cancelled"},
+)
+workflow.add_edge("architecture", "human_gate_2")
+workflow.add_conditional_edges(
+    "human_gate_2",
+    route_gate_2,
+    {"planning": "planning", "architecture": "architecture", "cancelled": "cancelled"},
+)
+workflow.add_edge("cancelled", END)
 workflow.add_edge("planning", "human_gate_3")
 workflow.add_edge("human_gate_3", "frontend_code")
 workflow.add_edge("frontend_code", "backend_code")

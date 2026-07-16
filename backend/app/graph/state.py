@@ -18,6 +18,7 @@ class ProjectState(TypedDict):
     qa_report: str
     qa_issues_count: int
     devops_files: Dict[str, str]
+    previous_versions: Dict[str, str]  # doc name -> prior content, set before an edit re-run overwrites it
 
     # Control fields
     current_stage: str
