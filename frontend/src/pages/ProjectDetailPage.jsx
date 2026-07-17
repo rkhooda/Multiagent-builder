@@ -4,6 +4,7 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { useProjectStream } from '../hooks/useProjectStream'
 import ApprovalGate from '../components/ApprovalGate'
+import StageTimeline from '../components/StageTimeline'
 import Gate1Approval from '../components/gates/Gate1Approval'
 import Gate2Approval from '../components/gates/Gate2Approval'
 import Gate3Approval from '../components/gates/Gate3Approval'
@@ -67,6 +68,9 @@ export default function ProjectDetailPage() {
   // the gate card stays mounted showing its regenerating overlay instead of
   // being swapped out for the live feed.
   const [regeneratingGate, setRegeneratingGate] = useState(null)
+  // {target, startedAt} of the in-flight feedback cycle — lets the timeline
+  // know which stage is regenerating right now.
+  const [cycleInfo, setCycleInfo] = useState(null)
   
   const { events, setEvents, status, setStatus, resumePipeline } = useProjectStream(projectId)
   const bottomRef = useRef(null)
@@ -145,7 +149,10 @@ export default function ProjectDetailPage() {
     if (['gate_reached', 'pipeline_complete', 'project_cancelled', 'error'].includes(lastEvent.type)) {
       // Clear the regenerating flag only after fresh metadata lands, so the
       // gate card never unmounts (and loses its diff/overlay state) in between.
-      fetchMetadata().then(() => setRegeneratingGate(null))
+      fetchMetadata().then(() => {
+        setRegeneratingGate(null)
+        setCycleInfo(null)
+      })
     }
   }, [events])
 
@@ -172,15 +179,21 @@ export default function ProjectDetailPage() {
   
   const currentStage = latestCompleteEvent ? latestCompleteEvent.stage : (projectMetadata ? projectMetadata.current_stage : '')
 
+  // decision -> the stage a feedback re-run targets, per gate (mirrors GATE_ROUTES)
+  const REGEN_TARGETS = {
+    human_gate_1: { edit: 'requirements', back: 'research' },
+    human_gate_2: { edit: 'architecture', back: 'requirements' },
+    human_gate_3: { edit: 'planning', back: 'architecture' },
+  }
+
   const handleResume = async (decision, feedback) => {
     const currentGate = projectMetadata?.next_gate || ''
-    const loopsBackToGate =
-      (decision === 'edit' && ['human_gate_1', 'human_gate_2', 'human_gate_3'].includes(currentGate)) ||
-      (decision === 'back' && currentGate === 'human_gate_3')
+    const loopsBackToGate = Boolean(REGEN_TARGETS[currentGate]?.[decision])
     if (loopsBackToGate) {
       // Feedback re-run loops back to this same gate — keep its card mounted
       // (with the regenerating overlay) rather than swapping to the live feed.
       setRegeneratingGate(currentGate)
+      setCycleInfo({ target: REGEN_TARGETS[currentGate][decision], startedAt: Date.now() })
     } else {
       setStatus('connecting')
     }
@@ -315,6 +328,16 @@ export default function ProjectDetailPage() {
         </div>
       </div>
 
+      {projectMetadata && (
+        <StageTimeline
+          projectState={projectMetadata}
+          status={displayStatus}
+          events={events}
+          regenerating={Boolean(regeneratingGate)}
+          cycleInfo={cycleInfo}
+        />
+      )}
+
       {isFullWidthGate ? (
         <div className="flex-1 overflow-y-auto p-6">
           <div className="mx-auto max-w-6xl rounded-lg border border-orange-200 bg-white p-6 shadow-sm">
@@ -325,6 +348,7 @@ export default function ProjectDetailPage() {
                 status={displayStatus}
                 onResume={handleResume}
                 onRefresh={fetchMetadata}
+                lastAgentComplete={latestCompleteEvent?.agent || ''}
               />
             ) : gateName === 'human_gate_2' ? (
               <Gate2Approval
@@ -333,6 +357,7 @@ export default function ProjectDetailPage() {
                 status={displayStatus}
                 onResume={handleResume}
                 onRefresh={fetchMetadata}
+                lastAgentComplete={latestCompleteEvent?.agent || ''}
               />
             ) : gateName === 'human_gate_3' ? (
               <Gate3Approval
