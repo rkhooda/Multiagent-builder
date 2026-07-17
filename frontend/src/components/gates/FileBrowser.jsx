@@ -1,0 +1,295 @@
+import { useEffect, useRef, useState } from 'react'
+import { PrismLight as SyntaxHighlighter } from 'react-syntax-highlighter'
+import python from 'react-syntax-highlighter/dist/esm/languages/prism/python'
+import javascript from 'react-syntax-highlighter/dist/esm/languages/prism/javascript'
+import jsx from 'react-syntax-highlighter/dist/esm/languages/prism/jsx'
+import sql from 'react-syntax-highlighter/dist/esm/languages/prism/sql'
+import json from 'react-syntax-highlighter/dist/esm/languages/prism/json'
+import yaml from 'react-syntax-highlighter/dist/esm/languages/prism/yaml'
+import markdown from 'react-syntax-highlighter/dist/esm/languages/prism/markdown'
+import bash from 'react-syntax-highlighter/dist/esm/languages/prism/bash'
+import docker from 'react-syntax-highlighter/dist/esm/languages/prism/docker'
+import { oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism'
+
+SyntaxHighlighter.registerLanguage('python', python)
+SyntaxHighlighter.registerLanguage('javascript', javascript)
+SyntaxHighlighter.registerLanguage('jsx', jsx)
+SyntaxHighlighter.registerLanguage('sql', sql)
+SyntaxHighlighter.registerLanguage('json', json)
+SyntaxHighlighter.registerLanguage('yaml', yaml)
+SyntaxHighlighter.registerLanguage('markdown', markdown)
+SyntaxHighlighter.registerLanguage('bash', bash)
+SyntaxHighlighter.registerLanguage('docker', docker)
+
+// Backend language name -> registered Prism language
+const PRISM_LANGUAGE = {
+  python: 'python', javascript: 'javascript', jsx: 'jsx',
+  typescript: 'javascript', tsx: 'jsx', sql: 'sql', json: 'json',
+  yaml: 'yaml', markdown: 'markdown', bash: 'bash', docker: 'docker',
+  nginx: 'bash', html: 'markdown', css: 'javascript',
+}
+
+const DOT_COLOR = {
+  python: 'bg-blue-500',
+  javascript: 'bg-yellow-400', jsx: 'bg-yellow-400', typescript: 'bg-yellow-400', tsx: 'bg-yellow-400',
+  sql: 'bg-orange-500',
+  markdown: 'bg-gray-400',
+  json: 'bg-teal-500', yaml: 'bg-teal-500',
+}
+
+export function formatBytes(bytes) {
+  if (bytes < 1024) return `${bytes} B`
+  return `${(bytes / 1024).toFixed(1)} KB`
+}
+
+function buildTree(files) {
+  const root = { name: '', path: '', children: new Map(), file: null }
+  files.forEach((file) => {
+    const parts = file.path.split('/')
+    let node = root
+    parts.forEach((part, i) => {
+      const isFile = i === parts.length - 1
+      const childPath = parts.slice(0, i + 1).join('/')
+      if (!node.children.has(part)) {
+        node.children.set(part, { name: part, path: childPath, children: new Map(), file: null })
+      }
+      node = node.children.get(part)
+      if (isFile) node.file = file
+    })
+  })
+  const toArray = (node) => {
+    const children = [...node.children.values()].map(toArray)
+    children.sort((a, b) => {
+      if (!!a.file !== !!b.file) return a.file ? 1 : -1 // folders first
+      return a.name.localeCompare(b.name)
+    })
+    return { ...node, children }
+  }
+  return toArray(root).children
+}
+
+function TreeNode({ node, depth, selectedPath, collapsed, onToggle, onSelect, issueCountByFile }) {
+  const isFolder = !node.file
+  const isCollapsed = collapsed.has(node.path)
+  const indent = { paddingLeft: `${depth * 14 + 8}px` }
+
+  if (isFolder) {
+    return (
+      <div>
+        <button
+          type="button"
+          onClick={() => onToggle(node.path)}
+          style={indent}
+          className="flex w-full items-center gap-1.5 py-1 pr-2 text-left text-xs font-semibold text-gray-700 hover:bg-gray-100"
+        >
+          <span className="text-gray-400">{isCollapsed ? '▸' : '▾'}</span>
+          <span className="truncate">{node.name}/</span>
+        </button>
+        {!isCollapsed &&
+          node.children.map((child) => (
+            <TreeNode
+              key={child.path}
+              node={child}
+              depth={depth + 1}
+              selectedPath={selectedPath}
+              collapsed={collapsed}
+              onToggle={onToggle}
+              onSelect={onSelect}
+              issueCountByFile={issueCountByFile}
+            />
+          ))}
+      </div>
+    )
+  }
+
+  const issueCount = issueCountByFile?.get(node.path) || 0
+  const selected = selectedPath === node.path
+  return (
+    <button
+      type="button"
+      onClick={() => onSelect(node.path)}
+      style={indent}
+      className={`flex w-full items-center gap-1.5 py-1 pr-2 text-left text-xs hover:bg-gray-100 ${
+        selected ? 'bg-blue-50 font-semibold text-blue-800' : 'text-gray-700'
+      }`}
+    >
+      <span className={`h-2 w-2 flex-shrink-0 rounded-full ${DOT_COLOR[node.file.language] || 'bg-gray-300'}`} />
+      <span className="truncate">{node.name}</span>
+      {issueCount > 0 && (
+        <span
+          title={`${issueCount} QA issue${issueCount > 1 ? 's' : ''}`}
+          className="ml-auto flex h-4 min-w-4 flex-shrink-0 items-center justify-center rounded-full bg-orange-100 px-1 text-[10px] font-bold text-orange-700"
+        >
+          {issueCount}
+        </span>
+      )}
+      <span className={`flex-shrink-0 text-[10px] text-gray-400 ${issueCount > 0 ? '' : 'ml-auto'}`}>
+        {formatBytes(node.file.size_bytes)}
+      </span>
+    </button>
+  )
+}
+
+function PreviewShimmer() {
+  return (
+    <div className="animate-pulse space-y-2 p-4">
+      {[...Array(12)].map((_, i) => (
+        <div key={i} className="h-3 rounded bg-gray-200" style={{ width: `${45 + ((i * 37) % 50)}%` }} />
+      ))}
+    </div>
+  )
+}
+
+export default function FileBrowser({
+  projectId,
+  filesData,
+  issueCountByFile,
+  selectedPath,
+  onSelectPath,
+  onRequestFix,
+  fixDisabledReason,
+  contentVersion, // bump to invalidate the cache for a path after an AI fix
+  previousContent, // path -> pre-fix content, enables the View Changes toggle
+  renderDiff,
+}) {
+  const [collapsed, setCollapsed] = useState(new Set())
+  const [content, setContent] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [loadError, setLoadError] = useState('')
+  const [showDiff, setShowDiff] = useState(false)
+  const cacheRef = useRef(new Map())
+
+  const files = filesData?.files || []
+  const tree = buildTree(files)
+  const selectedFile = files.find((f) => f.path === selectedPath) || null
+
+  useEffect(() => {
+    if (!selectedPath) return
+    setShowDiff(false)
+    const cacheKey = `${selectedPath}@${contentVersion?.[selectedPath] || 0}`
+    if (cacheRef.current.has(cacheKey)) {
+      setContent(cacheRef.current.get(cacheKey))
+      setLoadError('')
+      return
+    }
+    let cancelled = false
+    setLoading(true)
+    setLoadError('')
+    fetch(
+      `http://localhost:8000/api/projects/${projectId}/files/content?path=${encodeURIComponent(selectedPath)}`
+    )
+      .then(async (res) => {
+        if (!res.ok) throw new Error((await res.json())?.detail || `HTTP ${res.status}`)
+        return res.text()
+      })
+      .then((text) => {
+        if (cancelled) return
+        cacheRef.current.set(cacheKey, text)
+        setContent(text)
+      })
+      .catch((err) => {
+        if (!cancelled) setLoadError(String(err.message || err))
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [projectId, selectedPath, contentVersion])
+
+  const handleToggle = (path) => {
+    setCollapsed((prev) => {
+      const next = new Set(prev)
+      if (next.has(path)) next.delete(path)
+      else next.add(path)
+      return next
+    })
+  }
+
+  const oldContent = selectedPath ? previousContent?.[selectedPath] : null
+
+  return (
+    <div className="flex min-h-0 rounded-lg border border-gray-200 bg-white" style={{ height: '34rem' }}>
+      {/* Tree */}
+      <div className="w-[30%] flex-shrink-0 overflow-y-auto border-r border-gray-200 py-2">
+        {tree.length === 0 ? (
+          <p className="px-3 py-2 text-xs text-gray-500">No generated files found.</p>
+        ) : (
+          tree.map((node) => (
+            <TreeNode
+              key={node.path}
+              node={node}
+              depth={0}
+              selectedPath={selectedPath}
+              collapsed={collapsed}
+              onToggle={handleToggle}
+              onSelect={onSelectPath}
+              issueCountByFile={issueCountByFile}
+            />
+          ))
+        )}
+      </div>
+
+      {/* Preview */}
+      <div className="flex min-w-0 flex-1 flex-col">
+        {!selectedFile ? (
+          <div className="flex flex-1 items-center justify-center text-sm text-gray-400">
+            Select a file to preview it
+          </div>
+        ) : (
+          <>
+            <div className="flex flex-shrink-0 items-center gap-2 border-b border-gray-200 bg-gray-50 px-3 py-2">
+              <span className="truncate font-mono text-xs font-semibold text-gray-800">{selectedFile.path}</span>
+              <span className="rounded bg-gray-200 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-gray-600">
+                {selectedFile.language}
+              </span>
+              <span className="flex-shrink-0 text-[10px] text-gray-500">
+                {formatBytes(selectedFile.size_bytes)} · {selectedFile.line_count ?? '?'} lines
+              </span>
+              <div className="ml-auto flex flex-shrink-0 items-center gap-2">
+                {oldContent != null && (
+                  <button
+                    type="button"
+                    onClick={() => setShowDiff((v) => !v)}
+                    className="rounded border border-gray-300 bg-white px-2 py-1 text-[11px] font-semibold text-gray-700 hover:bg-gray-50"
+                  >
+                    {showDiff ? 'Hide Changes' : 'View Changes'}
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => onRequestFix(selectedFile.path)}
+                  disabled={Boolean(fixDisabledReason)}
+                  title={fixDisabledReason || 'Ask an AI agent to fix this file'}
+                  className="rounded bg-purple-600 px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-purple-700 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  🛠 Request AI Fix
+                </button>
+              </div>
+            </div>
+            <div className="min-h-0 flex-1 overflow-auto">
+              {loading ? (
+                <PreviewShimmer />
+              ) : loadError ? (
+                <p className="p-4 text-xs text-red-600">Failed to load file: {loadError}</p>
+              ) : showDiff && oldContent != null ? (
+                <div className="p-2">{renderDiff(oldContent, content)}</div>
+              ) : (
+                <SyntaxHighlighter
+                  language={PRISM_LANGUAGE[selectedFile.language] || 'text'}
+                  style={oneLight}
+                  showLineNumbers
+                  customStyle={{ margin: 0, fontSize: '12px', background: 'white' }}
+                  lineNumberStyle={{ color: '#c0c4cc', minWidth: '2.5em' }}
+                >
+                  {content}
+                </SyntaxHighlighter>
+              )}
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  )
+}

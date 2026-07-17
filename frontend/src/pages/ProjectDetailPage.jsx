@@ -7,6 +7,7 @@ import ApprovalGate from '../components/ApprovalGate'
 import Gate1Approval from '../components/gates/Gate1Approval'
 import Gate2Approval from '../components/gates/Gate2Approval'
 import Gate3Approval from '../components/gates/Gate3Approval'
+import Gate4Approval from '../components/gates/Gate4Approval'
 
 const MARKDOWN_AGENTS = new Set(['research', 'requirements', 'architecture', 'qa', 'planning'])
 
@@ -284,7 +285,7 @@ export default function ProjectDetailPage() {
   const gateName = regeneratingGate || projectMetadata?.next_gate || activeGateEvent?.gate || ''
   const isFullWidthGate =
     (displayStatus === 'awaiting_approval' || regeneratingGate) &&
-    (gateName === 'human_gate_1' || gateName === 'human_gate_2' || gateName === 'human_gate_3')
+    ['human_gate_1', 'human_gate_2', 'human_gate_3', 'human_gate_4'].includes(gateName)
 
   return (
     <div className="flex flex-col h-full bg-[#f9fafb]">
@@ -333,13 +334,20 @@ export default function ProjectDetailPage() {
                 onResume={handleResume}
                 onRefresh={fetchMetadata}
               />
-            ) : (
+            ) : gateName === 'human_gate_3' ? (
               <Gate3Approval
                 projectId={projectId}
                 projectState={projectMetadata}
                 status={displayStatus}
                 onResume={handleResume}
                 lastAgentComplete={latestCompleteEvent?.agent || ''}
+              />
+            ) : (
+              <Gate4Approval
+                projectId={projectId}
+                projectState={projectMetadata}
+                status={displayStatus}
+                onResume={handleResume}
               />
             )}
           </div>
