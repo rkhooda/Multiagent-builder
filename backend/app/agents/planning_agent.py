@@ -117,9 +117,19 @@ CRITICAL RULES:
     ]
 
     if is_edit_rerun:
+        # Compact + truncate the previous plan: a full indented 60-task plan is
+        # ~25k+ tokens and exceeds free-tier per-request limits (Groq TPM 12k),
+        # which fails permanently, not transiently. The model needs the plan's
+        # shape as context, not every byte of it.
+        try:
+            compact_plan = json.dumps(json.loads(previous_plan), separators=(",", ":"))
+        except (json.JSONDecodeError, TypeError):
+            compact_plan = previous_plan
         messages.append({
             "role": "user",
-            "content": build_feedback_prompt(previous_plan, human_feedback),
+            "content": build_feedback_prompt(
+                truncate_for_context(compact_plan, max_chars=8000), human_feedback
+            ),
         })
 
     print("[PlanningAgent] Calling Gemini 2.5 Flash for task plan...")

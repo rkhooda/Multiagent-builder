@@ -254,3 +254,75 @@ grid (not raw JSON), sticky action bar visible, and the inline Edit toggle works
 correctly reverts to the rendered markdown view with 0 console errors. The remaining unverified
 item is the diff view specifically (red/green line rendering) — not exercised in a live browser
 today, only unit-level confidence from the `diff` package's `diffLines` API and code review.
+
+## Day 14 observations
+
+Scope: Gate 3 turned into a full interactive plan editor (include/exclude, inline edit, add
+custom task, hard remove, scope summary + time estimate, folder preview) with new backend plan
+validation and gate 3 conditional routing (approve / edit-replan / back-to-architecture /
+reject). Verified end-to-end against a live run (project `113cf67c-8c63-4713-bcc8-a5dd34e0b9d9`,
+brief "A simple notes app with tags").
+
+### Critical (found and fixed during the run)
+
+#### 1. Feedback-injection replan blew past Groq's per-request token cap
+- **Where**: `planning_agent.py` edit-rerun path (new Day 14 code)
+- **Error**: `GroqException ... Request too large for model llama-3.3-70b-versatile ... (TPM):
+  Limit 12000, Requested 28905` — all 3 retries on primary AND fallback failed; the replan
+  errored out entirely.
+- **Root cause**: the feedback prompt injected the full previous plan verbatim — a 61-task plan
+  serialized with `indent=2` is ~28k chars. Unlike a congestion 429 this is a *permanent*
+  request-size failure; retry/backoff can never succeed.
+- **Fix applied**: compact the previous plan (`separators=(',',':')`) and pass it through
+  `truncate_for_context(max_chars=8000)` before injection. Replan then succeeded first try.
+- **Lesson**: "previous output" feedback injection must be size-bounded for any agent whose
+  output scales with project size. The architecture agent gets away with full injection only
+  because its docs are ~6k chars.
+
+### Verification walkthroughs (all passed)
+
+1. **Editor at gate 3**: 61 tasks grouped by phase with counts; summary bar live-updates
+   (tasks/phase counts/excluded/complexity chips/est. minutes) on every check/uncheck.
+2. **Dependency integrity**: unchecking `fe_004` surfaced "⚠️ 1 included task depends on this:
+   fe_007", disabled Approve, showed the cannot-approve banner; "Exclude dependents too"
+   cascaded transitively and re-enabled Approve. Same check fires on hard remove (`dv_005`
+   remove was blocked until "Remove & exclude dependents" confirmed, which also excluded
+   `dv_006`).
+3. **Edit/add/remove**: inline description edit persisted through PATCH (marker text verified
+   in checkpoint state); custom task got the next client-generated id (`db_006`), a `custom:
+   true` flag, and a Custom badge; removed tasks disappear from the plan and land in
+   `excluded_tasks` alongside unchecked ones (37 archived total).
+4. **Replan with feedback**: planning re-ran with feedback, gate 3 re-fired with a fresh plan,
+   old plan snapshotted into `previous_versions.implementation_plan` (28,161 chars),
+   decision/feedback cleared, `excluded_tasks` reset.
+5. **Back to architecture**: `back` decision re-ran architecture with feedback ("background job
+   worker for email reminders"), then flowed straight to planning (gate 2 correctly skipped via
+   `replan_after_architecture`), gate 3 re-fired with a 71-task plan containing worker/reminder
+   tasks; the two-stage overlay showed "Regenerating architecture…" and the re-fired gate showed
+   the regenerated-architecture banner with a working DiffView (`+ reminders.py` visible).
+6. **Validation via curl**: broken dependency, duplicate ids, schema violation, and non-JSON
+   plans all returned 422 with specific error messages; bogus resume decisions return 400.
+7. **Generation respects the edited plan**: after approving the edited 36-task plan, the
+   database agent generated exactly the 4 kept models + the custom `backend/seed_data.py`;
+   excluded `backend/models/__init__.py` and removed `backend/docker-compose.yml` were never
+   generated. Pipeline ran to `completed` through gate 4.
+
+### Warnings / design gaps
+
+#### 2. DevOps agent ignores the task plan entirely (pre-existing, by design)
+- `devops_agent.py` generates a fixed `DEVOPS_FILES` set regardless of what the plan says, so
+  excluding or removing devops-phase *plan tasks* has no effect on what devops generates.
+  Plan-level devops edits are currently cosmetic. Worth either honoring the plan or hiding the
+  devops phase's checkboxes at gate 3 once the coder agents are all real.
+
+#### 3. Excluding a foundational task cascades very wide
+- Excluding `backend/models/__init__.py` transitively excluded 35 of 72 tasks (correct
+  behavior, since be/fe tasks chain off it). Fine for a power user, but the one-click cascade
+  makes it easy to cut half the project without reading the list. A count is shown in the
+  summary bar; an explicit confirm for cascades above ~10 tasks might be worth it later.
+
+#### 4. Mid-flight overlay label transition not visually captured
+- The two-stage back-navigation overlay was verified at stage 1 ("Regenerating architecture…")
+  live in the browser; the flip to "Replanning…" is driven by the architecture
+  `agent_complete` event and was verified by code path + the correct end state, but the exact
+  moment of the label swap wasn't screenshotted. Cosmetic risk only.
