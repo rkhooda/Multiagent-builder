@@ -1,6 +1,6 @@
 import { useState } from 'react'
 
-export default function FeedbackInput({ onSubmit, onCancel, submitting }) {
+export default function FeedbackInput({ onSubmit, onCancel, submitting, label = 'What changes do you need?' }) {
   const [text, setText] = useState('')
 
   const handleSubmit = () => {
@@ -11,12 +11,12 @@ export default function FeedbackInput({ onSubmit, onCancel, submitting }) {
   return (
     <div className="space-y-3 pt-3 border-t border-gray-100">
       <label className="block text-xs font-semibold text-gray-600">
-        What changes do you need?
+        {label}
       </label>
       <textarea
         value={text}
         onChange={(e) => setText(e.target.value)}
-        placeholder="What changes do you need?"
+        placeholder={label}
         rows={4}
         autoFocus
         className="w-full px-3 py-2 border border-gray-300 rounded text-sm text-gray-900 focus:ring-1 focus:ring-blue-500 focus:outline-none placeholder-gray-400"

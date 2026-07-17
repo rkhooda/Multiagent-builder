@@ -6,6 +6,7 @@ import { useProjectStream } from '../hooks/useProjectStream'
 import ApprovalGate from '../components/ApprovalGate'
 import Gate1Approval from '../components/gates/Gate1Approval'
 import Gate2Approval from '../components/gates/Gate2Approval'
+import Gate3Approval from '../components/gates/Gate3Approval'
 
 const MARKDOWN_AGENTS = new Set(['research', 'requirements', 'architecture', 'qa', 'planning'])
 
@@ -172,7 +173,10 @@ export default function ProjectDetailPage() {
 
   const handleResume = async (decision, feedback) => {
     const currentGate = projectMetadata?.next_gate || ''
-    if (decision === 'edit' && (currentGate === 'human_gate_1' || currentGate === 'human_gate_2')) {
+    const loopsBackToGate =
+      (decision === 'edit' && ['human_gate_1', 'human_gate_2', 'human_gate_3'].includes(currentGate)) ||
+      (decision === 'back' && currentGate === 'human_gate_3')
+    if (loopsBackToGate) {
       // Feedback re-run loops back to this same gate — keep its card mounted
       // (with the regenerating overlay) rather than swapping to the live feed.
       setRegeneratingGate(currentGate)
@@ -280,7 +284,7 @@ export default function ProjectDetailPage() {
   const gateName = regeneratingGate || projectMetadata?.next_gate || activeGateEvent?.gate || ''
   const isFullWidthGate =
     (displayStatus === 'awaiting_approval' || regeneratingGate) &&
-    (gateName === 'human_gate_1' || gateName === 'human_gate_2')
+    (gateName === 'human_gate_1' || gateName === 'human_gate_2' || gateName === 'human_gate_3')
 
   return (
     <div className="flex flex-col h-full bg-[#f9fafb]">
@@ -321,13 +325,21 @@ export default function ProjectDetailPage() {
                 onResume={handleResume}
                 onRefresh={fetchMetadata}
               />
-            ) : (
+            ) : gateName === 'human_gate_2' ? (
               <Gate2Approval
                 projectId={projectId}
                 projectState={projectMetadata}
                 status={displayStatus}
                 onResume={handleResume}
                 onRefresh={fetchMetadata}
+              />
+            ) : (
+              <Gate3Approval
+                projectId={projectId}
+                projectState={projectMetadata}
+                status={displayStatus}
+                onResume={handleResume}
+                lastAgentComplete={latestCompleteEvent?.agent || ''}
               />
             )}
           </div>

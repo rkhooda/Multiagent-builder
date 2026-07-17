@@ -1,7 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import MermaidDiagram from './MermaidDiagram'
-import TaskPlanViewer from './TaskPlanViewer'
 
 function ScrollableOutput({ children, className = '' }) {
   return (
@@ -20,7 +19,6 @@ export default function ApprovalGate({ status, gateEvent, currentStage, eventsCo
   const [projectState, setProjectState] = useState(null)
   const [activeTab, setActiveTab] = useState('requirements')
   const [selectedFile, setSelectedFile] = useState('')
-  const [modifiedPlan, setModifiedPlan] = useState(null)
 
   const gateName = projectState?.next_gate || gateEvent?.gate || ''
 
@@ -46,8 +44,6 @@ export default function ApprovalGate({ status, gateEvent, currentStage, eventsCo
       setActiveTab('requirements')
     } else if (gateName === 'human_gate_2') {
       setActiveTab('architecture')
-    } else if (gateName === 'human_gate_3') {
-      setModifiedPlan(null)
     }
   }, [gateName])
 
@@ -186,7 +182,7 @@ export default function ApprovalGate({ status, gateEvent, currentStage, eventsCo
   const handleApprove = async () => {
     setSubmitting('approve')
     try {
-      await onResume('approve', modifiedPlan ? `MODIFIED_PLAN:${modifiedPlan}` : '')
+      await onResume('approve', '')
       setFeedbackOpen(false)
       setFeedbackText('')
     } catch (err) {
@@ -405,21 +401,6 @@ export default function ApprovalGate({ status, gateEvent, currentStage, eventsCo
           </div>
         )}
 
-        {gateName === 'human_gate_3' && projectState?.implementation_plan && (
-          <div className="mt-4">
-            <p className="mb-3 text-sm text-gray-600">
-              Review the implementation plan below. Uncheck any tasks you want to skip.
-              Click <strong>Approve &amp; Start Building</strong> when ready - code generation will begin immediately.
-            </p>
-            <TaskPlanViewer
-              planJson={projectState.implementation_plan}
-              onTasksChanged={(includedTasks) => {
-                setModifiedPlan(JSON.stringify(includedTasks))
-              }}
-            />
-          </div>
-        )}
-
         {gateName === 'human_gate_4' && (
           <div className="mt-4">
             <div className="mb-3 flex items-center gap-2">
@@ -460,11 +441,7 @@ export default function ApprovalGate({ status, gateEvent, currentStage, eventsCo
                 disabled={isPending}
                 className="flex-1 bg-green-600 hover:bg-green-700 text-white font-semibold py-2 px-3 rounded text-sm transition-colors cursor-pointer text-center"
               >
-                {submitting === 'approve'
-                  ? 'Sending...'
-                  : gateName === 'human_gate_3'
-                    ? '✅ Approve & Start Building'
-                    : '✅ Approve & Continue'}
+                {submitting === 'approve' ? 'Sending...' : '✅ Approve & Continue'}
               </button>
               <button
                 onClick={() => setFeedbackOpen(!feedbackOpen)}
