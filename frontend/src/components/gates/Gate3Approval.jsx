@@ -42,6 +42,44 @@ function serializePlan(tasks, excluded) {
   return JSON.stringify([...ordered, ...included.filter((t) => !known.has(t.id))], null, 2)
 }
 
+function SummaryBar({ tasks, excluded, extraActions }) {
+  const included = tasks.filter((t) => !excluded.has(t.id))
+  const phaseCount = (phase) => included.filter((t) => t.phase === phase).length
+  const complexityCount = (level) => included.filter((t) => (t.estimated_complexity || 'medium') === level).length
+  const totalMinutes = included.reduce(
+    (sum, t) => sum + (COMPLEXITY_MINUTES[t.estimated_complexity] || COMPLEXITY_MINUTES.medium),
+    0
+  )
+
+  return (
+    <div className="sticky top-0 z-20 rounded-lg border border-gray-200 bg-white/95 px-4 py-2.5 shadow-sm backdrop-blur-sm">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs">
+        <span className="font-semibold text-gray-800">
+          {included.length} task{included.length === 1 ? '' : 's'}
+        </span>
+        <span className="text-gray-500">
+          {phaseCount('frontend')} frontend · {phaseCount('backend')} backend · {phaseCount('database')} database ·{' '}
+          {phaseCount('devops')} devops
+        </span>
+        {excluded.size > 0 && (
+          <span className="font-medium text-orange-600">{excluded.size} excluded</span>
+        )}
+        <span className="ml-auto flex items-center gap-3">
+          <span className="flex items-center gap-1">
+            <span className="rounded bg-green-100 px-1.5 py-0.5 font-semibold text-green-700">{complexityCount('low')} low</span>
+            <span className="rounded bg-amber-100 px-1.5 py-0.5 font-semibold text-amber-700">{complexityCount('medium')} med</span>
+            <span className="rounded bg-red-100 px-1.5 py-0.5 font-semibold text-red-700">{complexityCount('high')} high</span>
+          </span>
+          <span className="font-semibold text-gray-800" title="Rough heuristic: 5/10/15 min per low/medium/high task">
+            ⏱ ~{totalMinutes} min <span className="font-normal text-gray-400">est.</span>
+          </span>
+          {extraActions}
+        </span>
+      </div>
+    </div>
+  )
+}
+
 function AddTaskForm({ phase, allTasks, onAdd, onCancel }) {
   const [form, setForm] = useState({ filename: '', filepath: '', description: '', complexity: 'medium', requires: [] })
   const [error, setError] = useState('')
@@ -511,6 +549,8 @@ export default function Gate3Approval({ projectId, projectState, status, onResum
         Edit the plan below — uncheck tasks to skip them, edit descriptions, add or remove tasks.
         The coder agents will generate exactly what you approve here.
       </p>
+
+      <SummaryBar tasks={tasks} excluded={excluded} />
 
       <div className="relative">
         {regenAction && <RegeneratingOverlay label={regenLabel} />}
