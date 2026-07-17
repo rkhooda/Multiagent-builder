@@ -20,6 +20,7 @@ class ProjectState(TypedDict):
     qa_issues_count: int
     devops_files: Dict[str, str]
     previous_versions: Dict[str, str]  # doc name -> prior content, set before an edit re-run overwrites it
+    fix_counts: Dict[str, int]     # filepath -> AI fixes applied at gate 4 (capped per file)
 
     # Control fields
     replan_after_architecture: bool  # set on gate-3 'back' rerun: skip gate 2, flow straight to planning

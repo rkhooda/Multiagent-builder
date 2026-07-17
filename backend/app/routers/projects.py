@@ -191,8 +191,29 @@ async def run_graph_background(project_id: str, config: dict, initial_state=None
             "message": error_message
         })
 
+def compute_generation_seconds(project_id: str):
+    """Elapsed seconds from first to latest checkpoint (includes gate review time).
+
+    Checkpoint timestamps come free from the SqliteSaver, so historical projects
+    get a real value without retrofitting timestamps into every log line.
+    """
+    from datetime import datetime
+    try:
+        config = {"configurable": {"thread_id": project_id}}
+        timestamps = [s.created_at for s in graph.get_state_history(config) if s.created_at]
+        if len(timestamps) < 2:
+            return None
+        newest = datetime.fromisoformat(timestamps[0].replace("Z", "+00:00"))
+        oldest = datetime.fromisoformat(timestamps[-1].replace("Z", "+00:00"))
+        return max(0, int((newest - oldest).total_seconds()))
+    except Exception as e:
+        print(f"[Stats] Failed to compute generation time for {project_id}: {e}")
+        return None
+
+
 def serialize_project_state(state_snapshot, project_id: str) -> dict:
     """Centralized serialization of LangGraph state snapshot to API response."""
+    from app.llm_router import MODELS
     values = state_snapshot.values
     
     # Query database for the real status and stage
@@ -228,13 +249,16 @@ def serialize_project_state(state_snapshot, project_id: str) -> dict:
         "qa_issues_count": values.get("qa_issues_count", 0),
         "devops_files": values.get("devops_files", {}),
         "previous_versions": values.get("previous_versions", {}),
+        "fix_counts": values.get("fix_counts", {}),
         "current_stage": values.get("current_stage", ""),
         "human_feedback": values.get("human_feedback", ""),
         "human_decision": values.get("human_decision", ""),
         "log": values.get("log", []),
         "errors": values.get("errors", []),
         "status": status,
-        "next_gate": next_gate
+        "next_gate": next_gate,
+        "generation_seconds": compute_generation_seconds(project_id),
+        "agent_models": {agent: primary for agent, (primary, _) in MODELS.items()},
     }
 
 def save_error_to_state(config, error_message: str):
@@ -280,6 +304,7 @@ async def create_project(request: ProjectCreateRequest):
         qa_report="",
         qa_issues_count=0,
         devops_files={},
+        fix_counts={},
         replan_after_architecture=False,
         current_stage="",
         human_feedback="",
@@ -384,6 +409,157 @@ async def resume_project(project_id: str, request: ProjectResumeRequest):
     except Exception as e:
         save_error_to_state(config, str(e))
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ── Per-file AI fix (Gate 4) ─────────────────────────────────────────────────
+# Ponytail: fixes run as a standalone LLM call + graph.update_state() while the
+# graph stays paused at gate 4 — resuming the graph would re-run coder nodes and
+# re-fire the interrupt cycle for a single-file change. Focused context only:
+# the file's plan task, its QA findings, its current content, and the files it
+# requires. Dependents are warned about in the UI, never auto-regenerated.
+
+MAX_FIXES_PER_FILE = 3
+
+PROMPTS_DIR = Path(__file__).resolve().parents[3] / "prompts"
+FIX_AGENT_BY_PHASE = {
+    "database": ("database", "database_agent.md"),
+    "backend": ("backend_code", "backend_coder_agent.md"),
+    "frontend": ("frontend_code", "frontend_coder_agent.md"),
+    "devops": ("devops", "devops_agent.md"),
+}
+
+QA_FINDING_RE = re.compile(r"- \*\*File\*\*: `([^`]+)`\n\s*- \*Issue\*: (.+)")
+
+
+class FileFixRequest(BaseModel):
+    filepath: str = Field(..., description="Generated file to regenerate")
+    instruction: str = Field(..., min_length=5, description="What needs to be fixed")
+
+
+def _phase_for_file(filepath: str, tasks: list) -> tuple:
+    """Return (task, phase) for a filepath; falls back to a path heuristic for custom/devops files."""
+    task = next((t for t in tasks if isinstance(t, dict) and t.get("filepath") == filepath), None)
+    if task and task.get("phase") in FIX_AGENT_BY_PHASE:
+        return task, task["phase"]
+    if filepath.startswith("frontend/") and not filepath.lower().endswith(("dockerfile", ".conf")):
+        return task, "frontend"
+    if filepath.startswith("backend/"):
+        return task, "backend"
+    return task, "devops"
+
+
+@router.post("/{project_id}/files/fix")
+def fix_project_file(project_id: str, request: FileFixRequest):
+    config = {"configurable": {"thread_id": project_id}}
+    state_snapshot = graph.get_state(config)
+    if not state_snapshot.values:
+        raise HTTPException(status_code=404, detail="Project not found")
+    if not state_snapshot.next or state_snapshot.next[0] != "human_gate_4":
+        raise HTTPException(status_code=400, detail="Per-file fixes are only available at gate 4")
+
+    values = state_snapshot.values
+    generated_files = dict(values.get("generated_files", {}))
+    filepath = request.filepath
+    if filepath not in generated_files:
+        raise HTTPException(status_code=404, detail=f"No generated file at {filepath}")
+
+    fix_counts = dict(values.get("fix_counts", {}) or {})
+    if fix_counts.get(filepath, 0) >= MAX_FIXES_PER_FILE:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Fix limit reached for {filepath} ({MAX_FIXES_PER_FILE} per file). Edit it manually after download.",
+        )
+
+    try:
+        tasks = json.loads(values.get("implementation_plan", "[]"))
+        if not isinstance(tasks, list):
+            tasks = []
+    except (json.JSONDecodeError, TypeError):
+        tasks = []
+
+    task, phase = _phase_for_file(filepath, tasks)
+    agent_type, prompt_file = FIX_AGENT_BY_PHASE[phase]
+    system_prompt = (PROMPTS_DIR / prompt_file).read_text(encoding="utf-8")
+
+    qa_findings = [
+        f"- {desc}" for path, desc in QA_FINDING_RE.findall(values.get("qa_report", ""))
+        if path.split(":")[0] == filepath
+    ]
+
+    from app.agents.utils import get_completed_file_content, truncate_for_context
+    requires_context = ""
+    if task and task.get("requires"):
+        requires_context = get_completed_file_content(generated_files, task["requires"], tasks)
+
+    user_content = f"""You are fixing ONE existing file in the project "{values.get('project_name', '')}".
+
+FILE: {filepath}
+ORIGINAL TASK: {task.get('description', 'No plan task recorded for this file.') if task else 'No plan task recorded for this file.'}
+
+QA FINDINGS FOR THIS FILE:
+{chr(10).join(qa_findings) if qa_findings else 'None recorded.'}
+
+FIX REQUESTED BY THE USER:
+{request.instruction}
+
+{truncate_for_context(requires_context, max_chars=6000)}
+
+CURRENT FILE CONTENT:
+{truncate_for_context(generated_files[filepath], max_chars=12000)}
+
+Apply the requested fix. Output ONLY the complete corrected file content — no explanation, no markdown fences, no preamble. Keep everything that is not related to the fix unchanged."""
+
+    from app.utils.code_cleaner import strip_code_fences
+    from app.llm_router import call_llm
+    from app.utils.file_writer import write_project_file
+
+    try:
+        fixed = strip_code_fences(call_llm(
+            [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_content}],
+            agent_type,
+            max_tokens=4000,
+        ))
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Fix generation failed: {e}")
+
+    if len(fixed.strip()) < 20:
+        raise HTTPException(status_code=502, detail="Model returned empty or near-empty content; file left unchanged")
+
+    result = write_project_file(project_id, filepath, fixed)
+    if not result["success"]:
+        raise HTTPException(status_code=500, detail=f"Failed to write fixed file: {result['error']}")
+
+    previous_content = generated_files[filepath]
+    previous_versions = dict(values.get("previous_versions", {}) or {})
+    previous_versions[filepath] = previous_content
+    generated_files[filepath] = fixed
+    fix_counts[filepath] = fix_counts.get(filepath, 0) + 1
+    log = list(values.get("log", [])) + [
+        f"file_fix: regenerated {filepath} via {agent_type} agent (fix {fix_counts[filepath]}/{MAX_FIXES_PER_FILE})"
+    ]
+
+    graph.update_state(config, {
+        "generated_files": generated_files,
+        "previous_versions": previous_versions,
+        "fix_counts": fix_counts,
+        "log": log,
+    })
+
+    manager.broadcast_sync(project_id, {
+        "type": "file_fixed",
+        "filepath": filepath,
+        "fix_count": fix_counts[filepath],
+        "fixes_remaining": MAX_FIXES_PER_FILE - fix_counts[filepath],
+    })
+
+    return {
+        "status": "fixed",
+        "filepath": filepath,
+        "fix_count": fix_counts[filepath],
+        "fixes_remaining": MAX_FIXES_PER_FILE - fix_counts[filepath],
+        "previous_content": previous_content,
+        "content": fixed,
+    }
 
 
 # ── Generated-file browsing & download (Gate 4) ─────────────────────────────
