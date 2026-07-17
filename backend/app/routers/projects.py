@@ -251,6 +251,7 @@ def serialize_project_state(state_snapshot, project_id: str) -> dict:
         "previous_versions": values.get("previous_versions", {}),
         "fix_counts": values.get("fix_counts", {}),
         "retry_counts": values.get("retry_counts", {}),
+        "stage_history": values.get("stage_history", []),
         "current_stage": values.get("current_stage", ""),
         "human_feedback": values.get("human_feedback", ""),
         "human_decision": values.get("human_decision", ""),
@@ -307,6 +308,8 @@ async def create_project(request: ProjectCreateRequest):
         devops_files={},
         fix_counts={},
         retry_counts={},
+        stage_history=[],
+        regen_cycle=None,
         replan_after_architecture=False,
         skip_gate_1=False,
         current_stage="",
@@ -403,9 +406,11 @@ async def resume_project(project_id: str, request: ProjectResumeRequest):
         update = {
             "human_decision": request.decision,
             "human_feedback": request.feedback,
+            "regen_cycle": None,
         }
         if request.decision in ("edit", "back"):
             target = GATE_ROUTES[gate][request.decision]
+            update["regen_cycle"] = {"trigger": request.decision, "gate": gate}
             if target in STAGE_ORDER:
                 update.update(invalidate_downstream(state_snapshot.values, target))
             retry_counts = dict(state_snapshot.values.get("retry_counts") or {})

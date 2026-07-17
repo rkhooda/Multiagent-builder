@@ -26,6 +26,8 @@ class ProjectState(TypedDict):
     replan_after_architecture: bool  # set on gate-3 'back' rerun: skip gate 2, flow straight to planning
     skip_gate_1: bool              # set on gate-2 'back' rerun: skip gate 1, flow straight to architecture
     retry_counts: Dict[str, int]   # stage (or "file_fix:{path}") -> feedback-driven regeneration count
+    stage_history: List[dict]      # {stage, attempt, trigger, gate_origin, timestamp} per agent completion
+    regen_cycle: Optional[dict]    # {"trigger": "edit"|"back", "gate": gate_name} during a feedback cycle
     current_stage: str
     human_feedback: str            # injected at approval gates
     human_decision: str            # 'approve', 'edit', 'reject'

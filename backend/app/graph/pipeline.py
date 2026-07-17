@@ -1,5 +1,6 @@
 import sqlite3
 import os
+from datetime import datetime, timezone
 from typing import Dict
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.sqlite import SqliteSaver
@@ -131,6 +132,19 @@ def stage_node(stage: str, agent_fn):
             result["previous_versions"] = previous_versions
             result["human_feedback"] = ""
             result["human_decision"] = ""
+
+        # regen_cycle (set at resume, cleared on approve/reject) attributes
+        # every stage in a cascade to the decision + gate that triggered it.
+        cycle = state.get("regen_cycle") or {}
+        history = list(state.get("stage_history") or [])
+        history.append({
+            "stage": stage,
+            "attempt": 1 + sum(1 for entry in history if entry.get("stage") == stage),
+            "trigger": cycle.get("trigger", "initial"),
+            "gate_origin": cycle.get("gate"),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        })
+        result["stage_history"] = history
         return result
     node.__name__ = f"{stage}_node"
     return node
