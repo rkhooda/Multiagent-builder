@@ -385,8 +385,17 @@ async def resume_project(project_id: str, request: ProjectResumeRequest):
     if not state_snapshot.next:
         raise HTTPException(status_code=400, detail="Project is already completed and cannot be resumed")
 
-    # The routing map is the single source of truth for what each gate supports.
+    # Crash/error recovery: if the graph stopped mid-run (next is an agent
+    # node, not a gate — backend killed or agent errored), restart streaming
+    # from the checkpoint. Any decision/feedback already in state drives the
+    # interrupted cycle to completion; the request's decision is ignored.
     gate = state_snapshot.next[0]
+    if not gate.startswith("human_gate_"):
+        update_project_status(project_id, "running", state_snapshot.values.get("current_stage", gate))
+        asyncio.create_task(run_graph_background(project_id, config))
+        return {"status": "resumed_from_checkpoint", "resuming_at": gate}
+
+    # The routing map is the single source of truth for what each gate supports.
     allowed_decisions = set(GATE_ROUTES.get(gate, {"approve", "reject"}))
     if request.decision not in allowed_decisions:
         raise HTTPException(
