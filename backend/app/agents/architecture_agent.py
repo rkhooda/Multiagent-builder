@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 
 from ..llm_router import call_llm
-from .utils import build_feedback_prompt, truncate_for_context, parse_folder_structure, extract_mermaid_diagrams
+from .utils import build_feedback_prompt, regeneration_target, truncate_for_context, parse_folder_structure, extract_mermaid_diagrams
 
 
 SYSTEM_PROMPT = (
@@ -102,20 +102,16 @@ def architecture_agent(state: dict) -> dict:
     tech_stack_str = state.get("tech_stack", "")
     log = list(state.get("log", []))
     errors = list(state.get("errors", []))
-    previous_versions = dict(state.get("previous_versions", {}) or {})
 
-    human_decision = state.get("human_decision", "")
     human_feedback = state.get("human_feedback", "")
-    previous_doc = state.get("architecture_doc", "")
     # 'edit' = gate 2 feedback loop; 'back' = gate 3 back-navigation — both regenerate with feedback
-    is_edit_rerun = human_decision in ("edit", "back") and bool(human_feedback) and bool(previous_doc)
-    is_back_rerun = human_decision == "back" and is_edit_rerun
+    previous_doc = regeneration_target(state, "architecture_doc")
+    is_back_rerun = state.get("human_decision") == "back" and previous_doc is not None
 
     print(f"[ArchitectureAgent] Starting for project: {project_name}")
     log.append(f"architecture_agent: started for project '{project_name}'")
 
-    if is_edit_rerun:
-        previous_versions["architecture_doc"] = previous_doc
+    if previous_doc:
         log.append("architecture_agent: re-running with human feedback")
 
     if not requirements_doc:
@@ -171,7 +167,7 @@ CRITICAL REQUIREMENTS:
         {"role": "user", "content": user_content},
     ]
 
-    if is_edit_rerun:
+    if previous_doc:
         messages.append({
             "role": "user",
             "content": build_feedback_prompt(previous_doc, human_feedback),
@@ -228,13 +224,12 @@ CRITICAL REQUIREMENTS:
     return {
         "architecture_doc": architecture_doc,
         "file_list": file_list,
-        "previous_versions": previous_versions,
         "log": log,
         "errors": errors,
         "current_stage": "planning",
-        "human_feedback": "",
-        "human_decision": "",
         # On a gate-3 'back' rerun the old plan is stale: skip gate 2 and replan immediately
         "replan_after_architecture": is_back_rerun,
+        # End of a gate-2 back-cycle: re-arm gate 1 for future requirements re-runs
+        "skip_gate_1": False,
         "_agent_event": True,
     }

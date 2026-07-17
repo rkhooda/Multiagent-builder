@@ -10,7 +10,7 @@ from fastapi.responses import PlainTextResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from typing import List, Dict, Optional
 from concurrent.futures import ThreadPoolExecutor
-from app.graph.pipeline import graph, GATE_ROUTES
+from app.graph.pipeline import graph, GATE_ROUTES, STAGE_ORDER, invalidate_downstream
 from app.graph.state import ProjectState
 from app.core.connection_manager import manager
 from app.core.database import insert_project, update_project_status, get_all_projects
@@ -306,6 +306,7 @@ async def create_project(request: ProjectCreateRequest):
         devops_files={},
         fix_counts={},
         replan_after_architecture=False,
+        skip_gate_1=False,
         current_stage="",
         human_feedback="",
         human_decision="",
@@ -393,14 +394,18 @@ async def resume_project(project_id: str, request: ProjectResumeRequest):
         current_stage = state_snapshot.values.get("current_stage", "resume")
         update_project_status(project_id, "running", current_stage)
         
-        # Update state with human decision and feedback
-        graph.update_state(
-            config,
-            {
-                "human_decision": request.decision,
-                "human_feedback": request.feedback
-            }
-        )
+        # Update state with human decision and feedback. For feedback-driven
+        # re-runs (edit/back), the same atomic update also invalidates every
+        # artifact downstream of the target stage (snapshot + clear).
+        update = {
+            "human_decision": request.decision,
+            "human_feedback": request.feedback,
+        }
+        if request.decision in ("edit", "back"):
+            target = GATE_ROUTES[gate][request.decision]
+            if target in STAGE_ORDER:
+                update.update(invalidate_downstream(state_snapshot.values, target))
+        graph.update_state(config, update)
 
         # Resume the graph in a background task
         asyncio.create_task(run_graph_background(project_id, config))

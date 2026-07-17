@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 
 from ..llm_router import call_llm
-from .utils import build_feedback_prompt, extract_tech_stack, truncate_for_context
+from .utils import build_feedback_prompt, extract_tech_stack, regeneration_target, truncate_for_context
 
 SYSTEM_PROMPT = (
     Path(__file__).resolve().parents[3] / "prompts" / "requirements_agent.md"
@@ -52,18 +52,17 @@ def requirements_agent(state: dict) -> dict:
     research_report = state.get("research_report", "")
     log = list(state.get("log", []))
     errors = list(state.get("errors", []))
-    previous_versions = dict(state.get("previous_versions", {}) or {})
 
-    human_decision = state.get("human_decision", "")
     human_feedback = state.get("human_feedback", "")
-    previous_doc = state.get("requirements_doc", "")
-    is_edit_rerun = human_decision == "edit" and bool(human_feedback) and bool(previous_doc)
+    previous_doc = regeneration_target(state, "requirements_doc")
+    # Gate-2 back-navigation: regenerate requirements, then flow straight to
+    # architecture (skip re-pausing at gate 1). Mirrors replan_after_architecture.
+    is_back_rerun = state.get("human_decision") == "back" and previous_doc is not None
 
     print(f"[RequirementsAgent] Starting for project: {project_name}")
     log.append(f"requirements_agent: started for project '{project_name}'")
 
-    if is_edit_rerun:
-        previous_versions["requirements_doc"] = previous_doc
+    if previous_doc:
         log.append("requirements_agent: re-running with human feedback")
 
     # ── Validate we have the research report ──────────────────────
@@ -104,7 +103,7 @@ At the very end of your response, output the tech stack as a JSON code block."""
         {"role": "user", "content": user_content}
     ]
 
-    if is_edit_rerun:
+    if previous_doc:
         messages.append({
             "role": "user",
             "content": build_feedback_prompt(previous_doc, human_feedback),
@@ -178,11 +177,9 @@ At the very end of your response, output the tech stack as a JSON code block."""
     return {
         "requirements_doc": response,
         "tech_stack": tech_stack_json_str,
-        "previous_versions": previous_versions,
         "log": log,
         "errors": errors,
         "current_stage": "architecture",
-        "human_feedback": "",
-        "human_decision": "",
+        "skip_gate_1": is_back_rerun,
         "_agent_event": True
     }

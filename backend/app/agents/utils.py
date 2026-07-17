@@ -246,13 +246,32 @@ def get_tasks_for_phase(implementation_plan_str: str, phase: str) -> list[dict]:
 def build_feedback_prompt(previous_output: str, feedback: str) -> str:
     """
     Builds the standard feedback-regeneration prompt appended to an agent's
-    normal user message when re-running a stage after a human 'edit' decision.
+    normal user message when re-running a stage after a human 'edit'/'back'
+    decision. The ONLY copy of the regeneration framing string.
     """
     return (
         f"PREVIOUS OUTPUT:\n{previous_output}\n\n"
         f"HUMAN FEEDBACK:\n{feedback}\n\n"
         "Regenerate the document addressing the feedback. Keep what was good, fix what was wrong."
     )
+
+
+def regeneration_target(state: dict, output_field: str) -> Optional[str]:
+    """
+    Returns this agent's previous output when it is the target of a
+    feedback-driven re-run ('edit' or 'back' decision), else None.
+
+    Cascade stages downstream of the target never match: invalidate_downstream
+    cleared their output field before the cycle started, so the non-empty
+    check fails even while the decision fields are still set.
+    """
+    if (
+        state.get("human_decision") in ("edit", "back")
+        and state.get("human_feedback")
+        and state.get(output_field)
+    ):
+        return state.get(output_field)
+    return None
 
 
 def get_completed_file_content(generated_files: dict, task_ids: list[str], all_tasks: list[dict]) -> str:

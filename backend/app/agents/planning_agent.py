@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 
 from ..llm_router import call_llm
-from .utils import build_feedback_prompt, truncate_for_context, parse_and_validate_plan
+from .utils import build_feedback_prompt, regeneration_target, truncate_for_context, parse_and_validate_plan
 
 
 SYSTEM_PROMPT = (
@@ -36,18 +36,14 @@ def planning_agent(state: dict) -> dict:
     brief = state.get("brief", "")
     log = list(state.get("log", []))
     errors = list(state.get("errors", []))
-    previous_versions = dict(state.get("previous_versions", {}) or {})
 
-    human_decision = state.get("human_decision", "")
     human_feedback = state.get("human_feedback", "")
-    previous_plan = state.get("implementation_plan", "")
-    is_edit_rerun = human_decision == "edit" and bool(human_feedback) and bool(previous_plan)
+    previous_plan = regeneration_target(state, "implementation_plan")
 
     print(f"[PlanningAgent] Starting for project: {project_name}")
     log.append(f"planning_agent: started - {len(file_list)} files in file_list")
 
-    if is_edit_rerun:
-        previous_versions["implementation_plan"] = previous_plan
+    if previous_plan:
         log.append("planning_agent: re-planning with human feedback")
 
     if not architecture_doc:
@@ -116,7 +112,7 @@ CRITICAL RULES:
         {"role": "user", "content": user_content},
     ]
 
-    if is_edit_rerun:
+    if previous_plan:
         # Compact + truncate the previous plan: a full indented 60-task plan is
         # ~25k+ tokens and exceeds free-tier per-request limits (Groq TPM 12k),
         # which fails permanently, not transiently. The model needs the plan's
@@ -238,12 +234,9 @@ CRITICAL RULES:
         "implementation_plan": plan_json,
         # A fresh plan invalidates any exclusions made against the old one
         "excluded_tasks": [],
-        "previous_versions": previous_versions,
         "log": log,
         "errors": errors,
         "current_stage": "frontend_code",
-        "human_feedback": "",
-        "human_decision": "",
         "replan_after_architecture": False,
         "_agent_event": True,
     }

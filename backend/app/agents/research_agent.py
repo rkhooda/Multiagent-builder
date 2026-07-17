@@ -5,6 +5,7 @@ from ..core.connection_manager import manager
 from ..llm_router import call_llm
 from .research_validation import validate_research_report
 from .search import format_search_results, web_search
+from .utils import build_feedback_prompt, regeneration_target, truncate_for_context
 
 
 SYSTEM_PROMPT = (
@@ -336,6 +337,13 @@ def research_agent(state: dict) -> dict:
     print(f"[ResearchAgent] Optional sections: {optional_sections_str}")
     log.append(f"research_agent: started, optional_sections={optional_sections_str}")
 
+    # Gate-1 back-navigation: regenerate the report with the previous version +
+    # feedback injected (size-bounded — reports run ~16k chars).
+    previous_report = regeneration_target(state, "research_report")
+    human_feedback = state.get("human_feedback", "")
+    if previous_report:
+        log.append("research_agent: re-running with human feedback")
+
     # Targeted multi-query web search
     print(f"[ResearchAgent] Running targeted web search for: {project_name}")
     search_context = run_targeted_web_search(project_name, brief)
@@ -378,6 +386,14 @@ Quality bar: if a sentence could appear in a report about any software product, 
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user",   "content": user_content},
     ]
+
+    if previous_report:
+        messages.append({
+            "role": "user",
+            "content": build_feedback_prompt(
+                truncate_for_context(previous_report, max_chars=8000), human_feedback
+            ),
+        })
 
     print("[ResearchAgent] Calling LLM...")
     report = call_llm(messages, "research", max_tokens=4000)

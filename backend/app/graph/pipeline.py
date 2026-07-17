@@ -11,6 +11,7 @@ from app.agents.planning_agent import planning_agent
 from app.agents.database_agent import database_agent
 from app.agents.devops_agent import devops_agent
 from app.agents.qa_agent import qa_agent
+from app.agents.utils import regeneration_target
 
 def human_gate_1(state: ProjectState) -> Dict:
     # Empty pass-through function. LangGraph pauses before this node.
@@ -29,11 +30,20 @@ def cancelled(state: ProjectState) -> Dict:
     log.append("project cancelled by user at approval gate")
     return {"log": log, "current_stage": "cancelled"}
 
-# Decision -> target node per gate. Adding a back edge to another gate later
-# (Day 16) is one new dict entry, not a new routing function.
+# Decision -> target node per gate.
 GATE_ROUTES = {
-    "human_gate_1": {"edit": "requirements", "reject": "cancelled", "approve": "architecture"},
-    "human_gate_2": {"edit": "architecture", "reject": "cancelled", "approve": "planning"},
+    "human_gate_1": {
+        "edit": "requirements",
+        "back": "research",        # regenerate research, then fresh requirements, re-pause at gate 1
+        "reject": "cancelled",
+        "approve": "architecture",
+    },
+    "human_gate_2": {
+        "edit": "architecture",
+        "back": "requirements",    # regenerate requirements, then fresh architecture (skips gate 1)
+        "reject": "cancelled",
+        "approve": "planning",
+    },
     "human_gate_3": {
         "edit": "planning",        # replan with feedback
         "back": "architecture",    # regenerate architecture, then auto-replan (skips gate 2)
@@ -51,10 +61,79 @@ def make_gate_router(gate_name: str):
         return routes.get(state.get("human_decision", ""), routes["approve"])
     return route
 
+def route_after_requirements(state: ProjectState) -> str:
+    # After a gate-2 'back' rerun the user wants to land back at gate 2 —
+    # flow straight to architecture instead of re-pausing at gate 1.
+    return "architecture" if state.get("skip_gate_1") else "human_gate_1"
+
 def route_after_architecture(state: ProjectState) -> str:
     # After a gate-3 'back' rerun the old plan is stale — flow straight to
     # planning for a fresh plan instead of pausing at gate 2 again.
     return "planning" if state.get("replan_after_architecture") else "human_gate_2"
+
+# ── Cascade invalidation & stage history ─────────────────────────────────────
+# One stage-order map used by both invalidate_downstream (what becomes stale on
+# a back/edit re-run) and the stage_node wrapper (which field to snapshot).
+# All coder/QA/devops artifacts count as one "code" stage — they regenerate
+# together and are never a feedback target themselves.
+STAGE_ORDER = ["research", "requirements", "architecture", "planning", "code"]
+STAGE_ARTIFACTS = {
+    "research": {"research_report": ""},
+    "requirements": {"requirements_doc": "", "tech_stack": ""},
+    "architecture": {"architecture_doc": "", "file_list": []},
+    "planning": {"implementation_plan": "", "excluded_tasks": []},
+    "code": {"generated_files": {}, "qa_report": "", "qa_issues_count": 0,
+             "devops_files": {}, "fix_counts": {}},
+}
+# Doc fields snapshotted into previous_versions before clearing (diff source).
+SNAPSHOT_FIELDS = {"research_report", "requirements_doc", "architecture_doc", "implementation_plan"}
+
+# Stage -> the output field a feedback re-run regenerates (drives snapshotting
+# and feedback-field clearing in stage_node).
+STAGE_PRIMARY_OUTPUT = {
+    "research": "research_report",
+    "requirements": "requirements_doc",
+    "architecture": "architecture_doc",
+    "planning": "implementation_plan",
+}
+
+def invalidate_downstream(state: dict, from_stage: str) -> dict:
+    """State update that marks everything produced AFTER from_stage stale:
+    snapshots doc artifacts into previous_versions (last snapshot only) and
+    clears them. The target stage's own output is left intact for feedback
+    injection. Called once, from the resume endpoint, for every edit/back."""
+    update = {}
+    previous_versions = dict(state.get("previous_versions") or {})
+    for stage in STAGE_ORDER[STAGE_ORDER.index(from_stage) + 1:]:
+        for field, empty in STAGE_ARTIFACTS[stage].items():
+            current = state.get(field)
+            if not current:
+                continue
+            if field in SNAPSHOT_FIELDS:
+                previous_versions[field] = current
+            update[field] = empty
+    update["previous_versions"] = previous_versions
+    return update
+
+def stage_node(stage: str, agent_fn):
+    """Wraps an agent node with the cross-cutting per-stage bookkeeping:
+    - snapshot the previous output + clear feedback fields when this stage was
+      the feedback target (single implementation instead of one per agent)
+    - append a stage_history entry (attempt count, trigger, gate origin)"""
+    output_field = STAGE_PRIMARY_OUTPUT.get(stage)
+    def node(state: ProjectState) -> Dict:
+        previous_output = regeneration_target(state, output_field) if output_field else None
+        result = agent_fn(state)
+
+        if previous_output is not None:
+            previous_versions = dict(state.get("previous_versions") or {})
+            previous_versions[output_field] = previous_output
+            result["previous_versions"] = previous_versions
+            result["human_feedback"] = ""
+            result["human_decision"] = ""
+        return result
+    node.__name__ = f"{stage}_node"
+    return node
 
 def frontend_code(state: ProjectState) -> Dict:
     current_log = state.get("log") or []
@@ -77,19 +156,19 @@ def human_gate_4(state: ProjectState) -> Dict:
 # 2. Build the state graph
 workflow = StateGraph(ProjectState)
 
-# Add all nodes
-workflow.add_node("research", research_agent)
+# Add all nodes (agent nodes wrapped for stage history + feedback bookkeeping)
+workflow.add_node("research", stage_node("research", research_agent))
 workflow.add_node("human_gate_1", human_gate_1)
-workflow.add_node("requirements", requirements_agent)
+workflow.add_node("requirements", stage_node("requirements", requirements_agent))
 workflow.add_node("human_gate_2", human_gate_2)
-workflow.add_node("architecture", architecture_agent)
-workflow.add_node("planning", planning_agent)
+workflow.add_node("architecture", stage_node("architecture", architecture_agent))
+workflow.add_node("planning", stage_node("planning", planning_agent))
 workflow.add_node("human_gate_3", human_gate_3)
-workflow.add_node("frontend_code", frontend_code)
-workflow.add_node("backend_code", backend_code)
-workflow.add_node("database", database_agent)
-workflow.add_node("qa", qa_agent)
-workflow.add_node("devops", devops_agent)
+workflow.add_node("frontend_code", stage_node("frontend_code", frontend_code))
+workflow.add_node("backend_code", stage_node("backend_code", backend_code))
+workflow.add_node("database", stage_node("database", database_agent))
+workflow.add_node("qa", stage_node("qa", qa_agent))
+workflow.add_node("devops", stage_node("devops", devops_agent))
 workflow.add_node("human_gate_4", human_gate_4)
 workflow.add_node("cancelled", cancelled)
 
@@ -97,11 +176,20 @@ workflow.add_node("cancelled", cancelled)
 # Gate 1 reviews research + requirements together; Gate 2 reviews architecture.
 workflow.add_edge(START, "research")
 workflow.add_edge("research", "requirements")
-workflow.add_edge("requirements", "human_gate_1")
+workflow.add_conditional_edges(
+    "requirements",
+    route_after_requirements,
+    {"human_gate_1": "human_gate_1", "architecture": "architecture"},
+)
 workflow.add_conditional_edges(
     "human_gate_1",
     make_gate_router("human_gate_1"),
-    {"architecture": "architecture", "requirements": "requirements", "cancelled": "cancelled"},
+    {
+        "architecture": "architecture",
+        "requirements": "requirements",
+        "research": "research",
+        "cancelled": "cancelled",
+    },
 )
 workflow.add_conditional_edges(
     "architecture",
@@ -111,7 +199,12 @@ workflow.add_conditional_edges(
 workflow.add_conditional_edges(
     "human_gate_2",
     make_gate_router("human_gate_2"),
-    {"planning": "planning", "architecture": "architecture", "cancelled": "cancelled"},
+    {
+        "planning": "planning",
+        "architecture": "architecture",
+        "requirements": "requirements",
+        "cancelled": "cancelled",
+    },
 )
 workflow.add_edge("cancelled", END)
 workflow.add_edge("planning", "human_gate_3")
