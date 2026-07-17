@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import DiffView from './DiffView'
 import FeedbackInput from './FeedbackInput'
 import RegeneratingOverlay from './RegeneratingOverlay'
+import RetryWarning, { RETRY_SOFT_CAP, retryCount, cappedButtonClass } from './RetryWarning'
 
 const PHASES = ['frontend', 'backend', 'database', 'devops']
 
@@ -218,6 +219,7 @@ export default function Gate3Approval({ projectId, projectState, status, onResum
   const [collapsed, setCollapsed] = useState(new Set())
   const [showPreview, setShowPreview] = useState(false)
   const [feedbackMode, setFeedbackMode] = useState(null) // 'edit' | 'back' | null
+  const [warningFor, setWarningFor] = useState(null) // 'edit' | 'back' | null
   const [confirmingCancel, setConfirmingCancel] = useState(false)
   const [submitting, setSubmitting] = useState(null)
   const [regenAction, setRegenAction] = useState(null) // 'edit' | 'back' while re-running
@@ -415,7 +417,28 @@ export default function Gate3Approval({ projectId, projectState, status, onResum
     }
   }
 
+  // decision -> target stage for retry-cap warnings
+  const TARGET_STAGE = { edit: 'planning', back: 'architecture' }
+  const TARGET_LABEL = { edit: 'Planning', back: 'Architecture' }
+
+  // Soft-cap warning shown BEFORE opening the feedback input.
+  const requestRegenerate = (mode) => {
+    setWarningFor(null)
+    if (feedbackMode === mode) {
+      setFeedbackMode(null)
+      return
+    }
+    if (retryCount(projectState, TARGET_STAGE[mode]) >= RETRY_SOFT_CAP) {
+      setFeedbackMode(null)
+      setWarningFor(mode)
+    } else {
+      setFeedbackMode(mode)
+    }
+  }
+
   const isPending = submitting !== null
+  const editCapped = retryCount(projectState, 'planning') >= RETRY_SOFT_CAP
+  const backCapped = retryCount(projectState, 'architecture') >= RETRY_SOFT_CAP
   const regenLabel =
     regenAction === 'back'
       ? lastAgentComplete === 'architecture'
@@ -781,19 +804,27 @@ export default function Gate3Approval({ projectId, projectState, status, onResum
             </button>
             <button
               type="button"
-              onClick={() => setFeedbackMode(feedbackMode === 'edit' ? null : 'edit')}
+              onClick={() => requestRegenerate('edit')}
               disabled={isPending || regenAction}
-              className="flex-1 rounded border border-gray-300 bg-white py-2 px-3 text-sm font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-60"
+              className={
+                editCapped
+                  ? cappedButtonClass
+                  : 'flex-1 rounded border border-gray-300 bg-white py-2 px-3 text-sm font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-60'
+              }
             >
-              🔄 Replan with Feedback
+              {editCapped ? '⚠️ ' : '🔄 '}Replan with Feedback
             </button>
             <button
               type="button"
-              onClick={() => setFeedbackMode(feedbackMode === 'back' ? null : 'back')}
+              onClick={() => requestRegenerate('back')}
               disabled={isPending || regenAction}
-              className="flex-1 rounded border border-gray-300 bg-white py-2 px-3 text-sm font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-60"
+              className={
+                backCapped
+                  ? cappedButtonClass
+                  : 'flex-1 rounded border border-gray-300 bg-white py-2 px-3 text-sm font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-60'
+              }
             >
-              ⬅️ Go Back to Architecture
+              {backCapped ? '⚠️ ' : '⬅️ '}Go Back to Architecture
             </button>
             <button
               type="button"
@@ -804,6 +835,23 @@ export default function Gate3Approval({ projectId, projectState, status, onResum
               Cancel Project
             </button>
           </div>
+        )}
+
+        {warningFor && !confirmingCancel && (
+          <RetryWarning
+            count={retryCount(projectState, TARGET_STAGE[warningFor])}
+            stageLabel={TARGET_LABEL[warningFor]}
+            onContinue={() => {
+              setWarningFor(null)
+              setFeedbackMode(warningFor)
+            }}
+            onEditDirectly={
+              warningFor === 'edit'
+                ? () => setWarningFor(null) // gate 3 IS the inline plan editor
+                : undefined
+            }
+            onDismiss={() => setWarningFor(null)}
+          />
         )}
 
         {feedbackMode && !confirmingCancel && (

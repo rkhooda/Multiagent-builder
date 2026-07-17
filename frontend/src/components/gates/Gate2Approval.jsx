@@ -5,6 +5,7 @@ import MermaidDiagram from '../MermaidDiagram'
 import FeedbackInput from './FeedbackInput'
 import RegeneratingOverlay from './RegeneratingOverlay'
 import DiffView from './DiffView'
+import RetryWarning, { RETRY_SOFT_CAP, retryCount, cappedButtonClass } from './RetryWarning'
 
 function splitArchitectureSections(doc) {
   const regex = /^##\s+(.+)$/gm
@@ -86,28 +87,36 @@ function Panel({ title, children }) {
   )
 }
 
-export default function Gate2Approval({ projectId, projectState, status, onResume, onRefresh }) {
-  const [feedbackOpen, setFeedbackOpen] = useState(false)
+// decision -> the stage its regeneration targets (drives retry-cap warnings)
+const TARGET_STAGE = { edit: 'architecture', back: 'requirements' }
+const TARGET_LABEL = { edit: 'Architecture', back: 'Requirements' }
+
+export default function Gate2Approval({ projectId, projectState, status, onResume, onRefresh, lastAgentComplete }) {
+  const [feedbackMode, setFeedbackMode] = useState(null) // 'edit' | 'back' | null
+  const [warningFor, setWarningFor] = useState(null) // 'edit' | 'back' | null
   const [confirmingCancel, setConfirmingCancel] = useState(false)
   const [submitting, setSubmitting] = useState(null)
-  const [regenerating, setRegenerating] = useState(false)
+  const [regenAction, setRegenAction] = useState(null) // 'edit' | 'back' while re-running
   const [showDiff, setShowDiff] = useState(false)
+  const [showRequirementsDiff, setShowRequirementsDiff] = useState(false)
   const hasLeftApprovalRef = useRef(false)
 
   const architectureDoc = projectState?.architecture_doc || ''
   const previousArchitecture = projectState?.previous_versions?.architecture_doc || ''
+  const previousRequirements = projectState?.previous_versions?.requirements_doc || ''
 
   useEffect(() => {
     if (status !== 'awaiting_approval') {
       hasLeftApprovalRef.current = true
     } else if (hasLeftApprovalRef.current) {
-      // Back at the gate after a feedback re-run — open the diff so the
-      // changes are immediately visible.
-      if (regenerating) setShowDiff(true)
-      setRegenerating(false)
+      // Back at the gate after a feedback re-run — open the diff(s) so the
+      // changes are immediately visible. A back-cycle changed requirements too.
+      if (regenAction) setShowDiff(true)
+      if (regenAction === 'back') setShowRequirementsDiff(true)
+      setRegenAction(null)
       hasLeftApprovalRef.current = false
     }
-  }, [status, regenerating])
+  }, [status, regenAction])
 
   const handleApprove = async () => {
     setSubmitting('approve')
@@ -119,11 +128,14 @@ export default function Gate2Approval({ projectId, projectState, status, onResum
   }
 
   const handleSubmitFeedback = async (feedbackText) => {
-    setSubmitting('edit')
-    setRegenerating(true)
+    const action = feedbackMode
+    setSubmitting(action)
+    setRegenAction(action)
     try {
-      await onResume('edit', feedbackText)
-      setFeedbackOpen(false)
+      await onResume(action, feedbackText)
+      setFeedbackMode(null)
+    } catch {
+      setRegenAction(null)
     } finally {
       setSubmitting(null)
     }
@@ -139,7 +151,30 @@ export default function Gate2Approval({ projectId, projectState, status, onResum
     }
   }
 
+  // Soft-cap warning shown BEFORE opening the feedback input.
+  const requestRegenerate = (mode) => {
+    setWarningFor(null)
+    if (feedbackMode === mode) {
+      setFeedbackMode(null)
+      return
+    }
+    if (retryCount(projectState, TARGET_STAGE[mode]) >= RETRY_SOFT_CAP) {
+      setFeedbackMode(null)
+      setWarningFor(mode)
+    } else {
+      setFeedbackMode(mode)
+    }
+  }
+
   const isPending = submitting !== null
+  const regenLabel =
+    regenAction === 'back'
+      ? lastAgentComplete === 'requirements'
+        ? 'Regenerating architecture from the new requirements…'
+        : 'Rewriting requirements with your feedback…'
+      : 'Regenerating architecture with your feedback…'
+  const editCapped = retryCount(projectState, 'architecture') >= RETRY_SOFT_CAP
+  const backCapped = retryCount(projectState, 'requirements') >= RETRY_SOFT_CAP
 
   const sections = splitArchitectureSections(architectureDoc)
   const folderSection = findSection(sections, 'folder')
@@ -166,17 +201,36 @@ export default function Gate2Approval({ projectId, projectState, status, onResum
       </p>
 
       <div className="relative">
-        {regenerating && <RegeneratingOverlay label="Regenerating architecture with your feedback…" />}
+        {regenAction && <RegeneratingOverlay label={regenLabel} />}
 
-        {previousArchitecture && (
-          <div className="mb-3">
-            <button
-              type="button"
-              onClick={() => setShowDiff((v) => !v)}
-              className="rounded border border-gray-300 bg-white px-2 py-1 text-xs font-semibold text-gray-700 hover:bg-gray-50"
-            >
-              {showDiff ? 'Hide Changes' : 'View Changes'}
-            </button>
+        {(previousArchitecture || previousRequirements) && (
+          <div className="mb-3 flex gap-2">
+            {previousArchitecture && (
+              <button
+                type="button"
+                onClick={() => setShowDiff((v) => !v)}
+                className="rounded border border-gray-300 bg-white px-2 py-1 text-xs font-semibold text-gray-700 hover:bg-gray-50"
+              >
+                {showDiff ? 'Hide Architecture Changes' : 'View Architecture Changes'}
+              </button>
+            )}
+            {previousRequirements && (
+              <button
+                type="button"
+                onClick={() => setShowRequirementsDiff((v) => !v)}
+                className="rounded border border-gray-300 bg-white px-2 py-1 text-xs font-semibold text-gray-700 hover:bg-gray-50"
+              >
+                {showRequirementsDiff ? 'Hide Requirements Changes' : 'View Requirements Changes'}
+              </button>
+            )}
+          </div>
+        )}
+
+        {showRequirementsDiff && previousRequirements && (
+          <div className="mb-4">
+            <Panel title="Requirements — changes from this cycle">
+              <DiffView oldText={previousRequirements} newText={projectState?.requirements_doc || ''} />
+            </Panel>
           </div>
         )}
 
@@ -267,27 +321,43 @@ export default function Gate2Approval({ projectId, projectState, status, onResum
             </div>
           </div>
         ) : (
-          <div className="flex gap-3">
+          <div className="flex flex-wrap gap-3">
             <button
               type="button"
               onClick={handleApprove}
-              disabled={isPending || regenerating}
+              disabled={isPending || regenAction}
               className="flex-1 rounded bg-green-600 py-2 px-3 text-sm font-semibold text-white hover:bg-green-700 disabled:opacity-60"
             >
               {submitting === 'approve' ? 'Sending...' : '✅ Approve & Continue'}
             </button>
             <button
               type="button"
-              onClick={() => setFeedbackOpen((v) => !v)}
-              disabled={isPending || regenerating}
-              className="flex-1 rounded border border-gray-300 bg-white py-2 px-3 text-sm font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-60"
+              onClick={() => requestRegenerate('edit')}
+              disabled={isPending || regenAction}
+              className={
+                editCapped
+                  ? cappedButtonClass
+                  : 'flex-1 rounded border border-gray-300 bg-white py-2 px-3 text-sm font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-60'
+              }
             >
-              ✏️ Request Changes
+              {editCapped ? '⚠️ ' : '✏️ '}Request Changes
+            </button>
+            <button
+              type="button"
+              onClick={() => requestRegenerate('back')}
+              disabled={isPending || regenAction}
+              className={
+                backCapped
+                  ? cappedButtonClass
+                  : 'flex-1 rounded border border-gray-300 bg-white py-2 px-3 text-sm font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-60'
+              }
+            >
+              {backCapped ? '⚠️ ' : '⬅️ '}Go Back to Requirements
             </button>
             <button
               type="button"
               onClick={() => setConfirmingCancel(true)}
-              disabled={isPending || regenerating}
+              disabled={isPending || regenAction}
               className="rounded border border-red-200 bg-white py-2 px-3 text-sm font-semibold text-red-600 hover:bg-red-50 disabled:opacity-60"
             >
               Cancel Project
@@ -295,11 +365,28 @@ export default function Gate2Approval({ projectId, projectState, status, onResum
           </div>
         )}
 
-        {feedbackOpen && !confirmingCancel && (
+        {warningFor && !confirmingCancel && (
+          <RetryWarning
+            count={retryCount(projectState, TARGET_STAGE[warningFor])}
+            stageLabel={TARGET_LABEL[warningFor]}
+            onContinue={() => {
+              setWarningFor(null)
+              setFeedbackMode(warningFor)
+            }}
+            onDismiss={() => setWarningFor(null)}
+          />
+        )}
+
+        {feedbackMode && !confirmingCancel && (
           <FeedbackInput
+            label={
+              feedbackMode === 'back'
+                ? 'What should change in the requirements?'
+                : 'What should change in the architecture?'
+            }
             onSubmit={handleSubmitFeedback}
-            onCancel={() => setFeedbackOpen(false)}
-            submitting={submitting === 'edit'}
+            onCancel={() => setFeedbackMode(null)}
+            submitting={submitting === feedbackMode}
           />
         )}
       </div>
