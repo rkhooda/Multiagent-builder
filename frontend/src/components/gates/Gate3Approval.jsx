@@ -42,6 +42,42 @@ function serializePlan(tasks, excluded) {
   return JSON.stringify([...ordered, ...included.filter((t) => !known.has(t.id))], null, 2)
 }
 
+// Nested {name: subtree} map built from filepaths; files hold null.
+function buildFileTree(filepaths) {
+  const root = {}
+  filepaths.forEach((path) => {
+    const parts = path.split('/').filter(Boolean)
+    let node = root
+    parts.forEach((part, i) => {
+      const isFile = i === parts.length - 1
+      if (isFile) {
+        node[part] = null
+      } else {
+        node[part] = node[part] || {}
+        node = node[part]
+      }
+    })
+  })
+  return root
+}
+
+function FileTree({ node, depth = 0 }) {
+  // Folders first, then files, each alphabetical
+  const entries = Object.entries(node).sort(([an, av], [bn, bv]) => {
+    if ((av === null) !== (bv === null)) return av === null ? 1 : -1
+    return an.localeCompare(bn)
+  })
+  return entries.map(([name, child]) => (
+    <div key={name} style={{ paddingLeft: depth * 16 }}>
+      <span className="font-mono text-xs leading-6 text-gray-700">
+        {child === null ? '📄 ' : '📁 '}
+        {name}
+      </span>
+      {child !== null && <FileTree node={child} depth={depth + 1} />}
+    </div>
+  ))
+}
+
 function SummaryBar({ tasks, excluded, extraActions }) {
   const included = tasks.filter((t) => !excluded.has(t.id))
   const phaseCount = (phase) => included.filter((t) => t.phase === phase).length
@@ -179,6 +215,7 @@ export default function Gate3Approval({ projectId, projectState, status, onResum
   const [pendingRemove, setPendingRemove] = useState(null)
   const [highlightId, setHighlightId] = useState(null)
   const [collapsed, setCollapsed] = useState(new Set())
+  const [showPreview, setShowPreview] = useState(false)
   const [feedbackMode, setFeedbackMode] = useState(null) // 'edit' | 'back' | null
   const [confirmingCancel, setConfirmingCancel] = useState(false)
   const [submitting, setSubmitting] = useState(null)
@@ -550,7 +587,33 @@ export default function Gate3Approval({ projectId, projectState, status, onResum
         The coder agents will generate exactly what you approve here.
       </p>
 
-      <SummaryBar tasks={tasks} excluded={excluded} />
+      <SummaryBar
+        tasks={tasks}
+        excluded={excluded}
+        extraActions={
+          <button
+            type="button"
+            onClick={() => setShowPreview((v) => !v)}
+            className="rounded border border-gray-300 bg-white px-2 py-1 text-xs font-semibold text-gray-700 hover:bg-gray-50"
+          >
+            {showPreview ? 'Hide Folder Structure' : '📁 Preview Folder Structure'}
+          </button>
+        }
+      />
+
+      {/* Rebuilt from included filepaths on every render, so it live-updates as tasks are edited */}
+      {showPreview && (
+        <div className="max-h-80 overflow-auto rounded-lg border border-gray-200 bg-gray-50 p-4">
+          <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">
+            {includedTasks.length} file{includedTasks.length === 1 ? '' : 's'} will be generated
+          </p>
+          {includedTasks.length === 0 ? (
+            <p className="text-xs italic text-gray-400">No tasks included.</p>
+          ) : (
+            <FileTree node={buildFileTree(includedTasks.map((t) => t.filepath))} />
+          )}
+        </div>
+      )}
 
       <div className="relative">
         {regenAction && <RegeneratingOverlay label={regenLabel} />}
