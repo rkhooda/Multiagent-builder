@@ -1,22 +1,11 @@
 import os
-import re
 from pathlib import Path
-from datetime import datetime
+
+from .code_cleaner import strip_code_fences
 
 # Base directory where all generated project files land (project root / outputs)
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 OUTPUTS_ROOT = os.path.join(PROJECT_ROOT, "outputs")
-
-
-def strip_code_fences(code: str) -> str:
-    """
-    Remove markdown code fences that LLMs add despite instructions not to.
-    Handles ```python, ```yaml, ```dockerfile, ```sql, plain ```, etc.
-    """
-    code = code.strip()
-    code = re.sub(r'^```[a-zA-Z0-9_-]*\n?', '', code)
-    code = re.sub(r'\n?```$', '', code)
-    return code.strip()
 
 
 def get_header_comment(filepath: str) -> str:

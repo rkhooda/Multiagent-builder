@@ -49,19 +49,6 @@ def extract_tech_stack(llm_response: str) -> dict:
     return DEFAULT_TECH_STACK.model_dump()
 
 
-def strip_code_fences(code: str) -> str:
-    """
-    Remove markdown code fences from LLM-generated code.
-    LLMs often wrap code in ```python or ```javascript despite instructions.
-    """
-    code = code.strip()
-    # Remove opening fence with optional language tag
-    code = re.sub(r'^```[a-zA-Z]*\n?', '', code)
-    # Remove closing fence
-    code = re.sub(r'\n?```$', '', code)
-    return code.strip()
-
-
 def truncate_for_context(text: str, max_chars: int = 6000) -> str:
     """
     Truncate long text to fit within LLM context limits.

@@ -152,6 +152,15 @@ Generate the complete file content now. Output ONLY the raw file content — no 
             errors.append(error_msg)
             print(f"[DevOpsAgent] ERROR: {error_msg}")
 
+    # ── Fence cleanup pass before gate 4 ─────────────────────────────
+    # State holds raw LLM output while disk got the stripped version at write
+    # time; this pass makes state, disk, and the eventual ZIP identical.
+    from ..utils.code_cleaner import clean_project_files
+    generated_files, cleaned_count = clean_project_files(project_id, generated_files)
+    devops_files = {k: generated_files.get(k, v) for k, v in devops_files.items()}
+    log.append(f"devops_agent: fence cleanup pass — {cleaned_count} files cleaned")
+    print(f"[DevOpsAgent] Cleanup pass: {cleaned_count} files cleaned")
+
     log.append(f"devops_agent: completed — {files_written} files written, {files_failed} failed")
     print(f"[DevOpsAgent] Done. {files_written} written, {files_failed} failed")
 
