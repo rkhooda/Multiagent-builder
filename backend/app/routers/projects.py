@@ -1,14 +1,20 @@
 import uuid
 import asyncio
+import io
 import json
+import re
+import zipfile
+from pathlib import Path
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import PlainTextResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from typing import List, Dict, Optional
 from concurrent.futures import ThreadPoolExecutor
-from app.graph.pipeline import graph
+from app.graph.pipeline import graph, GATE_ROUTES
 from app.graph.state import ProjectState
 from app.core.connection_manager import manager
 from app.core.database import insert_project, update_project_status, get_all_projects
+from app.utils.file_writer import OUTPUTS_ROOT
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
 
@@ -26,9 +32,6 @@ class ProjectResumeRequest(BaseModel):
     decision: str = Field(..., description="Decision: approve, edit, back, or reject")
     feedback: str = Field("", description="Optional human feedback")
 
-VALID_DECISIONS = {"approve", "edit", "back", "reject"}
-# Gates that support 'back' navigation to an earlier stage (Day 16 extends this).
-BACK_CAPABLE_GATES = {"human_gate_3"}
 
 EDITABLE_STATE_FIELDS = {"requirements_doc", "architecture_doc", "implementation_plan"}
 
@@ -351,13 +354,13 @@ async def resume_project(project_id: str, request: ProjectResumeRequest):
     if not state_snapshot.next:
         raise HTTPException(status_code=400, detail="Project is already completed and cannot be resumed")
 
-    if request.decision not in VALID_DECISIONS:
-        raise HTTPException(status_code=400, detail=f"decision must be one of {sorted(VALID_DECISIONS)}")
-
-    if request.decision == "back" and state_snapshot.next[0] not in BACK_CAPABLE_GATES:
+    # The routing map is the single source of truth for what each gate supports.
+    gate = state_snapshot.next[0]
+    allowed_decisions = set(GATE_ROUTES.get(gate, {"approve", "reject"}))
+    if request.decision not in allowed_decisions:
         raise HTTPException(
             status_code=400,
-            detail=f"'back' is only supported at {sorted(BACK_CAPABLE_GATES)} for now"
+            detail=f"decision at {gate} must be one of {sorted(allowed_decisions)}"
         )
 
     try:
@@ -376,8 +379,120 @@ async def resume_project(project_id: str, request: ProjectResumeRequest):
 
         # Resume the graph in a background task
         asyncio.create_task(run_graph_background(project_id, config))
-        
+
         return {"status": "resumed"}
     except Exception as e:
         save_error_to_state(config, str(e))
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ── Generated-file browsing & download (Gate 4) ─────────────────────────────
+# Ponytail: file contents are lazy-fetched per file from disk on click rather
+# than shipped in one payload — GET /projects/{id} already carries the full
+# generated_files dict and must not balloon further; per-click latency on a
+# local disk read is negligible and the frontend caches viewed files.
+
+LANGUAGE_BY_EXT = {
+    ".py": "python", ".js": "javascript", ".jsx": "jsx", ".ts": "typescript",
+    ".tsx": "tsx", ".sql": "sql", ".md": "markdown", ".json": "json",
+    ".yml": "yaml", ".yaml": "yaml", ".sh": "bash", ".html": "html",
+    ".css": "css", ".conf": "nginx", ".toml": "toml", ".txt": "text",
+}
+
+
+def infer_language(filepath: str) -> str:
+    name = Path(filepath).name.lower()
+    if name == "dockerfile":
+        return "docker"
+    if name.startswith(".env"):
+        return "bash"
+    return LANGUAGE_BY_EXT.get(Path(filepath).suffix.lower(), "text")
+
+
+def _project_output_dir(project_id: str) -> Path:
+    directory = (Path(OUTPUTS_ROOT) / project_id).resolve()
+    if not directory.is_dir():
+        raise HTTPException(status_code=404, detail="No generated files for this project")
+    return directory
+
+
+@router.get("/{project_id}/files")
+def list_project_files(project_id: str):
+    """Flat list of generated files with per-file metadata (tree is built client-side)."""
+    directory = _project_output_dir(project_id)
+    files = []
+    for path in sorted(directory.rglob("*")):
+        if not path.is_file():
+            continue
+        rel = path.relative_to(directory).as_posix()
+        try:
+            line_count = len(path.read_text(encoding="utf-8").splitlines())
+        except UnicodeDecodeError:
+            line_count = None
+        files.append({
+            "path": rel,
+            "size_bytes": path.stat().st_size,
+            "line_count": line_count,
+            "language": infer_language(rel),
+        })
+    return {
+        "files": files,
+        "total_files": len(files),
+        "total_lines": sum(f["line_count"] or 0 for f in files),
+        "total_bytes": sum(f["size_bytes"] for f in files),
+    }
+
+
+@router.get("/{project_id}/files/content")
+def get_project_file_content(project_id: str, path: str):
+    """Raw content of one generated file. Rejects path traversal outside the project dir."""
+    directory = _project_output_dir(project_id)
+    target = (directory / path).resolve()
+    if directory not in target.parents:
+        raise HTTPException(status_code=400, detail="Invalid file path")
+    if not target.is_file():
+        raise HTTPException(status_code=404, detail=f"File not found: {path}")
+    try:
+        return PlainTextResponse(target.read_text(encoding="utf-8"))
+    except UnicodeDecodeError:
+        raise HTTPException(status_code=400, detail=f"File is not valid UTF-8: {path}")
+
+
+@router.get("/{project_id}/download")
+def download_project_zip(project_id: str):
+    """ZIP of everything under outputs/{project_id}/, skipping non-UTF-8 files with a warning."""
+    directory = _project_output_dir(project_id)
+
+    state_values = graph.get_state({"configurable": {"thread_id": project_id}}).values or {}
+    raw_name = state_values.get("project_name") or project_id
+    safe_name = re.sub(r"[^A-Za-z0-9._-]+", "-", raw_name).strip("-.") or project_id
+
+    buffer = io.BytesIO()
+    file_count = 0
+    total_bytes = 0
+    skipped = []
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+        for path in sorted(directory.rglob("*")):
+            if not path.is_file():
+                continue
+            rel = path.relative_to(directory).as_posix()
+            data = path.read_bytes()
+            try:
+                data.decode("utf-8")
+            except UnicodeDecodeError:
+                skipped.append(rel)
+                continue
+            zf.writestr(f"{safe_name}/{rel}", data)
+            file_count += 1
+            total_bytes += len(data)
+
+    if skipped:
+        print(f"[Download] {project_id}: skipped {len(skipped)} non-UTF-8 files: {skipped}", flush=True)
+    print(f"[Download] {project_id}: zipped {file_count} files, {total_bytes} bytes", flush=True)
+
+    buffer.seek(0)
+    return StreamingResponse(
+        buffer,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{safe_name}.zip"'},
+    )

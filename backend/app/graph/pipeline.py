@@ -40,6 +40,9 @@ GATE_ROUTES = {
         "reject": "cancelled",
         "approve": "frontend_code",
     },
+    # Final review: per-file fixes happen OUTSIDE the graph (files/fix endpoint
+    # with update_state while the gate stays paused), so no edit/back here.
+    "human_gate_4": {"reject": "cancelled", "approve": "end"},
 }
 
 def make_gate_router(gate_name: str):
@@ -127,7 +130,11 @@ workflow.add_edge("backend_code", "database")
 workflow.add_edge("database", "qa")
 workflow.add_edge("qa", "devops")
 workflow.add_edge("devops", "human_gate_4")
-workflow.add_edge("human_gate_4", END)
+workflow.add_conditional_edges(
+    "human_gate_4",
+    make_gate_router("human_gate_4"),
+    {"end": END, "cancelled": "cancelled"},
+)
 
 # 3. Setup SQLite checkpointer
 # Determine path to projects.db in the backend root folder
