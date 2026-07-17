@@ -380,3 +380,63 @@ tags" → NotesTags Day15). Pipeline ran research → gate 4 cleanly in ~7.5 min
   change), so it measures wall-clock including gate waits. Labeled "incl. reviews" in the UI.
 - **Tree-row kebab menu skipped.** The header Request-AI-Fix button covers the flow since a
   file must be open to describe a fix; add the kebab if fix-from-tree becomes a real need.
+
+## Day 16 observations
+
+Scope: complete the back-navigation matrix (gate 1 → research, gate 2 → requirements) with a
+single `invalidate_downstream` cascade helper, centralise feedback injection/snapshot/clearing
+into `regeneration_target` + the `stage_node` wrapper, add `retry_counts` (soft cap 3 with
+amber button warnings), `stage_history` attempt tracking, and the StageTimeline breadcrumb.
+Test project: `af6eaa1f-fa3c-4f83-9d36-6b99c9edf7d7` ("A tiny bookmark manager with folders").
+
+### Matrix results (curl + Playwright)
+
+1. **Gate 1 edit** — PASS. Requirements regenerated (feedback about browser-import honoured),
+   gate 1 re-fired, `previous_versions.requirements_doc` snapshotted, decision/feedback
+   cleared, `retry_counts={'requirements': 1}`, history shows `(requirements, 2, edit, gate_1)`.
+2. **Gate 1 back** — PASS. Research + requirements both regenerated (research now Indian-SME
+   focused per feedback), gate 1 re-fired, BOTH snapshots present, history shows
+   `(research, 2, back, gate_1)` and `(requirements, 3, back, gate_1)`.
+3. **Gate 2 back** — PASS. Requirements + architecture regenerated, pipeline landed back at
+   **gate 2, not gate 1** (skip_gate_1 conditional edge worked), all three doc snapshots
+   present, requirements mention offline-first. Note: the fresh architecture doc did not
+   literally use the word "offline" — downstream freshness is real (it was rebuilt from the
+   new requirements) but the architecture model under-emphasised the new requirement.
+4. **Gate 3 back (regression)** — DEFERRED to post-quota-cooldown (see below). The retrofit
+   path is the same `invalidate_downstream` + `regeneration_target` code proven by tests 1–3,
+   and the helper's stage maths are unit-checked, but the live run is still owed.
+5. **Retry cap** — PASS (UI verified on project `0637908c` at gate 1 with injected counts,
+   then reset). Both regenerate buttons render amber with ⚠️ at count ≥ 3; clicking shows the
+   inline notice BEFORE any regeneration; Continue Anyway opens the feedback input; Edit
+   Directly Instead jumps into the pre-filled inline requirements editor. 0 console errors.
+6. **Cross-cycle integrity** — PARTIAL. Approve-through after test 3 ran architecture fresh
+   from the offline-first requirements (84-file plan input), but planning died on free-tier
+   quota (below), so "plan reflects offline-first" is still owed.
+7. **Restart resume** — PASS (via a real failure rather than a staged kill). Planning errored
+   mid-run leaving `next=('planning',)`; after a backend restart all state (docs, history,
+   retry counts) survived from the checkpointer. This exposed a real gap — the resume endpoint
+   only understood gate interruptions — fixed by the checkpoint-recovery branch
+   (`resumed_from_checkpoint`), verified to restart streaming at the correct node.
+
+### Environmental
+
+- **Free-tier quota exhaustion mid-matrix (expected failure mode, now with a recovery path).**
+  The regeneration-heavy matrix burned Gemini's free-tier request quota and ~86k of Groq's
+  100k tokens/day; planning (a ~39k-token request for the 84-file architecture) failed on
+  primary AND fallback (Groq retry window: ~6h). Exactly the failure documented on Days 12/15.
+  Unlike before, the project is no longer stranded: `POST /resume` now restarts from the
+  checkpoint once quota recovers.
+
+### UI verification (Playwright, 0 console errors throughout)
+
+- StageTimeline: correct done/active states mid-run (Research ✓ 2×, Requirements ✓ 4×,
+  Architecture ✓ 2×, Planning pulsing), attempt badges, hover popover with per-attempt
+  trigger + gate + time, click-to-diff opening the requirements diff, old projects without
+  `stage_history` fall back to doc-presence detection with a "history unavailable" popover.
+- Gate 1: Go Back to Research button, back-mode feedback label, required non-empty feedback.
+
+### Owed after quota cooldown
+
+- Live gate-3 back regression run, cross-cycle plan freshness check (test 6), and one full
+  back-cycle driven from the browser (multi-stage overlay label flips + auto-opened dual
+  diffs at the re-fired gate — code-path verified only).
