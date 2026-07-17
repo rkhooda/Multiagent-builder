@@ -23,14 +23,68 @@ class ProjectCreateRequest(BaseModel):
     optional_sections: Optional[OptionalSections] = None
 
 class ProjectResumeRequest(BaseModel):
-    decision: str = Field(..., description="Decision: approve, edit, or reject")
+    decision: str = Field(..., description="Decision: approve, edit, back, or reject")
     feedback: str = Field("", description="Optional human feedback")
 
-EDITABLE_STATE_FIELDS = {"requirements_doc", "architecture_doc"}
+VALID_DECISIONS = {"approve", "edit", "back", "reject"}
+# Gates that support 'back' navigation to an earlier stage (Day 16 extends this).
+BACK_CAPABLE_GATES = {"human_gate_3"}
+
+EDITABLE_STATE_FIELDS = {"requirements_doc", "architecture_doc", "implementation_plan"}
 
 class ProjectStateEditRequest(BaseModel):
     field: str = Field(..., description="State field to overwrite")
     content: str = Field(..., description="New content for the field")
+    excluded_tasks: Optional[List[Dict]] = Field(
+        None,
+        description="Tasks cut from the plan (only meaningful with field=implementation_plan); kept as an audit trail",
+    )
+
+
+def validate_plan_edit(content: str) -> list[str]:
+    """Validate an edited implementation plan: task schema, unique ids, in-plan dependencies.
+
+    Validates against TaskSchema but stores the submitted JSON verbatim, so extra
+    keys like "custom": true on user-added tasks survive the round trip.
+    """
+    from app.models.task_schema import TaskSchema
+
+    try:
+        tasks = json.loads(content)
+    except json.JSONDecodeError as e:
+        return [f"Plan is not valid JSON: {e}"]
+
+    if not isinstance(tasks, list) or len(tasks) == 0:
+        return ["Plan must be a non-empty JSON array of tasks"]
+
+    errors: list[str] = []
+    ids: list[str] = []
+    for i, raw in enumerate(tasks):
+        if not isinstance(raw, dict):
+            errors.append(f"Task at index {i} is not an object")
+            continue
+        try:
+            TaskSchema(**raw)
+        except Exception as e:
+            errors.append(f"Task {raw.get('id', f'index {i}')}: {e}")
+        if raw.get("id"):
+            ids.append(raw["id"])
+
+    duplicates = {tid for tid in ids if ids.count(tid) > 1}
+    if duplicates:
+        errors.append(f"Duplicate task ids: {sorted(duplicates)}")
+
+    id_set = set(ids)
+    for raw in tasks:
+        if not isinstance(raw, dict):
+            continue
+        for dep in raw.get("requires", []) or []:
+            if dep not in id_set:
+                errors.append(
+                    f"Task {raw.get('id', '?')} requires '{dep}' which is not in the submitted plan"
+                )
+
+    return errors
 
 executor = ThreadPoolExecutor(max_workers=10)
 
@@ -164,6 +218,7 @@ def serialize_project_state(state_snapshot, project_id: str) -> dict:
         "tech_stack": values.get("tech_stack", ""),
         "architecture_doc": values.get("architecture_doc", ""),
         "implementation_plan": values.get("implementation_plan", ""),
+        "excluded_tasks": values.get("excluded_tasks", []),
         "file_list": values.get("file_list", []),
         "generated_files": values.get("generated_files", {}),
         "qa_report": values.get("qa_report", ""),
@@ -216,11 +271,13 @@ async def create_project(request: ProjectCreateRequest):
         tech_stack="",
         architecture_doc="",
         implementation_plan="",
+        excluded_tasks=[],
         file_list=[],
         generated_files={},
         qa_report="",
         qa_issues_count=0,
         devops_files={},
+        replan_after_architecture=False,
         current_stage="",
         human_feedback="",
         human_decision="",
@@ -268,7 +325,18 @@ def edit_project_state(project_id: str, request: ProjectStateEditRequest):
     if not state_snapshot.next:
         raise HTTPException(status_code=400, detail="Project is not awaiting approval and cannot be edited")
 
-    graph.update_state(config, {request.field: request.content})
+    update = {request.field: request.content}
+
+    if request.field == "implementation_plan":
+        validation_errors = validate_plan_edit(request.content)
+        if validation_errors:
+            raise HTTPException(status_code=422, detail={"errors": validation_errors})
+        if request.excluded_tasks is not None:
+            update["excluded_tasks"] = request.excluded_tasks
+
+    # Single atomic update_state: the plan and its excluded-tasks audit trail land
+    # in one checkpoint, so a concurrent resume can never see a half-applied edit.
+    graph.update_state(config, update)
 
     return {"status": "updated", "field": request.field}
 
@@ -282,7 +350,16 @@ async def resume_project(project_id: str, request: ProjectResumeRequest):
         
     if not state_snapshot.next:
         raise HTTPException(status_code=400, detail="Project is already completed and cannot be resumed")
-        
+
+    if request.decision not in VALID_DECISIONS:
+        raise HTTPException(status_code=400, detail=f"decision must be one of {sorted(VALID_DECISIONS)}")
+
+    if request.decision == "back" and state_snapshot.next[0] not in BACK_CAPABLE_GATES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"'back' is only supported at {sorted(BACK_CAPABLE_GATES)} for now"
+        )
+
     try:
         # Update SQLite database project status to running
         current_stage = state_snapshot.values.get("current_stage", "resume")
@@ -296,15 +373,6 @@ async def resume_project(project_id: str, request: ProjectResumeRequest):
                 "human_feedback": request.feedback
             }
         )
-
-        if (
-            state_snapshot.next[0] == "human_gate_3"
-            and request.decision == "approve"
-            and request.feedback.startswith("MODIFIED_PLAN:")
-        ):
-            modified_plan = request.feedback[len("MODIFIED_PLAN:"):]
-            json.loads(modified_plan)
-            graph.update_state(config, {"implementation_plan": modified_plan})
 
         # Resume the graph in a background task
         asyncio.create_task(run_graph_background(project_id, config))

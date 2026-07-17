@@ -13,6 +13,7 @@ class ProjectState(TypedDict):
     tech_stack: str
     architecture_doc: str
     implementation_plan: str       # stored as JSON string
+    excluded_tasks: List[dict]     # tasks cut from the plan at gate 3 (audit trail, never generated)
     file_list: List[str]           # list of file paths to generate
     generated_files: Dict[str, str] # filepath -> code content
     qa_report: str
@@ -21,6 +22,7 @@ class ProjectState(TypedDict):
     previous_versions: Dict[str, str]  # doc name -> prior content, set before an edit re-run overwrites it
 
     # Control fields
+    replan_after_architecture: bool  # set on gate-3 'back' rerun: skip gate 2, flow straight to planning
     current_stage: str
     human_feedback: str            # injected at approval gates
     human_decision: str            # 'approve', 'edit', 'reject'
