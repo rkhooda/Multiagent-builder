@@ -326,3 +326,57 @@ brief "A simple notes app with tags").
   live in the browser; the flip to "Replanning…" is driven by the architecture
   `agent_complete` event and was verified by code path + the correct end state, but the exact
   moment of the label swap wasn't screenshotted. Cosmetic risk only.
+
+## Day 15 observations
+
+Full-pipeline test project: `341b1dc2-2ce7-4c79-a147-6ab45095e1fa` ("A simple notes app with
+tags" → NotesTags Day15). Pipeline ran research → gate 4 cleanly in ~7.5 min elapsed;
+13 files generated, 2 QA warnings.
+
+### Issues found and fixed during the build
+
+#### 1. State and disk already disagreed on file content (MEDIUM, pre-existing)
+- Coder agents store the *raw* LLM output in `state["generated_files"]` while
+  `write_project_file` strips fences before writing to disk — so the two sources of truth
+  had diverged since Day 11 without anyone noticing (nothing read state content back until
+  now). The new fence-cleanup pass at the end of the devops node normalizes state to the
+  stripped content and rewrites any changed file; on the live run it cleaned 1 file that had
+  slipped through with fences intact in state.
+
+#### 2. Free-tier quota exhaustion blocks per-file fixes right after a pipeline run (LOW, environmental)
+- A full pipeline run consumes enough Groq tokens that an immediate Request-AI-Fix on a
+  database-phase file hit `RateLimitError` on primary AND fallback (`retry in ~31m`). The
+  endpoint handles it correctly — 502 with the litellm message, file untouched, fix count not
+  incremented, error shown inline in the modal — but expect fixes to need a cooldown after a
+  full run on free tiers.
+
+### Verification walkthroughs (all passed)
+
+1. **File browser**: tree renders all 13 files grouped by folder with type-colored dots,
+   QA warning-count dots on the 2 flagged files, click loads syntax-highlighted content
+   (PrismLight, 9 registered languages), shimmer while loading, instant re-click from cache.
+2. **QA panel**: header badges (2 total / 0 crit / 2 warn / 0 info) match the report;
+   findings grouped by severity; clicking a finding's file reference switches to the Files
+   tab and opens that file. The tolerant parser handled the QA model's malformed
+   "Unparsed QA output" descriptions without breaking.
+3. **Download**: `NotesTags-Day15.zip` unzips to the exact folder structure planned at gate 3,
+   README present, all files valid UTF-8. Fence audit: no file starts/ends with a fence and no
+   non-markdown file contains one. (Note: the literal `grep -r '```'` check from the task flags
+   README code blocks — those are legitimate paired markdown fences in setup instructions, not
+   stripping failures.)
+4. **Request Fix (error path)**: modal pre-lists the file's QA findings as chips, chip click
+   appends to the instruction, dependents warning shown ("5 files import this one"),
+   rate-limit failure surfaced inline with the file untouched.
+5. **Request Fix (success path)**: verified after the quota cooldown — see addendum below.
+6. **Path traversal**: `path=../../.env` and URL-encoded variants → 400; missing file → 404.
+7. **Gate 4 routing**: approve → status `completed`, graph reaches END; reject wired through
+   the same GATE_ROUTES map as gates 1–3 (allowed decisions now derive from that map, so the
+   API rejects edit/back at gate 4 with a 400).
+
+### Warnings / notes
+
+- **Pipeline time stat includes human review time.** `generation_seconds` is derived from
+  first→last checkpoint timestamps (works retroactively for old projects, no log format
+  change), so it measures wall-clock including gate waits. Labeled "incl. reviews" in the UI.
+- **Tree-row kebab menu skipped.** The header Request-AI-Fix button covers the flow since a
+  file must be open to describe a fix; add the kebab if fix-from-tree becomes a real need.
