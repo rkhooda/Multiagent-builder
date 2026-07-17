@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import DiffView from './DiffView'
 import FeedbackInput from './FeedbackInput'
 import RegeneratingOverlay from './RegeneratingOverlay'
 
@@ -222,6 +223,21 @@ export default function Gate3Approval({ projectId, projectState, status, onResum
   const [regenAction, setRegenAction] = useState(null) // 'edit' | 'back' while re-running
   const [patchErrors, setPatchErrors] = useState([])
   const [parseError, setParseError] = useState(false)
+  const [showArchBanner, setShowArchBanner] = useState(false)
+  const [showArchDiff, setShowArchDiff] = useState(false)
+  const hasLeftApprovalRef = useRef(false)
+
+  // When the gate re-fires after a regeneration cycle (edit or back), dismiss
+  // the overlay; after a back-navigation, surface the architecture diff banner.
+  useEffect(() => {
+    if (status !== 'awaiting_approval') {
+      hasLeftApprovalRef.current = true
+    } else if (hasLeftApprovalRef.current) {
+      if (regenAction === 'back') setShowArchBanner(true)
+      setRegenAction(null)
+      hasLeftApprovalRef.current = false
+    }
+  }, [status, regenAction])
 
   // Re-initialize the local editing copy whenever a genuinely new plan arrives
   // (first load, replan, back-navigation) — but never on unrelated metadata refetches.
@@ -586,6 +602,43 @@ export default function Gate3Approval({ projectId, projectState, status, onResum
         Edit the plan below — uncheck tasks to skip them, edit descriptions, add or remove tasks.
         The coder agents will generate exactly what you approve here.
       </p>
+
+      {showArchBanner && (
+        <div className="rounded-lg border border-blue-300 bg-blue-50 px-4 py-3">
+          <div className="flex flex-wrap items-center gap-3">
+            <span className="text-sm font-medium text-blue-800">
+              🔄 Architecture was regenerated — the plan below was rebuilt from it.
+            </span>
+            {projectState?.previous_versions?.architecture_doc && (
+              <button
+                type="button"
+                onClick={() => setShowArchDiff((v) => !v)}
+                className="rounded border border-blue-300 bg-white px-2.5 py-1 text-xs font-semibold text-blue-700 hover:bg-blue-100"
+              >
+                {showArchDiff ? 'Hide changes' : 'Review changes'}
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => {
+                setShowArchBanner(false)
+                setShowArchDiff(false)
+              }}
+              className="ml-auto text-xs font-semibold text-blue-400 hover:text-blue-600"
+            >
+              Dismiss
+            </button>
+          </div>
+          {showArchDiff && (
+            <div className="mt-3">
+              <DiffView
+                oldText={projectState?.previous_versions?.architecture_doc || ''}
+                newText={projectState?.architecture_doc || ''}
+              />
+            </div>
+          )}
+        </div>
+      )}
 
       <SummaryBar
         tasks={tasks}
