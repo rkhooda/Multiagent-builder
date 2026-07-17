@@ -25,6 +25,7 @@ class ProjectState(TypedDict):
     # Control fields
     replan_after_architecture: bool  # set on gate-3 'back' rerun: skip gate 2, flow straight to planning
     skip_gate_1: bool              # set on gate-2 'back' rerun: skip gate 1, flow straight to architecture
+    retry_counts: Dict[str, int]   # stage (or "file_fix:{path}") -> feedback-driven regeneration count
     current_stage: str
     human_feedback: str            # injected at approval gates
     human_decision: str            # 'approve', 'edit', 'reject'

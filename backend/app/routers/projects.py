@@ -250,6 +250,7 @@ def serialize_project_state(state_snapshot, project_id: str) -> dict:
         "devops_files": values.get("devops_files", {}),
         "previous_versions": values.get("previous_versions", {}),
         "fix_counts": values.get("fix_counts", {}),
+        "retry_counts": values.get("retry_counts", {}),
         "current_stage": values.get("current_stage", ""),
         "human_feedback": values.get("human_feedback", ""),
         "human_decision": values.get("human_decision", ""),
@@ -305,6 +306,7 @@ async def create_project(request: ProjectCreateRequest):
         qa_issues_count=0,
         devops_files={},
         fix_counts={},
+        retry_counts={},
         replan_after_architecture=False,
         skip_gate_1=False,
         current_stage="",
@@ -396,7 +398,8 @@ async def resume_project(project_id: str, request: ProjectResumeRequest):
         
         # Update state with human decision and feedback. For feedback-driven
         # re-runs (edit/back), the same atomic update also invalidates every
-        # artifact downstream of the target stage (snapshot + clear).
+        # artifact downstream of the target stage (snapshot + clear) and bumps
+        # the target's retry count.
         update = {
             "human_decision": request.decision,
             "human_feedback": request.feedback,
@@ -405,6 +408,9 @@ async def resume_project(project_id: str, request: ProjectResumeRequest):
             target = GATE_ROUTES[gate][request.decision]
             if target in STAGE_ORDER:
                 update.update(invalidate_downstream(state_snapshot.values, target))
+            retry_counts = dict(state_snapshot.values.get("retry_counts") or {})
+            retry_counts[target] = retry_counts.get(target, 0) + 1
+            update["retry_counts"] = retry_counts
         graph.update_state(config, update)
 
         # Resume the graph in a background task
@@ -539,6 +545,10 @@ Apply the requested fix. Output ONLY the complete corrected file content — no 
     previous_versions[filepath] = previous_content
     generated_files[filepath] = fixed
     fix_counts[filepath] = fix_counts.get(filepath, 0) + 1
+    # Mirror into retry_counts so per-file fixes and stage regenerations share
+    # one counter system (fix_counts stays the cap authority for this endpoint).
+    retry_counts = dict(values.get("retry_counts", {}) or {})
+    retry_counts[f"file_fix:{filepath}"] = fix_counts[filepath]
     log = list(values.get("log", [])) + [
         f"file_fix: regenerated {filepath} via {agent_type} agent (fix {fix_counts[filepath]}/{MAX_FIXES_PER_FILE})"
     ]
@@ -547,6 +557,7 @@ Apply the requested fix. Output ONLY the complete corrected file content — no 
         "generated_files": generated_files,
         "previous_versions": previous_versions,
         "fix_counts": fix_counts,
+        "retry_counts": retry_counts,
         "log": log,
     })
 
