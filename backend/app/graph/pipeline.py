@@ -29,21 +29,29 @@ def cancelled(state: ProjectState) -> Dict:
     log.append("project cancelled by user at approval gate")
     return {"log": log, "current_stage": "cancelled"}
 
-def route_gate_1(state: ProjectState) -> str:
-    decision = state.get("human_decision", "")
-    if decision == "edit":
-        return "requirements"
-    if decision == "reject":
-        return "cancelled"
-    return "architecture"
+# Decision -> target node per gate. Adding a back edge to another gate later
+# (Day 16) is one new dict entry, not a new routing function.
+GATE_ROUTES = {
+    "human_gate_1": {"edit": "requirements", "reject": "cancelled", "approve": "architecture"},
+    "human_gate_2": {"edit": "architecture", "reject": "cancelled", "approve": "planning"},
+    "human_gate_3": {
+        "edit": "planning",        # replan with feedback
+        "back": "architecture",    # regenerate architecture, then auto-replan (skips gate 2)
+        "reject": "cancelled",
+        "approve": "frontend_code",
+    },
+}
 
-def route_gate_2(state: ProjectState) -> str:
-    decision = state.get("human_decision", "")
-    if decision == "edit":
-        return "architecture"
-    if decision == "reject":
-        return "cancelled"
-    return "planning"
+def make_gate_router(gate_name: str):
+    routes = GATE_ROUTES[gate_name]
+    def route(state: ProjectState) -> str:
+        return routes.get(state.get("human_decision", ""), routes["approve"])
+    return route
+
+def route_after_architecture(state: ProjectState) -> str:
+    # After a gate-3 'back' rerun the old plan is stale — flow straight to
+    # planning for a fresh plan instead of pausing at gate 2 again.
+    return "planning" if state.get("replan_after_architecture") else "human_gate_2"
 
 def frontend_code(state: ProjectState) -> Dict:
     current_log = state.get("log") or []
@@ -89,18 +97,31 @@ workflow.add_edge("research", "requirements")
 workflow.add_edge("requirements", "human_gate_1")
 workflow.add_conditional_edges(
     "human_gate_1",
-    route_gate_1,
+    make_gate_router("human_gate_1"),
     {"architecture": "architecture", "requirements": "requirements", "cancelled": "cancelled"},
 )
-workflow.add_edge("architecture", "human_gate_2")
+workflow.add_conditional_edges(
+    "architecture",
+    route_after_architecture,
+    {"human_gate_2": "human_gate_2", "planning": "planning"},
+)
 workflow.add_conditional_edges(
     "human_gate_2",
-    route_gate_2,
+    make_gate_router("human_gate_2"),
     {"planning": "planning", "architecture": "architecture", "cancelled": "cancelled"},
 )
 workflow.add_edge("cancelled", END)
 workflow.add_edge("planning", "human_gate_3")
-workflow.add_edge("human_gate_3", "frontend_code")
+workflow.add_conditional_edges(
+    "human_gate_3",
+    make_gate_router("human_gate_3"),
+    {
+        "frontend_code": "frontend_code",
+        "planning": "planning",
+        "architecture": "architecture",
+        "cancelled": "cancelled",
+    },
+)
 workflow.add_edge("frontend_code", "backend_code")
 workflow.add_edge("backend_code", "database")
 workflow.add_edge("database", "qa")

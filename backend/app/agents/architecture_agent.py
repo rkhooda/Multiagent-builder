@@ -107,7 +107,9 @@ def architecture_agent(state: dict) -> dict:
     human_decision = state.get("human_decision", "")
     human_feedback = state.get("human_feedback", "")
     previous_doc = state.get("architecture_doc", "")
-    is_edit_rerun = human_decision == "edit" and bool(human_feedback) and bool(previous_doc)
+    # 'edit' = gate 2 feedback loop; 'back' = gate 3 back-navigation — both regenerate with feedback
+    is_edit_rerun = human_decision in ("edit", "back") and bool(human_feedback) and bool(previous_doc)
+    is_back_rerun = human_decision == "back" and is_edit_rerun
 
     print(f"[ArchitectureAgent] Starting for project: {project_name}")
     log.append(f"architecture_agent: started for project '{project_name}'")
@@ -232,5 +234,7 @@ CRITICAL REQUIREMENTS:
         "current_stage": "planning",
         "human_feedback": "",
         "human_decision": "",
+        # On a gate-3 'back' rerun the old plan is stale: skip gate 2 and replan immediately
+        "replan_after_architecture": is_back_rerun,
         "_agent_event": True,
     }
