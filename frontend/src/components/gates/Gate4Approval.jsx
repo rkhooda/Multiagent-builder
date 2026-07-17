@@ -1,7 +1,6 @@
-import { useEffect, useState } from 'react'
-import ReactMarkdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
+import { useEffect, useMemo, useState } from 'react'
 import FileBrowser, { formatBytes } from './FileBrowser'
+import QAReportPanel, { parseQAReport } from './QAReportPanel'
 import DiffView from './DiffView'
 
 const API = 'http://localhost:8000/api/projects'
@@ -14,6 +13,34 @@ export default function Gate4Approval({ projectId, projectState, status, onResum
   const [downloadToast, setDownloadToast] = useState(false)
 
   const qaReport = projectState?.qa_report || ''
+  const parsedReport = useMemo(() => parseQAReport(qaReport), [qaReport])
+
+  // QA findings reference paths as the agents wrote them — resolve loosely
+  // against the real file list so a clicked finding still opens its file.
+  const resolveFilePath = (findingPath) => {
+    const files = filesData?.files || []
+    if (files.some((f) => f.path === findingPath)) return findingPath
+    const match = files.find((f) => f.path.endsWith(findingPath) || findingPath.endsWith(f.path))
+    return match?.path || ''
+  }
+
+  // Re-key QA issue counts by resolved disk path so tree warning dots line up.
+  const issueCountByFile = useMemo(() => {
+    const map = new Map()
+    parsedReport.issueCountByFile.forEach((count, path) => {
+      const resolved = resolveFilePath(path)
+      if (resolved) map.set(resolved, (map.get(resolved) || 0) + count)
+    })
+    return map
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [parsedReport, filesData])
+
+  const handleOpenFile = (findingPath) => {
+    const resolved = resolveFilePath(findingPath)
+    if (!resolved) return
+    setSelectedPath(resolved)
+    setActiveTab('files')
+  }
 
   useEffect(() => {
     let cancelled = false
@@ -93,7 +120,7 @@ export default function Gate4Approval({ projectId, projectState, status, onResum
           <FileBrowser
             projectId={projectId}
             filesData={filesData}
-            issueCountByFile={null}
+            issueCountByFile={issueCountByFile}
             selectedPath={selectedPath}
             onSelectPath={setSelectedPath}
             onRequestFix={() => {}}
@@ -102,11 +129,7 @@ export default function Gate4Approval({ projectId, projectState, status, onResum
           />
         )
       ) : (
-        <div className="max-h-[34rem] overflow-auto rounded-lg border border-gray-200 bg-white p-4">
-          <div className="prose prose-sm max-w-none">
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>{qaReport || 'No QA report available.'}</ReactMarkdown>
-          </div>
-        </div>
+        <QAReportPanel qaReport={qaReport} parsedReport={parsedReport} onOpenFile={handleOpenFile} />
       )}
     </div>
   )
