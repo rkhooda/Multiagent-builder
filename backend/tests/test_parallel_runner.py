@@ -20,8 +20,13 @@ sys.path.insert(0, BACKEND_DIR)
 
 from app.agents.parallel_runner import run_phase
 from app.utils.file_writer import ProcessedFile, OUTPUTS_ROOT
+import app.core.connection_manager as cm
 
 PROJECT_ID = "__test_parallel_runner__"
+
+# Capture every broadcast so we can assert no duplicate lifecycle events.
+_broadcasts = []
+cm.manager.broadcast_sync = lambda pid, event: _broadcasts.append(event)
 
 
 def _clean():
@@ -73,6 +78,7 @@ def stub_for(task, reason):
 
 def run(tasks, fail_ids=(), max_concurrent=3, implicit_deps=None):
     _clean()
+    _broadcasts.clear()
     state = _fresh_state(tasks)
     gen, stats = make_generate(fail_ids)
     result = run_phase(
@@ -168,6 +174,28 @@ def test_sequential_mode():
     _clean()
 
 
+# ── 5b. No duplicate lifecycle broadcasts (each file terminal-events once) ──
+def test_no_duplicate_broadcasts():
+    tasks = [_task("A"), _task("B"), _task("C"), _task("D", ["B"])]
+    run(tasks, fail_ids={"B"}, max_concurrent=3)  # A/C ok, B failed, D blocked
+    terminal = {"file_written", "file_failed", "file_blocked"}
+    seen = {}
+    for e in _broadcasts:
+        if e["type"] in terminal:
+            key = e["filepath"]
+            seen[key] = seen.get(key, 0) + 1
+    # Exactly one terminal event per file, no duplicates.
+    assert seen == {"A.py": 1, "B.py": 1, "C.py": 1, "D.py": 1}, seen
+    # Blocked file never emitted file_started (never launched).
+    started = [e["filepath"] for e in _broadcasts if e["type"] == "file_started"]
+    assert "D.py" not in started, started
+    # Failed event carries `error`; blocked carries `reason`.
+    fail_ev = next(e for e in _broadcasts if e["type"] == "file_failed")
+    blk_ev = next(e for e in _broadcasts if e["type"] == "file_blocked")
+    assert "error" in fail_ev and "reason" in blk_ev
+    _clean()
+
+
 # ── 6. Cycle guard ──────────────────────────────────────────────────────────
 def test_cycle_detection():
     tasks = [_task("X", ["Y"]), _task("Y", ["X"])]
@@ -187,6 +215,7 @@ TESTS = [
     ("transitive blocking chain", test_transitive_blocking_chain),
     ("permit discipline (cap never exceeded)", test_permit_discipline),
     ("sequential mode determinism", test_sequential_mode),
+    ("no duplicate lifecycle broadcasts", test_no_duplicate_broadcasts),
     ("cycle detection", test_cycle_detection),
 ]
 

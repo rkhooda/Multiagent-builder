@@ -158,10 +158,13 @@ async def run_tasks_parallel(tasks, state, *, generate, build_context, stub_for,
         manager.broadcast_sync(project_id, payload)
 
     def write_stub(task, reason, event_type):
+        """Commit a placeholder for a failed/blocked file (state + the SINGLE
+        lifecycle broadcast). file_failed carries `error`; file_blocked carries
+        `reason` — matching what the frontend feed reads for each."""
         processed = process_generated_file(project_id, task, stub_for(task, reason), file_tree)
+        extra = {"error": reason[:300]} if event_type == "file_failed" else {"reason": reason}
         commit_generated_file(state, processed, project_id=project_id, phase=phase,
-                              counts=result.counts, event_type=event_type,
-                              extra={"reason": reason})
+                              counts=result.counts, event_type=event_type, extra=extra)
 
     task_futures = {}
 
@@ -177,8 +180,7 @@ async def run_tasks_parallel(tasks, state, *, generate, build_context, stub_for,
         if bad:
             result.blocked.append(fp)
             reason = f"blocked by failure of {by_id[bad[0]]['filepath']}"
-            write_stub(task, reason, "file_blocked")
-            broadcast("file_blocked", task, {"reason": reason})
+            write_stub(task, reason, "file_blocked")  # single broadcast inside
             return "blocked"
 
         async with sem:  # one permit for the worker's whole lifetime (both LLM calls)
@@ -193,8 +195,7 @@ async def run_tasks_parallel(tasks, state, *, generate, build_context, stub_for,
             err = err if processed is None else (processed.error or "write failed")
             result.failed.append(fp)
             state.setdefault("errors", []).append(f"{phase}_coder: {fp} failed after repair: {err}")
-            write_stub(task, err, "file_failed")
-            broadcast("file_failed", task, {"error": err[:300]})
+            write_stub(task, err, "file_failed")  # single broadcast inside
             return "failed"
 
         result.ok.append(fp)
