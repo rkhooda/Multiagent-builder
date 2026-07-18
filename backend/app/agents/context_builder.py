@@ -22,6 +22,8 @@ import json
 import re
 from typing import Optional
 
+from .utils import truncate_for_context
+
 # ≤ 4K tokens; chars/4 heuristic → ~16K chars. Kept well under the free-tier
 # request caps that bit us on Days 12/14.
 MAX_CONTEXT_CHARS = 16000
@@ -497,10 +499,6 @@ def _build_backend_context(task: dict, state: dict, phase_prefix: str = "backend
     #    bodies, then hard-truncate — the resource's model/schema stay full as
     #    long as the budget allows (their fields are what must not be guessed). ─
     if estimate_tokens(context) > MAX_CONTEXT_CHARS // 4:
-        for row in dep_render:
-            path, _, is_full = row
-            if not is_full:
-                continue  # already a summary
         # 1. Truncate any full dep bodies to fit rather than dropping fields.
         for row in dep_render:
             path, _, is_full = row
