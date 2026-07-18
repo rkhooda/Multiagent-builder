@@ -1,25 +1,19 @@
-"""Backend Coder Agent — Phase 6 (Day 19 rebuild).
+"""Backend Coder Agent — Phase 6 (Day 19 rebuild, Day 20 parallelised).
 
-Per-file FastAPI + SQLAlchemy + Pydantic generation, built on the Day 18 coder
-infrastructure (mirrors frontend_coder_agent.py): focused per-file context
-(build_file_context, phase="backend") -> validated LLM call with one-shot repair
-(call_validated) -> shared write chain with deterministic import repair
-(process_and_write_generated_file, apply_import_fixer=True) -> generated_files
-update -> broadcast. Per-file failures are isolated; the stage only fails when
-> 50% of files fail.
+Per-file FastAPI + SQLAlchemy + Pydantic generation. This agent supplies the
+coder-specific callbacks (context, generate-one-file with the AST import fixer,
+failure stub) and the backend dependency shape; the shared scheduler
+(parallel_runner.run_phase) owns ordering, concurrency, per-file isolation,
+transitive blocking, and live progress. Structural ordering (schema before
+router) is enforced as real dependency edges (backend_implicit_deps), not a sort.
 
 Ownership (Day 19 ponytail #1): the database agent already generated the ORM
 models (it runs first now), so this agent generates schemas/routers/services and
 CONSUMES the models as full-content context. It also owns the deterministic
 Python infra (config.py, database.py, main.py, requirements.txt) — those are NOT
-LLM-generated (a hallucinated version or engine setup is unacceptable) and main.py
-registers only the routers that actually generated.
-
-Generation order is structural (config -> database -> model -> schema -> router ->
-service -> main) layered UNDER the topological `requires` sort, so a router is
-always generated after the model/schema it imports.
+LLM-generated (a hallucinated version or engine setup is unacceptable), rendered
+after the phase so main.py registers only the routers that actually delivered.
 """
-import json
 from pathlib import Path
 
 from app.exceptions import LLMError
@@ -31,7 +25,8 @@ from app.utils.backend_infra import (
     render_requirements,
 )
 from app.validation import call_validated
-from .context_builder import build_file_context, backend_file_kind
+from .context_builder import build_file_context, backend_file_kind, _resource_of, _same_resource
+from .parallel_runner import run_phase
 from .utils import get_tasks_for_phase, assert_single_owner
 
 SYSTEM_PROMPT = (Path(__file__).resolve().parents[3] / "prompts" / "backend_coder_agent.md").read_text(encoding="utf-8")
@@ -44,12 +39,11 @@ STAGE_FAIL_THRESHOLD = 0.5
 # double-generated and never hallucinated.
 INFRA_BASENAMES = {"config.py", "database.py", "main.py", "requirements.txt"}
 
-# Structural priority within the backend phase, layered UNDER the topological
-# sort so the order holds even when the planner's `requires` edges are sparse.
-KIND_PRIORITY = {
-    "config": 0, "database": 1, "model": 2, "schema": 3,
-    "router": 4, "service": 5, "main": 6, "other": 7,
-}
+# Backend structural ordering (config -> model -> schema -> router -> service ->
+# main) is enforced by the scheduler as real dependency edges, not a sort key:
+# every router/service implicitly depends on the schema (and model) tasks so it
+# generates only after them. See backend_implicit_deps below.
+STRUCTURAL_DEP_KINDS = {"model", "schema"}
 
 
 def _failure_stub(filepath: str, error: str) -> str:
@@ -66,42 +60,21 @@ def _basename(filepath: str) -> str:
     return filepath.rsplit("/", 1)[-1]
 
 
-def order_backend_tasks(tasks: list) -> list:
-    """Kahn's topological sort over intra-phase `requires`, with the structural
-    KIND_PRIORITY as the ready-set tie-break. Guarantees config/db/schema come
-    before routers even without explicit edges. Leftovers from a cycle are
-    appended in a stable order rather than dropped."""
-    by_id = {t["id"]: t for t in tasks if t.get("id")}
-    ids = set(by_id)
-    indegree = {tid: 0 for tid in ids}
-    dependents = {tid: [] for tid in ids}
-    for tid, task in by_id.items():
-        for req in task.get("requires", []) or []:
-            if req in ids and req != tid:
-                indegree[tid] += 1
-                dependents[req].append(tid)
-
-    def key(tid):
-        t = by_id[tid]
-        kind = backend_file_kind(t.get("filepath", ""), t.get("description", ""))
-        return (KIND_PRIORITY.get(kind, 7), t.get("filepath", ""))
-
-    ready = sorted([tid for tid in ids if indegree[tid] == 0], key=key)
-    order = []
-    while ready:
-        tid = ready.pop(0)
-        order.append(by_id[tid])
-        for dep in dependents[tid]:
-            indegree[dep] -= 1
-            if indegree[dep] == 0:
-                ready.append(dep)
-        ready.sort(key=key)
-
-    if len(order) < len(ids):
-        placed = {t["id"] for t in order}
-        order.extend(sorted((by_id[tid] for tid in ids if tid not in placed),
-                            key=lambda t: t.get("filepath", "")))
-    return order
+def backend_implicit_deps(task: dict, by_id: dict) -> list:
+    """Structural edges the planner may have omitted: a router/service is
+    generated only after the SAME-resource model/schema tasks, so its FULL
+    model/schema context is real before it imports them. Same-resource (not
+    all-schemas) keeps blocking precise — one resource's schema failure blocks
+    only that resource's router, not every router. (ORM models live in the
+    database phase — already committed — so those edges fall outside this task
+    set and impose no wait here.)"""
+    kind = backend_file_kind(task.get("filepath", ""), task.get("description", ""))
+    if kind not in ("router", "service"):
+        return []
+    resource = _resource_of(task.get("filepath", ""))
+    return [tid for tid, t in by_id.items()
+            if backend_file_kind(t.get("filepath", ""), t.get("description", "")) in STRUCTURAL_DEP_KINDS
+            and _same_resource(_resource_of(t.get("filepath", "")), resource)]
 
 
 def _infra_path(file_list: list, basename: str, default: str) -> str:
@@ -157,9 +130,13 @@ def backend_coder_agent(state: dict) -> dict:
     project_id = state.get("project_id", "")
     project_name = state.get("project_name", "Unknown Project")
     implementation_plan = state.get("implementation_plan", "[]")
+
+    # Point state at a live working dict so the coordinator's commits and the
+    # launch-time context builder share one view (single-threaded on the loop).
     generated_files = dict(state.get("generated_files", {}))
-    log = state.get("log", [])
-    errors = state.get("errors", [])
+    state["generated_files"] = generated_files
+    log = state.setdefault("log", [])
+    errors = state.setdefault("errors", [])
 
     log.append("backend_coder_agent: started")
     print(f"[BackendCoder] Starting for project: {project_name}")
@@ -178,101 +155,79 @@ def backend_coder_agent(state: dict) -> dict:
         return {"generated_files": generated_files, "log": log, "errors": errors,
                 "current_stage": "qa"}
 
-    ordered = order_backend_tasks(llm_tasks)
-    total = len(ordered)
-    log.append(f"backend_coder_agent: {total} backend tasks, generating in structural + dependency order")
-    print(f"[BackendCoder] {total} LLM tasks; first: {ordered[0].get('filepath') if ordered else '(none)'}")
+    file_tree = state.get("file_list") or list(generated_files.keys())
+
+    def build_context(task, st):
+        return build_file_context(task, st, phase_prefix="backend", phase="backend")
+
+    def generate(task, context):
+        # Pure worker (thread, one permit): primary + one repair LLM call
+        # (call_validated, log=None), then the pure processor WITH the AST import
+        # fixer. commit_generated_file surfaces any import warnings into state.
+        messages = [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": context},
+        ]
+        raw = call_validated(
+            messages, "backend_code", state, max_tokens=1500,
+            original_instruction="Output ONLY the file's code — no fences, no prose.",
+            log=None,
+        )
+        return process_generated_file(
+            project_id, task, raw, file_tree=file_tree, apply_import_fixer=True)
+
+    result = run_phase(
+        llm_tasks, state, generate=generate, build_context=build_context,
+        stub_for=lambda t, r: _failure_stub(t.get("filepath", ""), r),
+        phase="backend", project_id=project_id, file_tree=file_tree,
+        implicit_deps=backend_implicit_deps)
+
+    files_ok, files_failed, blocked, total = (
+        len(result.ok), len(result.failed), len(result.blocked), result.total)
+
+    # main.py registers only routers that actually delivered (never a failed or
+    # blocked one) — the failed/blocked filepaths never reach ok_router_paths.
+    ok_routers = [fp for fp in result.ok
+                  if backend_file_kind(fp, "") == "router"]
 
     from ..core.connection_manager import manager
 
-    files_ok = 0
-    files_failed = 0
-    failed_files = []
-    ok_router_paths = []
-
-    for i, task in enumerate(ordered):
-        task_id = task.get("id", f"be_{i}")
-        filepath = task.get("filepath", "")
-        kind = backend_file_kind(filepath, task.get("description", ""))
-        print(f"[BackendCoder] ({i+1}/{total}) {filepath} [{task_id}] kind={kind}")
-        tree = state.get("file_list") or list(generated_files.keys())
-
-        try:
-            context = build_file_context(task, state, phase_prefix="backend", phase="backend")
-            messages = [
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": context},
-            ]
-            raw = call_validated(
-                messages, "backend_code", state, max_tokens=1500,
-                original_instruction="Output ONLY the file's code — no fences, no prose.",
-                log=log,
-            )
-            # Day 20: pure processor (strip/sanity/import-fix/write); this
-            # sequential loop commits inline, the scheduler uses commit_generated_file.
-            processed = process_generated_file(
-                project_id, task, raw, file_tree=tree, apply_import_fixer=True)
-            if processed.status != "ok":
-                raise RuntimeError(processed.error or "write failed")
-
-            generated_files[filepath] = processed.content
-            if processed.import_warnings:
-                errors.extend(f"import_warning: {w}" for w in processed.import_warnings)
-            files_ok += 1
-            if kind == "router":
-                ok_router_paths.append(filepath)
-            log.append(f"backend_coder_agent: wrote {filepath} ({processed.size_bytes} bytes)")
-            manager.broadcast_sync(project_id, {
-                "type": "file_written", "filename": Path(filepath).name,
-                "filepath": filepath, "phase": "backend", "task_id": task_id,
-                "index": i + 1, "total": total,
-            })
-
-        except Exception as e:
-            files_failed += 1
-            failed_files.append(filepath)
-            errors.append(f"backend_coder_agent: {filepath} failed after repair: {e}")
-            print(f"[BackendCoder] FAILED {filepath}: {e}")
-            stub_processed = process_generated_file(
-                project_id, task, _failure_stub(filepath, str(e)), file_tree=tree)
-            if stub_processed.status == "ok":
-                generated_files[filepath] = stub_processed.content
-            manager.broadcast_sync(project_id, {
-                "type": "file_error", "filename": Path(filepath).name,
-                "filepath": filepath, "phase": "backend", "task_id": task_id,
-                "error": str(e)[:300], "index": i + 1, "total": total,
-            })
-
-    # Deterministic infra — after the loop so main.py sees the real routers and
+    # Deterministic infra — after the phase so main.py sees the real routers and
     # requirements.txt sees every generated import.
-    infra_written = _generate_infra(state, generated_files, ok_router_paths,
+    infra_written = _generate_infra(state, generated_files, ok_routers,
                                     project_id, project_name, log, errors)
 
     log.append(f"backend_coder_agent: completed — {files_ok} ok, {files_failed} failed, "
-               f"{infra_written} infra files")
-    print(f"[BackendCoder] Done. {files_ok} ok, {files_failed} failed, {infra_written} infra")
+               f"{blocked} blocked, {infra_written} infra files")
+    print(f"[BackendCoder] Done. {files_ok} ok, {files_failed} failed, "
+          f"{blocked} blocked, {infra_written} infra")
 
-    # Stage-level failure only when the majority of LLM files failed.
-    if total and files_failed / total > STAGE_FAIL_THRESHOLD:
+    # >50% rule counts blocked as not-delivered (a router blocked by a failed
+    # schema is a real gap the stage didn't fill).
+    not_delivered = files_failed + blocked
+    if total and not_delivered / total > STAGE_FAIL_THRESHOLD:
         raise LLMError(
-            f"backend stage halted: {files_failed}/{total} files failed to generate "
-            f"(>{int(STAGE_FAIL_THRESHOLD * 100)}%)",
+            f"backend stage halted: {not_delivered}/{total} files failed to deliver "
+            f"(>{int(STAGE_FAIL_THRESHOLD * 100)}%; {files_failed} failed, "
+            f"{blocked} blocked)",
             "backend_code",
         )
 
     manager.broadcast_sync(project_id, {
         "type": "agent_complete", "agent": "backend_code", "stage": "backend_code",
-        "output_preview": f"Generated {files_ok}/{total} backend files + {infra_written} infra",
-        "files_ok": files_ok, "files_failed": files_failed,
+        "output_preview": f"Generated {files_ok}/{total} backend files + {infra_written} infra"
+                          + (f" ({files_failed} failed, {blocked} blocked)" if not_delivered else ""),
+        "files_ok": files_ok, "files_failed": files_failed, "files_blocked": blocked,
     })
 
-    result = {
+    out = {
         "generated_files": generated_files,
         "log": log,
         "errors": errors,
         "current_stage": "qa",
         "_agent_event": True,
     }
+    failed_files = result.failed + result.blocked
     if failed_files:
-        result["partial_failures"] = failed_files
-    return result
+        out["partial_failures"] = failed_files
+    return out

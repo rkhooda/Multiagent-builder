@@ -146,6 +146,15 @@ def backend_file_kind(filepath: str, description: str = "") -> str:
     return "other"
 
 
+def _same_resource(a: str, b: str) -> bool:
+    """Whether two resource names refer to the same resource, tolerant of the
+    common singular-schema / plural-router convention (schemas/note.py vs
+    routers/notes.py). Without this a plural router never links to its singular
+    schema — no full-content injection, no ordering edge."""
+    a, b = a.lower(), b.lower()
+    return a.rstrip("s") == b.rstrip("s")
+
+
 def _resource_of(filepath: str) -> str:
     """The resource name a router/schema/model file is about — its filename stem
     (`routers/invoices.py` -> `invoices`). Used to pick the resource's API rows
@@ -436,7 +445,7 @@ def _build_backend_context(task: dict, state: dict, phase_prefix: str = "backend
 
     if kind in ("router", "service", "schema"):
         for p in file_list:
-            if _resource_of(p) != resource:
+            if not _same_resource(_resource_of(p), resource):
                 continue
             pk = backend_file_kind(p, "")
             if pk == "model" or (pk == "schema" and kind != "schema"):

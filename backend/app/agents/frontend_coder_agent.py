@@ -1,36 +1,38 @@
-"""Frontend Coder Agent — Phase 5 (Day 18 rebuild).
+"""Frontend Coder Agent — Phase 5 (Day 18 rebuild, Day 20 parallelised).
 
-Per-task React file generation for a Vite + React + TailwindCSS + axios
-project. Replaces the Day 12 minimal stub (single generic prompt, whole
-architecture dumped as context, no ordering, no per-file isolation).
+Per-task React file generation for a Vite + React + TailwindCSS + axios project.
+Replaces the Day 12 minimal stub (single generic prompt, whole architecture
+dumped as context, no ordering, no per-file isolation).
 
-Pipeline per file: focused context (context_builder) -> validated LLM call
-with one-shot repair (call_validated) -> shared write chain (strip + syntax
-sanity + write) -> generated_files update -> file_written broadcast. One
-file's unrecoverable failure is isolated and the loop continues; the stage
-only fails as a whole when > 50% of its files fail. Sequential by design —
-asyncio parallelism is Day 20, and this chain must prove correct here first.
+Day 20: the sequential loop is gone — file generation fans out through the
+shared parallel scheduler (parallel_runner.run_phase). This agent only supplies
+the coder-specific callbacks (build context, generate one file, stub a failure)
+and the frontend dependency shape (every non-lib file implicitly depends on the
+shared API client). Ordering, concurrency limits, per-file failure isolation,
+transitive blocking, and live progress broadcasts all live in the scheduler.
+The stage still fails as a whole only when > 50% of its files don't deliver.
 """
-import json
 from pathlib import Path
 
 from app.exceptions import LLMError
 from app.utils.file_writer import process_generated_file
 from app.validation import call_validated
 from .context_builder import build_file_context
+from .parallel_runner import run_phase
 from .utils import get_tasks_for_phase
 
 SYSTEM_PROMPT = (Path(__file__).resolve().parents[3] / "prompts" / "frontend_coder_agent.md").read_text(encoding="utf-8")
 
-# Fraction of files that must fail before the whole stage is considered broken.
+# Fraction of files that must not-deliver (failed + blocked) before the whole
+# stage is considered broken.
 STAGE_FAIL_THRESHOLD = 0.5
 
 
 def _failure_stub(filepath: str, error: str) -> str:
-    """Placeholder written when a file's generation fails, so the failure is
-    visible in the Gate 4 file browser and fixable there via Request AI Fix
-    (which reads from disk). Keeps dependent imports from breaking outright:
-    JSX files export a null component, others an empty object."""
+    """Placeholder written when a file's generation fails or is blocked, so the
+    failure is visible in the Gate 4 file browser and fixable there via Request
+    AI Fix (which reads from disk). Keeps dependent imports from breaking
+    outright: JSX files export a null component, others an empty object."""
     note = (f"// Generation failed for {filepath}: {error[:160]}\n"
             f"// Placeholder — regenerate with \"Request AI Fix\" at the review gate.\n\n")
     if filepath.lower().endswith((".jsx", ".tsx")):
@@ -44,58 +46,21 @@ def _is_lib_file(filepath: str) -> bool:
     return "/lib/" in low or low.endswith("api.js") or low.endswith("api.jsx")
 
 
-def topological_order(tasks: list) -> list:
-    """Kahn's algorithm over intra-phase `requires` edges so a file is
-    generated after everything it imports. Lib/api files break ties first
-    (everything imports them). Cycles were blocked at Gate 3, but if one slips
-    through we append the leftovers in a stable order rather than dropping them.
-    """
-    by_id = {t["id"]: t for t in tasks if t.get("id")}
-    ids = set(by_id)
-    # in-degree counts only dependencies that are themselves in this phase.
-    indegree = {tid: 0 for tid in ids}
-    dependents = {tid: [] for tid in ids}
-    for tid, task in by_id.items():
-        for req in task.get("requires", []) or []:
-            if req in ids and req != tid:
-                indegree[tid] += 1
-                dependents[req].append(tid)
-
-    def ready_key(tid):
-        t = by_id[tid]
-        return (not _is_lib_file(t.get("filepath", "")), t.get("filepath", ""))
-
-    ready = sorted([tid for tid in ids if indegree[tid] == 0], key=ready_key)
-    order = []
-    while ready:
-        tid = ready.pop(0)
-        order.append(by_id[tid])
-        for dep in dependents[tid]:
-            indegree[dep] -= 1
-            if indegree[dep] == 0:
-                ready.append(dep)
-        ready.sort(key=ready_key)
-
-    if len(order) < len(ids):
-        # Cycle or unmet edge — include the rest so nothing is silently skipped.
-        placed = {t["id"] for t in order}
-        leftovers = sorted((by_id[tid] for tid in ids if tid not in placed),
-                           key=lambda t: t.get("filepath", ""))
-        order.extend(leftovers)
-    return order
-
-
 def frontend_coder_agent(state: dict) -> dict:
     """Reads: implementation_plan, architecture_doc, tech_stack, file_list,
     generated_files. Writes: generated_files (merged), log, errors,
-    current_stage. Raises LLMError only when > 50% of files fail (recoverable
-    stage halt); anything under that is a recorded partial completion."""
+    current_stage. Raises LLMError only when > 50% of files fail to deliver
+    (recoverable stage halt); anything under that is a recorded partial."""
     project_id = state.get("project_id", "")
     project_name = state.get("project_name", "Unknown Project")
     implementation_plan = state.get("implementation_plan", "[]")
+
+    # Point state at a live working dict so the coordinator's commits and the
+    # launch-time context builder share one view (single-threaded on the loop).
     generated_files = dict(state.get("generated_files", {}))
-    log = state.get("log", [])
-    errors = state.get("errors", [])
+    state["generated_files"] = generated_files
+    log = state.setdefault("log", [])
+    errors = state.setdefault("errors", [])
 
     log.append("frontend_coder_agent: started")
     print(f"[FrontendCoder] Starting for project: {project_name}")
@@ -111,90 +76,54 @@ def frontend_coder_agent(state: dict) -> dict:
         return {"generated_files": generated_files, "log": log, "errors": errors,
                 "current_stage": "backend_code"}
 
-    ordered = topological_order(fe_tasks)
-    total = len(ordered)
-    log.append(f"frontend_coder_agent: {total} frontend tasks, generating in dependency order")
-    print(f"[FrontendCoder] {total} tasks; first: {ordered[0].get('filepath')}")
+    file_tree = state.get("file_list") or list(generated_files.keys())
+    lib_ids = {t["id"] for t in fe_tasks if t.get("id") and _is_lib_file(t.get("filepath", ""))}
+
+    def implicit_deps(task, by_id):
+        # Every non-lib file waits on the shared API client(s): a component that
+        # imports the client must not generate before it exists.
+        return [] if _is_lib_file(task.get("filepath", "")) else list(lib_ids)
+
+    def build_context(task, st):
+        return build_file_context(task, st, phase_prefix="frontend/src")
+
+    def generate(task, context):
+        # Pure worker (runs in a thread under one permit): primary + one repair
+        # LLM call (call_validated, log=None so no shared-list mutation off-loop),
+        # then the pure processor. No generated_files/errors/log touch here.
+        messages = [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": context},
+        ]
+        raw = call_validated(
+            messages, "frontend_code", state, max_tokens=1500,
+            original_instruction="Output ONLY the file's code — no fences, no prose.",
+            log=None,
+        )
+        return process_generated_file(project_id, task, raw, file_tree=file_tree)
+
+    result = run_phase(
+        fe_tasks, state, generate=generate, build_context=build_context,
+        stub_for=lambda t, r: _failure_stub(t.get("filepath", ""), r),
+        phase="frontend", project_id=project_id, file_tree=file_tree,
+        implicit_deps=implicit_deps)
+
+    files_ok, files_failed, blocked, total = (
+        len(result.ok), len(result.failed), len(result.blocked), result.total)
+    log.append(f"frontend_coder_agent: completed — {files_ok} ok, "
+               f"{files_failed} failed, {blocked} blocked")
+    print(f"[FrontendCoder] Done. {files_ok} ok, {files_failed} failed, {blocked} blocked")
 
     from ..core.connection_manager import manager
 
-    files_ok = 0
-    files_failed = 0
-    failed_files = []
-
-    for i, task in enumerate(ordered):
-        task_id = task.get("id", f"fe_{i}")
-        filepath = task.get("filepath", "")
-        print(f"[FrontendCoder] ({i+1}/{total}) {filepath} [{task_id}]")
-        tree = state.get("file_list") or list(generated_files.keys())
-
-        try:
-            context = build_file_context(task, state, phase_prefix="frontend/src")
-            messages = [
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": context},
-            ]
-            raw = call_validated(
-                messages, "frontend_code", state, max_tokens=1500,
-                original_instruction="Output ONLY the file's code — no fences, no prose.",
-                log=log,
-            )
-            # Day 20: the pure processor (strip/sanity/write) — no shared-state
-            # mutation. This sequential loop commits inline right after; Day 20's
-            # scheduler pairs it with commit_generated_file instead.
-            processed = process_generated_file(project_id, task, raw, file_tree=tree)
-            if processed.status != "ok":
-                raise RuntimeError(processed.error or "write failed")
-
-            # Keep state == disk: store the cleaned, header-free content.
-            generated_files[filepath] = processed.content
-            files_ok += 1
-            log.append(f"frontend_coder_agent: wrote {filepath} ({processed.size_bytes} bytes)")
-            manager.broadcast_sync(project_id, {
-                "type": "file_written",
-                "filename": Path(filepath).name,
-                "filepath": filepath,
-                "phase": "frontend",
-                "task_id": task_id,
-                "index": i + 1,
-                "total": total,
-            })
-
-        except Exception as e:
-            # Per-file isolation: log, broadcast, and keep going. This survives
-            # the Day 17 boundary's own repair attempt (call_validated already
-            # tried once) — a genuine per-file failure, not a transient blip.
-            files_failed += 1
-            failed_files.append(filepath)
-            msg = f"frontend_coder_agent: {filepath} failed after repair: {e}"
-            errors.append(msg)
-            print(f"[FrontendCoder] FAILED {filepath}: {e}")
-            # Write a placeholder so the failed file is visible AND fixable at
-            # Gate 4 (the file browser reads from disk), and dependent imports
-            # still resolve. Kept in generated_files so state == disk.
-            stub = _failure_stub(filepath, str(e))
-            stub_processed = process_generated_file(project_id, task, stub, file_tree=tree)
-            if stub_processed.status == "ok":
-                generated_files[filepath] = stub_processed.content
-            manager.broadcast_sync(project_id, {
-                "type": "file_error",
-                "filename": Path(filepath).name,
-                "filepath": filepath,
-                "phase": "frontend",
-                "task_id": task_id,
-                "error": str(e)[:300],
-                "index": i + 1,
-                "total": total,
-            })
-
-    log.append(f"frontend_coder_agent: completed — {files_ok} ok, {files_failed} failed")
-    print(f"[FrontendCoder] Done. {files_ok} ok, {files_failed} failed")
-
-    # Stage-level failure only when the majority failed — a headless project.
-    if total and files_failed / total > STAGE_FAIL_THRESHOLD:
+    # >50% rule counts blocked as not-delivered — the stage genuinely didn't
+    # produce them, and a router blocked by a failed model is a real gap.
+    not_delivered = files_failed + blocked
+    if total and not_delivered / total > STAGE_FAIL_THRESHOLD:
         raise LLMError(
-            f"frontend stage halted: {files_failed}/{total} files failed to "
-            f"generate (>{int(STAGE_FAIL_THRESHOLD * 100)}%)",
+            f"frontend stage halted: {not_delivered}/{total} files failed to "
+            f"deliver (>{int(STAGE_FAIL_THRESHOLD * 100)}%; {files_failed} failed, "
+            f"{blocked} blocked)",
             "frontend_code",
         )
 
@@ -202,12 +131,14 @@ def frontend_coder_agent(state: dict) -> dict:
         "type": "agent_complete",
         "agent": "frontend_code",
         "stage": "frontend_code",
-        "output_preview": f"Generated {files_ok}/{total} frontend files",
+        "output_preview": f"Generated {files_ok}/{total} frontend files"
+                          + (f" ({files_failed} failed, {blocked} blocked)" if not_delivered else ""),
         "files_ok": files_ok,
         "files_failed": files_failed,
+        "files_blocked": blocked,
     })
 
-    result = {
+    out = {
         "generated_files": generated_files,
         "log": log,
         "errors": errors,
@@ -215,6 +146,7 @@ def frontend_coder_agent(state: dict) -> dict:
         "_agent_event": True,
     }
     # Honest partial-stage record: stage_node folds this into stage_history.
+    failed_files = result.failed + result.blocked
     if failed_files:
-        result["partial_failures"] = failed_files
-    return result
+        out["partial_failures"] = failed_files
+    return out
