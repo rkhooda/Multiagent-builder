@@ -323,6 +323,25 @@ export default function Gate4Approval({ projectId, projectState, status, onResum
 
       <SummaryCard filesData={filesData} projectState={projectState} severityCounts={severityCounts} />
 
+      {/* Partial-generation warning — reload-safe: derived from stage_history's
+          per-stage failed_files (which the coder records as failed + blocked),
+          not from the live event stream that may be gone after a reload. */}
+      {(() => {
+        const notGenerated = [...new Set(
+          (projectState?.stage_history || [])
+            .flatMap((h) => h.failed_files || [])
+        )]
+        if (notGenerated.length === 0) return null
+        return (
+          <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-2.5 text-xs font-medium text-amber-800">
+            ⚠️ {notGenerated.length} file{notGenerated.length > 1 ? 's' : ''} did not generate
+            (failed or blocked by a failed dependency) and {notGenerated.length > 1 ? 'were' : 'was'} written
+            as a placeholder — review the QA report and use Request AI Fix to regenerate:{' '}
+            <span className="font-mono text-amber-700">{notGenerated.slice(0, 4).join(', ')}{notGenerated.length > 4 ? ` +${notGenerated.length - 4} more` : ''}</span>
+          </div>
+        )
+      })()}
+
       {/* Tabs */}
       <div className="flex gap-1 border-b border-gray-200">
         {[

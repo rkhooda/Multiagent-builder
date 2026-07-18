@@ -10,6 +10,7 @@ import Gate2Approval from '../components/gates/Gate2Approval'
 import Gate3Approval from '../components/gates/Gate3Approval'
 import Gate4Approval from '../components/gates/Gate4Approval'
 import ErrorCard from '../components/ErrorCard'
+import PhaseProgress, { derivePhaseProgress } from '../components/PhaseProgress'
 
 const MARKDOWN_AGENTS = new Set(['research', 'requirements', 'architecture', 'qa', 'planning'])
 
@@ -78,6 +79,8 @@ export default function ProjectDetailPage() {
 
   // Count files written so far
   const fileCount = events.filter(e => e.type === 'file_written').length
+  // Per-phase code-generation progress (derived from count-snapshot events).
+  const phaseProgress = derivePhaseProgress(events)
 
   // Fetch project metadata
   const fetchMetadata = async () => {
@@ -483,6 +486,13 @@ export default function ProjectDetailPage() {
           </div>
 
           <div className="flex-1 overflow-y-auto p-6 space-y-4">
+            {phaseProgress.length > 0 && (
+              <div className="space-y-2 mb-2">
+                {phaseProgress.map((p) => (
+                  <PhaseProgress key={p.phase} phase={p} />
+                ))}
+              </div>
+            )}
             {events.length === 0 && status === 'connecting' ? (
               <div className="flex flex-col items-center justify-center h-full text-center space-y-4 animate-pulse">
                 <svg className="animate-spin h-8 w-8 text-blue-600" fill="none" viewBox="0 0 24 24">
@@ -500,19 +510,31 @@ export default function ProjectDetailPage() {
                 {events.map((event, index) => {
                   const styles = getEventStyle(event.type)
                   
-                  // Special rendering for file_written events
-                  if (event.type === 'file_written') {
+                  // Special rendering for per-file events (written / failed / blocked).
+                  if (event.type === 'file_written' || event.type === 'file_failed' || event.type === 'file_blocked') {
+                    const kind = event.type === 'file_written'
+                      ? { dot: 'bg-green-500', border: 'border-green-500', card: 'border-green-100', icon: '✓', iconColor: 'text-green-500' }
+                      : event.type === 'file_failed'
+                        ? { dot: 'bg-red-500', border: 'border-red-500', card: 'border-red-100', icon: '✕', iconColor: 'text-red-500' }
+                        : { dot: 'bg-gray-400', border: 'border-gray-400', card: 'border-gray-200', icon: '⊘', iconColor: 'text-gray-500' }
                     return (
                       <div key={index} className="relative flex items-start space-x-4 pl-8">
-                        <span className="absolute left-0.5 top-1.5 h-6.5 w-6.5 rounded-full border-4 border-white flex items-center justify-center shadow-xs bg-green-500" />
-                        <div className="flex-1 bg-white p-3 rounded-lg border border-green-100 shadow-xs border-l-4 border-green-500">
+                        <span className={`absolute left-0.5 top-1.5 h-6.5 w-6.5 rounded-full border-4 border-white flex items-center justify-center shadow-xs ${kind.dot}`} />
+                        <div className={`flex-1 bg-white p-3 rounded-lg border ${kind.card} shadow-xs border-l-4 ${kind.border}`}>
                           <div className="flex items-center gap-2">
-                            <span className="text-green-500 text-sm">✓</span>
+                            <span className={`${kind.iconColor} text-sm`}>{event.type === 'file_blocked' ? '⊘' : kind.icon}</span>
                             <span className="font-mono text-xs text-gray-700">{event.filepath}</span>
-                            {event.progress && (
-                              <span className="text-gray-400 text-xs ml-auto font-mono">{event.progress}</span>
+                            {event.total != null && (
+                              <span className="text-gray-400 text-xs ml-auto font-mono">
+                                {event.done}/{event.total}
+                              </span>
                             )}
                           </div>
+                          {(event.error || event.reason) && (
+                            <div className="text-[11px] text-gray-500 mt-1 font-mono truncate">
+                              {event.type === 'file_blocked' ? event.reason : event.error}
+                            </div>
+                          )}
                           <div className="text-[10px] text-gray-400 mt-1 font-medium">
                             {formatTime(event.timestamp)}
                           </div>

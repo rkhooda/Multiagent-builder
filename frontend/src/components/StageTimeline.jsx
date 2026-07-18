@@ -151,6 +151,17 @@ export default function StageTimeline({ projectState, status, events, regenerati
                       {attemptCount}×
                     </span>
                   )}
+                  {(() => {
+                    const partial = attempts.reduce((n, e) => n + (e.failed_files?.length || 0), 0)
+                    return partial > 0 ? (
+                      <span
+                        title={`${partial} file(s) failed or blocked`}
+                        className="rounded-full bg-amber-100 px-1.5 text-[10px] font-bold text-amber-700"
+                      >
+                        ⚠ {partial}
+                      </span>
+                    ) : null
+                  })()}
                 </button>
 
                 {(attemptCount > 0 || !hasHistory) && (
