@@ -91,6 +91,65 @@ def write_project_file(project_id: str, filepath: str, content: str, add_header:
         }
 
 
+def js_syntax_sanity(content: str, filepath: str) -> list:
+    """Cheap structural sanity for JS/JSX/TS files — NOT a parser.
+
+    Returns a list of warning strings (empty = looks structurally OK). These
+    are warnings, never fatal: brace/paren counting is naive about strings and
+    comments, so a mismatch is a hint, not proof. Day 22 deep-validation
+    (acorn AST parse, import resolution, endpoint cross-check) is the hook
+    point that replaces these heuristics.
+    """
+    ext = Path(filepath).suffix.lower()
+    if ext not in {'.js', '.jsx', '.ts', '.tsx', '.mjs'}:
+        return []
+    if not content.strip():
+        return ["file is empty after cleaning"]
+
+    warnings = []
+    if content.count('{') != content.count('}'):
+        warnings.append(f"unbalanced braces ({content.count('{')} open / {content.count('}')} close)")
+    if content.count('(') != content.count(')'):
+        warnings.append(f"unbalanced parens ({content.count('(')} open / {content.count(')')} close)")
+    if 'import ' not in content and 'export ' not in content:
+        warnings.append("no import or export statement — likely truncated or prose")
+    return warnings
+
+
+def process_and_write_generated_file(project_id: str, task: dict, raw_output: str, state: dict) -> dict:
+    """Shared write-time chain for every coder agent (Day 18 frontend, Day 19
+    backend, Day 20 parallel runner reuse it unchanged): strip fences ->
+    JS syntax sanity -> write to disk. Returns a result dict the caller uses
+    to update generated_files and broadcast.
+
+    Deliberately message-agnostic: validation + one-shot repair stay in the
+    agent (call_validated needs the LLM message context), and state-update +
+    the file_written broadcast stay in the caller (per-phase index/total
+    differ). See the Day 18 ponytail #3 conclusion.
+
+    The returned `content` is fence-stripped and header-free — the exact form
+    generated_files must store so state and disk stay in sync and the Gate-4
+    clean_project_files pass is a no-op safety net rather than the mechanism.
+    """
+    filepath = task.get("filepath", "")
+    log = state.get("log")
+
+    clean = strip_code_fences(raw_output)
+    warnings = js_syntax_sanity(clean, filepath)
+    if warnings and log is not None:
+        log.append(f"coder: {filepath} syntax warnings: {'; '.join(warnings)}")
+
+    result = write_project_file(project_id, filepath, clean)
+    return {
+        "success": result["success"],
+        "filepath": filepath,
+        "content": clean,
+        "size_bytes": result["size_bytes"],
+        "warnings": warnings,
+        "error": result["error"],
+    }
+
+
 def get_project_output_dir(project_id: str) -> str:
     """Returns the full path to a project's output directory, creating it if needed."""
     path = os.path.join(OUTPUTS_ROOT, project_id)

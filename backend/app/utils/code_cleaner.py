@@ -38,6 +38,11 @@ def clean_project_files(project_id: str, generated_files: dict) -> tuple:
     for filepath, content in generated_files.items():
         cleaned = strip_code_fences(content or "")
         if cleaned != (content or "").strip():
+            # Post Day 18 every coder strips at write time via
+            # process_and_write_generated_file, so anything caught here means a
+            # coder bypassed that chain — a bug worth surfacing, not silent.
+            print(f"[CodeCleaner] WARNING: {filepath} still had fences at the "
+                  f"gate-4 safety net — a coder bypassed write-time stripping", flush=True)
             result = write_project_file(project_id, filepath, cleaned)
             if result["success"]:
                 cleaned_count += 1
