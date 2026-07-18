@@ -195,6 +195,8 @@ def qa_agent(state: dict) -> dict:
 
     batches = _chunk_files(generated_files)
     all_issues = []
+    failed_batches = 0
+    last_batch_error = None
 
     for i, batch in enumerate(batches):
         batch_files = [f for f, _ in batch]
@@ -214,6 +216,12 @@ def qa_agent(state: dict) -> dict:
             log.append(f"qa_agent: batch {i + 1}/{len(batches)} reviewed ({len(batch_issues)} issues found)")
 
         except Exception as e:
+            # Inner tolerance layer: one dead batch degrades the report, it
+            # doesn't fail the stage. A TOTAL wipeout is different — re-raised
+            # below so the error boundary pauses instead of shipping a
+            # "0 issues" report that nothing was actually reviewed for.
+            failed_batches += 1
+            last_batch_error = e
             error_msg = f"qa_agent: batch {i + 1}/{len(batches)} failed ({batch_files}): {e}"
             errors.append(error_msg)
             print(f"[QAAgent] ERROR: {error_msg}")
@@ -224,6 +232,9 @@ def qa_agent(state: dict) -> dict:
             "total_batches": len(batches),
             "issues_found_so_far": len(all_issues)
         })
+
+    if batches and failed_batches == len(batches):
+        raise last_batch_error
 
     # ── Trivial auto-fix (missing imports / typos only, 1 attempt per file) ──
     auto_fixed_files = []

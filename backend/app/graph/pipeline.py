@@ -1,9 +1,11 @@
 import sqlite3
 import os
+import traceback
 from datetime import datetime, timezone
 from typing import Dict
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.sqlite import SqliteSaver
+from app.exceptions import AgentError, LLMError
 from app.graph.state import ProjectState
 from app.agents.research_agent import research_agent
 from app.agents.requirements_agent import requirements_agent
@@ -89,6 +91,32 @@ STAGE_ARTIFACTS = {
 # Doc fields snapshotted into previous_versions before clearing (diff source).
 SNAPSHOT_FIELDS = {"research_report", "requirements_doc", "architecture_doc", "implementation_plan"}
 
+# ── Skip policy ──────────────────────────────────────────────────────────────
+# Agents whose failure the pipeline can survive, and the explicit placeholder
+# written to state when the user chooses to skip them. Everything else
+# (requirements/architecture/planning/database) starves the stages downstream —
+# /recover refuses to skip those. Skipping is always a USER decision: an
+# unrecoverable failure pauses the project (error_paused) rather than
+# auto-skipping, so a degraded run never happens silently.
+SKIPPABLE_AGENTS = {
+    "research": lambda reason: {
+        "research_report": f"[SKIPPED — research agent failed: {reason}]",
+        "current_stage": "requirements",
+    },
+    "qa": lambda reason: {
+        "qa_report": (
+            "# QA Report\n\n[SKIPPED — QA agent failed: "
+            f"{reason}]\n\nGenerated code was NOT reviewed."
+        ),
+        "qa_issues_count": -1,  # -1 = "not reviewed", never rendered as "0 issues"
+        "current_stage": "devops",
+    },
+    "devops": lambda reason: {
+        "devops_files": {},
+        "current_stage": "human_gate_4",
+    },
+}
+
 # Stage -> the output field a feedback re-run regenerates (drives snapshotting
 # and feedback-field clearing in stage_node).
 STAGE_PRIMARY_OUTPUT = {
@@ -118,13 +146,32 @@ def invalidate_downstream(state: dict, from_stage: str) -> dict:
 
 def stage_node(stage: str, agent_fn):
     """Wraps an agent node with the cross-cutting per-stage bookkeeping:
+    - universal error boundary: LLMError subclasses pass through already
+      classified; anything else is a bug in our own code, logged with its
+      traceback and wrapped as AgentError (never auto-retried). The exception
+      propagates out of graph.stream() so the checkpoint keeps next=this node —
+      run_graph_background records/broadcasts the failure and /recover can
+      retry or skip from exactly here.
     - snapshot the previous output + clear feedback fields when this stage was
       the feedback target (single implementation instead of one per agent)
     - append a stage_history entry (attempt count, trigger, gate origin)"""
     output_field = STAGE_PRIMARY_OUTPUT.get(stage)
     def node(state: ProjectState) -> Dict:
         previous_output = regeneration_target(state, output_field) if output_field else None
-        result = agent_fn(state)
+        try:
+            result = agent_fn(state)
+        except LLMError as e:
+            e.agent_type = e.agent_type or stage
+            raise
+        except Exception as e:
+            print(f"[Boundary] bug in {stage} agent:\n{traceback.format_exc()}", flush=True)
+            raise AgentError(f"{type(e).__name__}: {e}", agent_type=stage) from e
+
+        # This stage just succeeded — clear any recorded failure for it so a
+        # recovered retry doesn't keep showing a stale error card.
+        if state.get("failed_agent") == stage:
+            result.setdefault("failed_agent", "")
+            result.setdefault("failure_context", None)
 
         if previous_output is not None:
             previous_versions = dict(state.get("previous_versions") or {})

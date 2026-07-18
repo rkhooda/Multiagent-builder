@@ -65,25 +65,23 @@ def requirements_agent(state: dict) -> dict:
     if previous_doc:
         log.append("requirements_agent: re-running with human feedback")
 
-    # ── Validate we have the research report ──────────────────────
-    if not research_report:
-        error_msg = "requirements_agent: no research_report in state — cannot proceed without research"
-        log.append(error_msg)
-        errors.append(error_msg)
-        print(f"[RequirementsAgent] ERROR: {error_msg}")
-        return {
-            "requirements_doc": "ERROR: Research report was missing. Requirements could not be generated.",
-            "tech_stack": "",
-            "log": log,
-            "errors": errors,
-            "current_stage": "architecture"
-        }
-
-    # ── Truncate research report if too long for context ─────────
-    truncated_research = truncate_for_context(research_report, max_chars=5000)
-    if len(truncated_research) < len(research_report):
-        log.append(f"requirements_agent: research report truncated from {len(research_report)} to 5000 chars for context")
-        print(f"[RequirementsAgent] Research report truncated to fit context window")
+    # ── Skip tolerance: research may have been skipped after a failure ───
+    # Proceed from the brief alone and note the degradation instead of dying.
+    research_skipped = not research_report or research_report.startswith("[SKIPPED")
+    if research_skipped:
+        log.append("requirements_agent: research report missing/skipped — proceeding from the brief alone (degraded)")
+        print("[RequirementsAgent] WARNING: no usable research report, working from brief only")
+        research_block = (
+            "RESEARCH REPORT: Not available (the research stage was skipped after a failure). "
+            "Derive requirements from the project brief alone, and note in the document that "
+            "no market/technical research informed them."
+        )
+    else:
+        truncated_research = truncate_for_context(research_report, max_chars=5000)
+        if len(truncated_research) < len(research_report):
+            log.append(f"requirements_agent: research report truncated from {len(research_report)} to 5000 chars for context")
+            print(f"[RequirementsAgent] Research report truncated to fit context window")
+        research_block = f"RESEARCH REPORT (from Research Agent):\n{truncated_research}"
 
     # ── Build the messages array ──────────────────────────────────
     user_content = f"""PROJECT NAME: {project_name}
@@ -91,8 +89,7 @@ def requirements_agent(state: dict) -> dict:
 ORIGINAL PROJECT BRIEF:
 {brief}
 
-RESEARCH REPORT (from Research Agent):
-{truncated_research}
+{research_block}
 
 Based on the brief and research report above, generate the complete requirements document now.
 Include all required sections. The tech stack must match the technical landscape identified in the research.

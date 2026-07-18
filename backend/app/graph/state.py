@@ -28,8 +28,10 @@ class ProjectState(TypedDict):
     retry_counts: Dict[str, int]   # stage (or "file_fix:{path}") -> feedback-driven regeneration count
     stage_history: List[dict]      # {stage, attempt, trigger, gate_origin, timestamp} per agent completion
     regen_cycle: Optional[dict]    # {"trigger": "edit"|"back", "gate": gate_name} during a feedback cycle
+    failed_agent: str              # stage whose node raised; cleared when it succeeds
+    failure_context: Optional[dict]  # {error_type, message, model, auto_retry_cycles, recoverable}
     current_stage: str
     human_feedback: str            # injected at approval gates
     human_decision: str            # 'approve', 'edit', 'reject'
     log: List[str]                 # trace of every agent action
-    errors: List[str]
+    errors: List                   # strings (agent-level notes) and structured boundary dicts
