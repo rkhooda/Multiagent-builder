@@ -776,3 +776,114 @@ safety net).
   every attempt (OpenRouter free coder capacity still effectively unavailable).
 - Installed `sqlalchemy` + `pydantic-settings` into the builder's own venv to run
   the generated app in isolation (the builder itself didn't depend on them).
+
+## Day 20 observations
+
+Scope: replace both coders' sequential loops with a shared, dependency-aware
+parallel scheduler (`parallel_runner.py`) — independent files generate
+concurrently (default max 3), dependents wait exactly as long as they must, a
+file whose dependency failed is `blocked` and never launched, workers stay pure
+while a single event-loop coordinator owns all state mutation and broadcasts, and
+the UI shows a live count-based progress bar. Correctness first: a race that
+corrupts `generated_files` is strictly worse than slow generation.
+
+### Task 0 triage — one shared-infra crash bug fixed
+`context_builder._build_backend_context` called `truncate_for_context` without
+importing it — a latent `NameError` that fires whenever a full model+schema
+dependency pushes a router's context over the 4K-token budget (plausible with
+2+ large models). Fixed the import; also deleted a dead no-op degradation loop.
+This is exactly the class of bug Task 0 targets: harmless-looking until file
+generation is interleaved, then 3× harder to see.
+
+### The purity refactor (the load-bearing change)
+`process_and_write_generated_file` interleaved pure processing with shared-state
+mutation. Split into `process_generated_file` (PURE — strip/sanity/import-fix/
+write its own unique file; no `generated_files`/`errors`/`log` touch, no
+broadcast) and `commit_generated_file` (coordinator-only — state + broadcast on
+the event loop). This eliminates the whole parallel-bug class (lost updates,
+interleaved logs, double broadcasts) by construction: every worker is pure, and
+asyncio's single loop serialises all commits without a lock.
+
+### Ponytail conclusions (recorded in the relevant commit bodies)
+1. **Scheduler shape** — dynamic ready-queue, but realised by letting asyncio's
+   await-graph BE the queue: one coroutine per file awaits its dependency
+   futures, then takes a permit, then builds its context (seeing freshly
+   committed deps). No hand-rolled in-degree loop. Wave-gather rejected (same
+   correctness, worse throughput, more code). A Kahn pass runs only for cycle
+   detection + deterministic creation order.
+2. **Purity boundary** — the worker holds ONE permit for its whole lifetime, so
+   both the primary and the repair LLM call (`call_validated`, kept one layer up
+   where the message context lives) are covered; the pure unit is strip/sanity/
+   fix/write. Disk writes are safe in the worker because filepaths are unique
+   (Day 19 single-owner assertion).
+3. **Limits** — one global semaphore, env-configurable (`GENERATION_MAX_CONCURRENT`,
+   `GENERATION_MODE=sequential` forces 1). Per-provider caps + adaptive throttle
+   deferred to Day 26's token bucket: the provider is only known inside
+   `call_llm`'s fallback chain, and Day 17's per-call backoff already absorbs a
+   429 even when several fire at once. Marked with a `ponytail:` ceiling comment.
+
+### Structural ordering as real edges (+ a latent Day 19 bug fixed)
+Day 19's backend `KIND_PRIORITY` sort is gone; structural ordering is now real
+dependency edges (`backend_implicit_deps`: a router/service depends on its
+SAME-resource schema/model tasks) so it survives parallel scheduling. Making
+same-resource matching plural-tolerant (`_same_resource`) fixed a latent Day 19
+blind spot: a plural router (`routers/notes.py`) never linked to its singular
+schema (`schemas/note.py`), so under Day 19 it silently got neither full-content
+injection nor an ordering guarantee. Now `notes` ↔ `note` link.
+
+### Verification
+- **Scheduler unit tests** (`test_parallel_runner.py`, fake generator, <2s):
+  7/7 — diamond ordering + dependency-content injection, no-lost-updates
+  (20 files @ 3 → exactly 20, unique, correct), failure→transitive blocking with
+  honest `{done:2, failed:1, blocked:1}` counts, permit discipline (in-flight
+  never exceeds the cap at 1/2/3/5), sequential-mode determinism (strictly serial
+  + valid topological order), and the cycle guard.
+- **Offline end-to-end wiring** (real `backend_coder_agent`, `call_llm` stubbed,
+  no quota): 13/13 — parallelism (max in-flight ≥ 2), schema-before-router
+  ordering, launch-time dependency-content injection (routers saw their schema's
+  FINISHED content), infra rendered after the phase, `main.py` registering both
+  routers, state == disk. Fault path: a schema fails → its router is BLOCKED
+  (never launched — quota saved), the other resource is unaffected, `main.py`
+  registers ONLY the delivered router, and the failed/blocked files are stubbed
+  on disk (Gate-4 visible + fixable).
+- **Regression**: `test_import_fixer.py` 14/14; frontend `vite build` clean.
+
+### Timing — sequential vs parallel (simulated latency)
+Measured the scheduler's wall-clock win in isolation from LLM/network noise: a
+fake worker sleeps 1.0s per file (standing in for one free-tier LLM call) on a
+realistic 12-file fixture (6 resources × {schema, router}, each router depending
+on its schema). Same scheduler, only `max_concurrent` changes:
+
+| Mode | max_concurrent | max in-flight | wall-clock | files |
+|------|----------------|---------------|-----------|-------|
+| sequential | 1 | 1 | 12.3s | 12/12 |
+| parallel   | 3 | 3 |  4.0s | 12/12 |
+
+**Speedup: 3.05×** (12.3s → 4.0s) — essentially the theoretical 3× ceiling; the
+schema→router edges pack cleanly at concurrency 3. This measures the scheduler's
+overlap precisely; it does NOT include real free-tier variance.
+
+**Real-quota run deliberately deferred** (same precedent as Days 18–19):
+OpenRouter's free coder capacity is ~50 req/day and qwen3-coder:free has 429'd on
+every attempt for three sessions running, so every real call falls to the groq
+fallback — a real seq+parallel pair (24+ coder calls) would exhaust shared quota
+that later days need, and would add rate-limit/latency variance that obscures the
+scheduler measurement rather than sharpening it. The PDF's ~20min→~8min
+expectation assumes real LLM latency dominates; on this project the dominant cost
+is rate-limit backoff, not generation time (Day 12), so the *realised* speedup is
+capped by whatever effective concurrency the free tier tolerates, not by the
+scheduler. Rate-limit-under-parallelism note: 3 concurrent calls that all 429
+would trigger 3 simultaneous Day-17 fallbacks (a mild thundering herd onto groq);
+the global cap of 3 keeps that modest, and the per-provider cap / adaptive
+throttle that would tame it fully is Day 26's token bucket. Not observed live
+this session (no quota run).
+
+### vs. Day 19 baseline
+Day 19: both coders generated files one at a time in a structural+topological
+sort; a 12-file backend phase was ~12 serial LLM calls. Day 20: the same phase
+fans out through one shared scheduler at up to 3 concurrent with identical
+correctness guarantees (state == disk, ordering now enforced by real dependency
+edges, per-file isolation) PLUS an honest `blocked` status and transitive
+blocking that saves LLM calls on files doomed by a failed dependency. The
+sequential path is not a separate code path — it is the same scheduler at
+`max_concurrent=1` (`GENERATION_MODE=sequential`), the permanent debugging lever.
