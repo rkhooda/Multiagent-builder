@@ -122,10 +122,11 @@ def call_validated(messages: list, agent_type: str, state: dict, max_tokens=4000
         errors="\n".join(f"- {p}" for p in problems[:8]),
         original_instruction=original_instruction,
     )
-    repair_messages = messages + [
-        {"role": "assistant", "content": response},
-        {"role": "user", "content": repair},
-    ]
+    # Providers reject empty assistant messages (Cohere 400s on them), and an
+    # empty response has nothing worth echoing back anyway.
+    repair_messages = messages + (
+        [{"role": "assistant", "content": response}] if response.strip() else []
+    ) + [{"role": "user", "content": repair}]
     response = call_llm(repair_messages, agent_type, max_tokens=max_tokens)
     problems = run_validators(agent_type, response, state)
     if problems:
