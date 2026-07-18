@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 from ..llm_router import call_llm
 from ..utils.file_writer import write_project_file
-from .utils import get_tasks_for_phase, get_completed_file_content, truncate_for_context
+from .utils import get_tasks_for_phase, get_completed_file_content, truncate_for_context, assert_single_owner
 
 SYSTEM_PROMPT = (Path(__file__).resolve().parents[3] / "prompts" / "database_agent.md").read_text(encoding="utf-8")
 
@@ -29,6 +29,11 @@ def database_agent(state: dict) -> dict:
 
     print(f"[DatabaseAgent] Starting for project: {project_name}")
     log.append("database_agent: started")
+
+    # Ownership boundary (Day 19): database owns models/migrations, backend
+    # coder owns the rest. Fail loudly here (before any write) if the plan
+    # gave one filepath to both phases.
+    assert_single_owner(implementation_plan)
 
     # ── Get database tasks from the plan ───────────────────────────
     db_tasks = get_tasks_for_phase(implementation_plan, "database")

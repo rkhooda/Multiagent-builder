@@ -207,7 +207,7 @@ def frontend_coder_agent(state: dict) -> dict:
         "generated_files": generated_files,
         "log": log,
         "errors": errors,
-        "current_stage": "backend_code",
+        "current_stage": "database",
         "_agent_event": True,
     }
     # Honest partial-stage record: stage_node folds this into stage_history.

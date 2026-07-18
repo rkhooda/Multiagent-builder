@@ -210,7 +210,7 @@ def backend_code(state: ProjectState) -> Dict:
     current_log = state.get("log") or []
     return {
         "log": current_log + ["backend_code ran"],
-        "current_stage": "backend_code"
+        "current_stage": "qa"
     }
 
 def human_gate_4(state: ProjectState) -> Dict:
@@ -282,9 +282,11 @@ workflow.add_conditional_edges(
         "cancelled": "cancelled",
     },
 )
-workflow.add_edge("frontend_code", "backend_code")
-workflow.add_edge("backend_code", "database")
-workflow.add_edge("database", "qa")
+# database runs BEFORE backend_code so ORM model files exist on disk/state
+# when the backend coder generates routers that import them (Day 19 reorder).
+workflow.add_edge("frontend_code", "database")
+workflow.add_edge("database", "backend_code")
+workflow.add_edge("backend_code", "qa")
 workflow.add_edge("qa", "devops")
 workflow.add_edge("devops", "human_gate_4")
 workflow.add_conditional_edges(

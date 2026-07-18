@@ -243,6 +243,26 @@ def get_tasks_for_phase(implementation_plan_str: str, phase: str) -> list[dict]:
     return matching
 
 
+def assert_single_owner(implementation_plan_str: str) -> None:
+    """Guard the database/backend ownership boundary (Day 19 ponytail #1).
+
+    The database agent owns `phase == 'database'` files (ORM models +
+    migrations); the backend coder owns `phase == 'backend'` files. Exactly one
+    agent may own any filepath — a filepath planned under BOTH phases would be
+    generated twice on different graph passes, each "working" in isolation and
+    silently clobbering the other. Cheap insurance: raise loudly instead.
+    """
+    db_paths = {t.get("filepath") for t in get_tasks_for_phase(implementation_plan_str, "database")}
+    be_paths = {t.get("filepath") for t in get_tasks_for_phase(implementation_plan_str, "backend")}
+    overlap = sorted(p for p in (db_paths & be_paths) if p)
+    if overlap:
+        raise ValueError(
+            "Ownership conflict: these filepaths are planned under both the "
+            f"'database' and 'backend' phases and would be double-generated: {overlap}. "
+            "Fix the plan so each file belongs to exactly one phase."
+        )
+
+
 def build_feedback_prompt(previous_output: str, feedback: str) -> str:
     """
     Builds the standard feedback-regeneration prompt appended to an agent's

@@ -14,7 +14,9 @@ You are pre-trained to do this autonomously. Do NOT ask clarifying questions und
 
 ## 4. Technical Rules
 You must strictly adhere to the following database and SQLAlchemy design rules:
-- **SQLAlchemy 2.0 Style**: Use the modern `DeclarativeBase` pattern for models, NOT the legacy `Base = declarative_base()` approach. All mapped columns must be defined using modern type annotation styles (e.g. `Mapped[int] = mapped_column(...)`).
+- **SQLAlchemy 2.0 Style**: Use modern mapped-column type annotations (e.g. `Mapped[int] = mapped_column(...)`).
+- **Shared Base — DO NOT define one**: The declarative `Base` class lives in `app/database.py` and is owned by the backend infrastructure, not you. Import it with exactly `from app.database import Base` and subclass it. NEVER write `Base = declarative_base()`, `class Base(DeclarativeBase): ...`, or import Base from any other path.
+- **Package layout for imports**: The project runs with `backend/` as the working directory and `app` as the package. ALL imports use the `app.` root — e.g. `from app.database import Base`, `from app.models.user import User`. NEVER use `backend.app....` and NEVER use a leading-dot relative import at module top level.
 - **Primary Keys**: Every database model must have `id` as a UUID primary key, generated server-side (e.g. using `uuid.uuid4` or server default `gen_random_uuid()`).
 - **Standard Columns**: Every table model must have `created_at` and `updated_at` datetime columns with server-side defaults (e.g. `server_default=func.now()` or `onupdate=func.now()`).
 - **Table Name**: Explicitly set the `__tablename__` attribute for all model classes.
