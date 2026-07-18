@@ -17,7 +17,11 @@ MODELS = {
     "requirements": ("gemini/gemini-2.5-flash", "openrouter/cohere/north-mini-code:free"),
     "architecture": ("openrouter/qwen/qwen3-coder:free", "groq/llama-3.3-70b-versatile"),
     "planning":     ("gemini/gemini-2.5-flash", "groq/llama-3.3-70b-versatile"),
-    "frontend_code":("openrouter/qwen/qwen3-coder:free", "openrouter/cohere/north-mini-code:free"),
+    # Fallback is Groq (not another OpenRouter free model): qwen3-coder hits
+    # per-model free rate limits and cohere/north-mini-code returns empty
+    # responses (Day 18) — groq llama-3.3-70b is a reliable code-capable model
+    # on a different provider, mirroring the architecture agent's fallback.
+    "frontend_code":("openrouter/qwen/qwen3-coder:free", "groq/llama-3.3-70b-versatile"),
     "backend_code": ("openrouter/cohere/north-mini-code:free", "openrouter/qwen/qwen3-coder:free"),
     "database":     ("groq/llama-3.3-70b-versatile", "openrouter/qwen/qwen3-coder:free"),
     "qa":           ("openrouter/nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free", "gemini/gemini-2.5-flash"),

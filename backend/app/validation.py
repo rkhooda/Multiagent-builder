@@ -29,8 +29,11 @@ def required_sections(sections: list):
     return check
 
 
-def min_code_lines(n: int = 10):
-    """For coder outputs, after fence-stripping."""
+def min_code_lines(n: int = 5):
+    """For coder outputs, after fence-stripping. The floor distinguishes real
+    code from empty/prose responses (e.g. the empty replies free-tier models
+    sometimes return) while permitting legitimately small files — a minimal
+    axios client (src/lib/api.js) is ~7 lines, so 10 was too strict."""
     def check(text, state):
         from app.utils.code_cleaner import strip_code_fences
         lines = [l for l in strip_code_fences(text).splitlines() if l.strip()]
@@ -89,8 +92,8 @@ VALIDATORS = {
     "requirements": [min_length(500), _requirements_sections],
     "architecture": [min_length(800), _architecture_quality],
     "planning": [_valid_plan],
-    "frontend_code": [min_code_lines(10)],
-    "backend_code": [min_code_lines(10)],
+    "frontend_code": [min_code_lines(5)],
+    "backend_code": [min_code_lines(5)],
 }
 
 REPAIR_PROMPT = (

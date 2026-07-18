@@ -15,7 +15,7 @@ import json
 from pathlib import Path
 
 from app.exceptions import LLMError
-from app.utils.file_writer import process_and_write_generated_file
+from app.utils.file_writer import process_and_write_generated_file, write_project_file
 from app.validation import call_validated
 from .context_builder import build_file_context
 from .utils import get_tasks_for_phase
@@ -24,6 +24,18 @@ SYSTEM_PROMPT = (Path(__file__).resolve().parents[3] / "prompts" / "frontend_cod
 
 # Fraction of files that must fail before the whole stage is considered broken.
 STAGE_FAIL_THRESHOLD = 0.5
+
+
+def _failure_stub(filepath: str, error: str) -> str:
+    """Placeholder written when a file's generation fails, so the failure is
+    visible in the Gate 4 file browser and fixable there via Request AI Fix
+    (which reads from disk). Keeps dependent imports from breaking outright:
+    JSX files export a null component, others an empty object."""
+    note = (f"// Generation failed for {filepath}: {error[:160]}\n"
+            f"// Placeholder — regenerate with \"Request AI Fix\" at the review gate.\n\n")
+    if filepath.lower().endswith((".jsx", ".tsx")):
+        return note + "export default function GenerationFailedPlaceholder() {\n  return null;\n}\n"
+    return note + "export default {};\n"
 
 
 def _is_lib_file(filepath: str) -> bool:
@@ -153,6 +165,13 @@ def frontend_coder_agent(state: dict) -> dict:
             msg = f"frontend_coder_agent: {filepath} failed after repair: {e}"
             errors.append(msg)
             print(f"[FrontendCoder] FAILED {filepath}: {e}")
+            # Write a placeholder so the failed file is visible AND fixable at
+            # Gate 4 (the file browser reads from disk), and dependent imports
+            # still resolve. Kept in generated_files so state == disk.
+            stub = _failure_stub(filepath, str(e))
+            stub_result = write_project_file(project_id, filepath, stub)
+            if stub_result["success"]:
+                generated_files[filepath] = stub
             manager.broadcast_sync(project_id, {
                 "type": "file_error",
                 "filename": Path(filepath).name,
