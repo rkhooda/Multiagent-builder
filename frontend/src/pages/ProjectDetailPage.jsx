@@ -524,11 +524,13 @@ export default function ProjectDetailPage() {
                           <div className="flex items-center gap-2">
                             <span className={`${kind.iconColor} text-sm`}>{event.type === 'file_blocked' ? '⊘' : kind.icon}</span>
                             <span className="font-mono text-xs text-gray-700">{event.filepath}</span>
-                            {event.total != null && (
+                            {event.total != null ? (
                               <span className="text-gray-400 text-xs ml-auto font-mono">
                                 {event.done}/{event.total}
                               </span>
-                            )}
+                            ) : event.progress ? (
+                              <span className="text-gray-400 text-xs ml-auto font-mono">{event.progress}</span>
+                            ) : null}
                           </div>
                           {(event.error || event.reason) && (
                             <div className="text-[11px] text-gray-500 mt-1 font-mono truncate">
