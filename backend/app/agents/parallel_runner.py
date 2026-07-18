@@ -31,6 +31,7 @@ deliberately generic name, not a coder-specific one.
 """
 import asyncio
 import os
+import time
 from dataclasses import dataclass, field
 
 from app.utils.file_writer import process_generated_file, commit_generated_file
@@ -203,9 +204,15 @@ async def run_tasks_parallel(tasks, state, *, generate, build_context, stub_for,
 
     # Create every coroutine (topo order so a dependent's futures already exist),
     # then let asyncio's await-graph run them as a dynamic ready-queue.
+    t0 = time.monotonic()
     for tid in order:
         task_futures[tid] = asyncio.create_task(run_one(tid))
     await asyncio.gather(*task_futures.values())
+    elapsed = time.monotonic() - t0
+    state.setdefault("log", []).append(
+        f"{phase}_coder: phase wall-clock {elapsed:.1f}s for {result.total} files "
+        f"at max_concurrent={cap} ({len(result.ok)} ok, {len(result.failed)} failed, "
+        f"{len(result.blocked)} blocked)")
     return result
 
 
