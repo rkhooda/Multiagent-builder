@@ -15,7 +15,7 @@ import json
 from pathlib import Path
 
 from app.exceptions import LLMError
-from app.utils.file_writer import process_and_write_generated_file
+from app.utils.file_writer import process_generated_file
 from app.validation import call_validated
 from .context_builder import build_file_context
 from .utils import get_tasks_for_phase
@@ -126,6 +126,7 @@ def frontend_coder_agent(state: dict) -> dict:
         task_id = task.get("id", f"fe_{i}")
         filepath = task.get("filepath", "")
         print(f"[FrontendCoder] ({i+1}/{total}) {filepath} [{task_id}]")
+        tree = state.get("file_list") or list(generated_files.keys())
 
         try:
             context = build_file_context(task, state, phase_prefix="frontend/src")
@@ -138,14 +139,17 @@ def frontend_coder_agent(state: dict) -> dict:
                 original_instruction="Output ONLY the file's code — no fences, no prose.",
                 log=log,
             )
-            result = process_and_write_generated_file(project_id, task, raw, state)
-            if not result["success"]:
-                raise RuntimeError(result["error"] or "write failed")
+            # Day 20: the pure processor (strip/sanity/write) — no shared-state
+            # mutation. This sequential loop commits inline right after; Day 20's
+            # scheduler pairs it with commit_generated_file instead.
+            processed = process_generated_file(project_id, task, raw, file_tree=tree)
+            if processed.status != "ok":
+                raise RuntimeError(processed.error or "write failed")
 
             # Keep state == disk: store the cleaned, header-free content.
-            generated_files[filepath] = result["content"]
+            generated_files[filepath] = processed.content
             files_ok += 1
-            log.append(f"frontend_coder_agent: wrote {filepath} ({result['size_bytes']} bytes)")
+            log.append(f"frontend_coder_agent: wrote {filepath} ({processed.size_bytes} bytes)")
             manager.broadcast_sync(project_id, {
                 "type": "file_written",
                 "filename": Path(filepath).name,
@@ -169,9 +173,9 @@ def frontend_coder_agent(state: dict) -> dict:
             # Gate 4 (the file browser reads from disk), and dependent imports
             # still resolve. Kept in generated_files so state == disk.
             stub = _failure_stub(filepath, str(e))
-            stub_result = process_and_write_generated_file(project_id, task, stub, state)
-            if stub_result["success"]:
-                generated_files[filepath] = stub_result["content"]
+            stub_processed = process_generated_file(project_id, task, stub, file_tree=tree)
+            if stub_processed.status == "ok":
+                generated_files[filepath] = stub_processed.content
             manager.broadcast_sync(project_id, {
                 "type": "file_error",
                 "filename": Path(filepath).name,

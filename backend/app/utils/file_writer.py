@@ -1,4 +1,5 @@
 import os
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from .code_cleaner import strip_code_fences
@@ -116,60 +117,101 @@ def js_syntax_sanity(content: str, filepath: str) -> list:
     return warnings
 
 
-def process_and_write_generated_file(project_id: str, task: dict, raw_output: str,
-                                     state: dict, apply_import_fixer: bool = False) -> dict:
-    """Shared write-time chain for every coder agent (Day 18 frontend, Day 19
-    backend, Day 20 parallel runner reuse it unchanged): strip fences ->
-    JS syntax sanity -> [opt-in] Python import repair -> write to disk. Returns
-    a result dict the caller uses to update generated_files and broadcast.
+@dataclass
+class ProcessedFile:
+    """Result of processing one generated file — PURE data, no shared state.
 
-    Deliberately message-agnostic: validation + one-shot repair stay in the
-    agent (call_validated needs the LLM message context), and state-update +
-    the file_written broadcast stay in the caller (per-phase index/total
-    differ). See the Day 18 ponytail #3 conclusion.
+    A worker (possibly on another thread) produces this; the coordinator turns
+    it into a state mutation + broadcast via commit_generated_file. `content` is
+    fence-stripped, header-free, and import-repaired: the exact form
+    generated_files must store so state and disk stay in sync.
+    """
+    filepath: str
+    content: str
+    status: str  # "ok" | "failed"
+    size_bytes: int = 0
+    warnings: list = field(default_factory=list)         # JS syntax-sanity hints
+    import_warnings: list = field(default_factory=list)  # unresolved Python imports
+    error: str = None
 
-    `apply_import_fixer` opts a phase into deterministic import repair (Day 19,
-    ponytail #2). It is language-aware — the fixer no-ops on non-Python files —
-    so the frontend can opt in behind the same flag later. Safely-fixable
-    imports are rewritten in place; unresolved local imports are FLAGGED as
-    `import_warning:` entries appended to state["errors"], where the Gate 4 QA
-    panel surfaces them with their file reference.
 
-    The returned `content` is fence-stripped, header-free, and import-repaired —
-    the exact form generated_files must store so state and disk stay in sync and
-    the Gate-4 clean_project_files pass is a no-op safety net rather than the
-    mechanism.
+def process_generated_file(project_id: str, task: dict, raw_output: str,
+                           file_tree: list = None, apply_import_fixer: bool = False) -> ProcessedFile:
+    """PURE with respect to shared state (Day 20, ponytail #2): strip fences ->
+    JS syntax sanity -> [opt-in] Python import repair -> write THIS file's own
+    unique path to disk. Returns a ProcessedFile. No generated_files/errors/log
+    mutation, no broadcast — commit_generated_file (coordinator-only) does that.
+
+    Safe to call from a worker thread: filepaths are unique per phase (Day 19
+    single-owner assertion), so no two workers write the same path, and nothing
+    here touches shared in-memory state. `file_tree` (the phase's planned file
+    list) is passed in rather than read from a live, concurrently-mutated state
+    dict.
+
+    Validation + one-shot repair are NOT here — they need the LLM message
+    context and stay one layer up in the coder's generate step (call_validated),
+    under the worker's single concurrency permit so both LLM calls are covered.
     """
     filepath = task.get("filepath", "")
-    log = state.get("log")
-
     clean = strip_code_fences(raw_output)
     warnings = js_syntax_sanity(clean, filepath)
-    if warnings and log is not None:
-        log.append(f"coder: {filepath} syntax warnings: {'; '.join(warnings)}")
 
     import_warnings = []
     if apply_import_fixer:
         from .import_fixer import fix_imports
-        tree = state.get("file_list") or list(state.get("generated_files", {}).keys())
-        clean, import_warnings = fix_imports(clean, filepath, tree)
-        if import_warnings:
-            errors = state.get("errors")
-            if errors is not None:
-                errors.extend(f"import_warning: {w}" for w in import_warnings)
-            if log is not None:
-                log.append(f"import_fixer: {filepath} — {len(import_warnings)} unresolved import(s) flagged")
+        clean, import_warnings = fix_imports(clean, filepath, file_tree or [])
 
     result = write_project_file(project_id, filepath, clean)
-    return {
-        "success": result["success"],
-        "filepath": filepath,
-        "content": clean,
-        "size_bytes": result["size_bytes"],
-        "warnings": warnings,
-        "import_warnings": import_warnings,
-        "error": result["error"],
+    return ProcessedFile(
+        filepath=filepath,
+        content=clean,
+        status="ok" if result["success"] else "failed",
+        size_bytes=result["size_bytes"],
+        warnings=warnings,
+        import_warnings=import_warnings,
+        error=result["error"],
+    )
+
+
+def commit_generated_file(state: dict, processed: ProcessedFile, *, project_id: str,
+                          phase: str, counts: dict, event_type: str = "file_written",
+                          extra: dict = None) -> None:
+    """COORDINATOR-ONLY (Day 20, ponytail #2): fold one ProcessedFile into shared
+    state and broadcast its lifecycle event. Runs on the single event loop that
+    drives the scheduler, so all mutation is serialised — the parallel-worker
+    class of bugs (lost updates, interleaved logs, double broadcasts) is
+    eliminated by construction, not by locking.
+
+    Updates state["generated_files"] (state == disk), appends any import warnings
+    to state["errors"] as `import_warning:` entries (Gate 4 QA panel surfaces
+    them), logs, and broadcasts `event_type` (file_written / file_failed /
+    file_blocked) carrying the {done, failed, blocked, total} count snapshot so
+    the frontend renders idempotently under reconnect/replay.
+    """
+    from ..core.connection_manager import manager
+
+    state.setdefault("generated_files", {})[processed.filepath] = processed.content
+
+    if processed.import_warnings:
+        state.setdefault("errors", []).extend(
+            f"import_warning: {w}" for w in processed.import_warnings)
+    log = state.setdefault("log", [])
+    if processed.warnings:
+        log.append(f"coder: {processed.filepath} syntax warnings: {'; '.join(processed.warnings)}")
+    verb = {"file_written": "wrote", "file_failed": "stubbed (failed)",
+            "file_blocked": "stubbed (blocked)"}.get(event_type, "wrote")
+    log.append(f"{phase}_coder: {verb} {processed.filepath} ({processed.size_bytes} bytes)")
+
+    event = {
+        "type": event_type,
+        "filename": Path(processed.filepath).name,
+        "filepath": processed.filepath,
+        "phase": phase,
+        **counts,
     }
+    if extra:
+        event.update(extra)
+    manager.broadcast_sync(project_id, event)
 
 
 def get_project_output_dir(project_id: str) -> str:

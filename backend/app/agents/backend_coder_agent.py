@@ -23,7 +23,7 @@ import json
 from pathlib import Path
 
 from app.exceptions import LLMError
-from app.utils.file_writer import process_and_write_generated_file, write_project_file
+from app.utils.file_writer import process_generated_file, write_project_file
 from app.utils.backend_infra import (
     render_config,
     render_database,
@@ -195,6 +195,7 @@ def backend_coder_agent(state: dict) -> dict:
         filepath = task.get("filepath", "")
         kind = backend_file_kind(filepath, task.get("description", ""))
         print(f"[BackendCoder] ({i+1}/{total}) {filepath} [{task_id}] kind={kind}")
+        tree = state.get("file_list") or list(generated_files.keys())
 
         try:
             context = build_file_context(task, state, phase_prefix="backend", phase="backend")
@@ -207,16 +208,20 @@ def backend_coder_agent(state: dict) -> dict:
                 original_instruction="Output ONLY the file's code — no fences, no prose.",
                 log=log,
             )
-            result = process_and_write_generated_file(
-                project_id, task, raw, state, apply_import_fixer=True)
-            if not result["success"]:
-                raise RuntimeError(result["error"] or "write failed")
+            # Day 20: pure processor (strip/sanity/import-fix/write); this
+            # sequential loop commits inline, the scheduler uses commit_generated_file.
+            processed = process_generated_file(
+                project_id, task, raw, file_tree=tree, apply_import_fixer=True)
+            if processed.status != "ok":
+                raise RuntimeError(processed.error or "write failed")
 
-            generated_files[filepath] = result["content"]
+            generated_files[filepath] = processed.content
+            if processed.import_warnings:
+                errors.extend(f"import_warning: {w}" for w in processed.import_warnings)
             files_ok += 1
             if kind == "router":
                 ok_router_paths.append(filepath)
-            log.append(f"backend_coder_agent: wrote {filepath} ({result['size_bytes']} bytes)")
+            log.append(f"backend_coder_agent: wrote {filepath} ({processed.size_bytes} bytes)")
             manager.broadcast_sync(project_id, {
                 "type": "file_written", "filename": Path(filepath).name,
                 "filepath": filepath, "phase": "backend", "task_id": task_id,
@@ -228,10 +233,10 @@ def backend_coder_agent(state: dict) -> dict:
             failed_files.append(filepath)
             errors.append(f"backend_coder_agent: {filepath} failed after repair: {e}")
             print(f"[BackendCoder] FAILED {filepath}: {e}")
-            stub_result = process_and_write_generated_file(
-                project_id, task, _failure_stub(filepath, str(e)), state)
-            if stub_result["success"]:
-                generated_files[filepath] = stub_result["content"]
+            stub_processed = process_generated_file(
+                project_id, task, _failure_stub(filepath, str(e)), file_tree=tree)
+            if stub_processed.status == "ok":
+                generated_files[filepath] = stub_processed.content
             manager.broadcast_sync(project_id, {
                 "type": "file_error", "filename": Path(filepath).name,
                 "filepath": filepath, "phase": "backend", "task_id": task_id,
