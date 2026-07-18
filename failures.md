@@ -440,3 +440,89 @@ Test project: `af6eaa1f-fa3c-4f83-9d36-6b99c9edf7d7` ("A tiny bookmark manager w
 - Live gate-3 back regression run, cross-cycle plan freshness check (test 6), and one full
   back-cycle driven from the browser (multi-stage overlay label flips + auto-opened dual
   diffs at the re-fired gate — code-path verified only).
+
+## Day 17 sabotage results
+
+Scope: error taxonomy + hardened `call_llm` (90s timeouts, auth fast-failover,
+classified errors, FAULT_INJECTION hook), universal error boundary in
+`stage_node`, skip policy (research/qa/devops), rate-limit chain with optional
+Ollama tier-3 and 60s auto-retry (max 3 cycles), unified validation registry
+with one-shot repair, `POST /recover` (retry/skip/cancel), and error-card UI.
+All six sabotage scenarios were run against live backends with fault injection
+(`FAULT_INJECTION=kind:target:count` in `llm_router.py`) on a throwaway
+"one-page hello world" brief. **Every scenario ended in clean, recoverable
+behavior; zero projects were left in a zombie `running` state.**
+
+### 1. Auth failure — PASS (and found a real bug)
+- `auth:gemini` injection: research failed over gemini→groq in ONE attempt
+  (structured log shows a single `outcome:auth` then `outcome:ok`) — no retry
+  burning on the bad key. Report generated normally.
+- `auth:*` (all providers): chain exhausted instantly →
+  `LLMAuthError("All providers rejected their API keys…")` → `error_paused`,
+  `failure_context.error_type=auth`, red card data persisted.
+- Keys "restored" (clean restart) → `POST /recover {retry}` → pipeline
+  resumed **from the failed agent, not from scratch**: on the S1a project the
+  9,287-char research report survived byte-identical while only requirements
+  re-ran to gate 1.
+- **Bonus real bug found and fixed**: Cohere (requirements fallback) returned
+  an *empty* response; validation caught it, but the repair prompt echoed the
+  empty string as an assistant message, which Cohere's API rejects with a 400
+  ("must have non-empty content"). Fixed: empty responses are no longer echoed
+  into repair messages (`fix(validation)` commit).
+
+### 2. Forced 429 — PASS
+- `429:*:4`: gemini 2 attempts (2s wait) → groq 2 attempts (10s wait) → no
+  Ollama (correctly silent, probe returns None) → status `rate_limited`,
+  `rate_limited` event broadcast with `retry_in: 60`, `cycle: 1/3`.
+- Auto-retry fired at 60s, injection count was exhausted ("quota lifted"),
+  research succeeded on the first clean call and the pipeline ran to gate 1.
+  `failed_agent` cleared by the boundary on success.
+
+### 3. Garbage output — PASS
+- `garbage:research`: `call_llm` returned "ok" → validation failed (min length
+  + missing sections) → ONE repair prompt → still "ok" → `LLMOutputError` →
+  `error_paused` with `error_type=bad_output`.
+- **Skip research (allowed)**: `[SKIPPED — …]` placeholder written via
+  `update_state(as_node=research)`, `stage_history` got `trigger:'skipped'`,
+  requirements proceeded **from the brief alone** and its output explicitly
+  notes no research informed it. Gate 1 reached.
+- **Skip architecture (refused)**: after approving gate 1 with
+  `garbage:architecture` active, architecture paused the same way; skip
+  returned HTTP 400 "'architecture' cannot be skipped — every downstream
+  stage needs its output." Cancel then worked.
+- UI pass (Playwright): red card rendered (agent name, friendly copy,
+  collapsible Details, Retry/Skip/Cancel), Skip click drove the whole
+  recovery; timeline showed Research ⊘ (grey slash) + Requirements ✓.
+
+### 4. Timeout — PASS
+- `timeout:research`: exactly 4 attempts logged (same-model retry, then
+  fallback ×2) → `LLMTimeoutError` → `error_paused`, `error_type=timeout`,
+  message "groq/… timed out after 90s".
+- Also verified the 409 guard: `POST /recover` against a healthy
+  `awaiting_approval` project → HTTP 409.
+
+### 5. Our-code bug — PASS
+- Temporary `raise KeyError("sabotage-s5")` in the research agent body →
+  boundary classified it `agent_bug` with `recoverable: false` (no auto-retry
+  attempted), full traceback in server logs via `[Boundary]`, red card data in
+  state. Cancel worked; sabotage line reverted.
+
+### 6. Restart resilience — PASS
+- Backend killed while S1b sat in `error_paused` → after restart the project
+  still reported `error_paused` + `failed_agent` + `failure_context` (SQLite
+  status row + checkpointed state) → `POST /recover {retry}` resumed from the
+  checkpoint and ran to gate 1.
+- Caveat (accepted): a pending `rate_limited` auto-retry timer does NOT
+  survive a restart — the countdown card still renders from persisted state
+  and manual "Retry Now" works, which is the designed fallback.
+
+### Notes / follow-ups
+- Ollama tier-3 was verified only in its ABSENT path (probe silent, chain ends
+  at tier 2) — the live path is Day 29's job.
+- The two WebSocket "handshake timed out" console errors seen during UI
+  testing were caused by hitting the page mid-backend-restart; the hook's
+  2s auto-reconnect recovered. Pre-existing behavior, not Day 17 fallout.
+- database/devops per-file inline retries were deliberately left as inner
+  tolerance layers (per-file failures already degrade gracefully); the
+  validation registry ships `min_code_lines` ready for the Day 18+ coder
+  agents.
