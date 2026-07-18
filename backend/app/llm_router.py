@@ -22,7 +22,11 @@ MODELS = {
     # responses (Day 18) — groq llama-3.3-70b is a reliable code-capable model
     # on a different provider, mirroring the architecture agent's fallback.
     "frontend_code":("openrouter/qwen/qwen3-coder:free", "groq/llama-3.3-70b-versatile"),
-    "backend_code": ("openrouter/cohere/north-mini-code:free", "openrouter/qwen/qwen3-coder:free"),
+    # Same dead-chain fix as frontend_code (Day 18/19): cohere/north-mini-code
+    # returns EMPTY responses and qwen3-coder alone hits per-model free limits,
+    # so the previous (cohere, qwen) pair generated nothing. Groq llama-3.3-70b
+    # is the reliable, code-capable fallback on a different provider.
+    "backend_code": ("openrouter/qwen/qwen3-coder:free", "groq/llama-3.3-70b-versatile"),
     "database":     ("groq/llama-3.3-70b-versatile", "openrouter/qwen/qwen3-coder:free"),
     "qa":           ("openrouter/nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free", "gemini/gemini-2.5-flash"),
     "devops":       ("groq/llama-3.3-70b-versatile", "gemini/gemini-2.5-flash"),
