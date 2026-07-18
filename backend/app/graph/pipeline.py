@@ -15,6 +15,7 @@ from app.agents.database_agent import database_agent
 from app.agents.devops_agent import devops_agent
 from app.agents.qa_agent import qa_agent
 from app.agents.frontend_coder_agent import frontend_coder_agent
+from app.agents.backend_coder_agent import backend_coder_agent
 from app.agents.utils import regeneration_target
 
 def human_gate_1(state: ProjectState) -> Dict:
@@ -206,13 +207,6 @@ def stage_node(stage: str, agent_fn):
     node.__name__ = f"{stage}_node"
     return node
 
-def backend_code(state: ProjectState) -> Dict:
-    current_log = state.get("log") or []
-    return {
-        "log": current_log + ["backend_code ran"],
-        "current_stage": "qa"
-    }
-
 def human_gate_4(state: ProjectState) -> Dict:
     # Empty pass-through function. LangGraph pauses before this node.
     return {}
@@ -229,7 +223,7 @@ workflow.add_node("architecture", stage_node("architecture", architecture_agent)
 workflow.add_node("planning", stage_node("planning", planning_agent))
 workflow.add_node("human_gate_3", human_gate_3)
 workflow.add_node("frontend_code", stage_node("frontend_code", frontend_coder_agent))
-workflow.add_node("backend_code", stage_node("backend_code", backend_code))
+workflow.add_node("backend_code", stage_node("backend_code", backend_coder_agent))
 workflow.add_node("database", stage_node("database", database_agent))
 workflow.add_node("qa", stage_node("qa", qa_agent))
 workflow.add_node("devops", stage_node("devops", devops_agent))
