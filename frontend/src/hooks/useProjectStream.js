@@ -58,6 +58,9 @@ export function useProjectStream(projectId) {
         if (event.type === 'gate_reached') setStatus('awaiting_approval')
         if (event.type === 'pipeline_complete') setStatus('done')
         if (event.type === 'error') setStatus('error')
+        if (event.type === 'agent_error') setStatus('error_paused')
+        if (event.type === 'rate_limited') setStatus('rate_limited')
+        if (event.type === 'auto_retry' || event.type === 'agent_skipped') setStatus('connecting')
       }
       
       ws.current.onclose = () => {

@@ -33,12 +33,18 @@ function SummaryCard({ filesData, projectState, severityCounts }) {
         <Stat label="Files Generated">{filesData ? filesData.total_files : '…'}</Stat>
         <Stat label="Lines of Code">{filesData ? filesData.total_lines.toLocaleString() : '…'}</Stat>
         <Stat label="QA Issues">
-          {totalIssues || projectState?.qa_issues_count || 0}
-          <span className="ml-1.5 text-[10px] font-semibold text-gray-500">
-            {severityCounts.critical > 0 && <span className="text-red-600">{severityCounts.critical} crit </span>}
-            {severityCounts.warnings > 0 && <span className="text-orange-600">{severityCounts.warnings} warn </span>}
-            {severityCounts.info > 0 && <span className="text-blue-600">{severityCounts.info} info</span>}
-          </span>
+          {projectState?.qa_issues_count === -1 ? (
+            <span className="text-amber-600">Not reviewed</span>
+          ) : (
+            <>
+              {totalIssues || projectState?.qa_issues_count || 0}
+              <span className="ml-1.5 text-[10px] font-semibold text-gray-500">
+                {severityCounts.critical > 0 && <span className="text-red-600">{severityCounts.critical} crit </span>}
+                {severityCounts.warnings > 0 && <span className="text-orange-600">{severityCounts.warnings} warn </span>}
+                {severityCounts.info > 0 && <span className="text-blue-600">{severityCounts.info} info</span>}
+              </span>
+            </>
+          )}
         </Stat>
         <Stat label="Total Pipeline Time">
           {formatDuration(projectState?.generation_seconds)}
@@ -321,7 +327,12 @@ export default function Gate4Approval({ projectId, projectState, status, onResum
       <div className="flex gap-1 border-b border-gray-200">
         {[
           { key: 'files', label: `Files${filesData ? ` (${filesData.total_files})` : ''}` },
-          { key: 'qa', label: `QA Report${projectState?.qa_issues_count ? ` (${projectState.qa_issues_count})` : ''}` },
+          {
+            key: 'qa',
+            label: projectState?.qa_issues_count === -1
+              ? 'QA Report (skipped)'
+              : `QA Report${projectState?.qa_issues_count ? ` (${projectState.qa_issues_count})` : ''}`,
+          },
         ].map((tab) => (
           <button
             key={tab.key}

@@ -9,12 +9,13 @@ import Gate1Approval from '../components/gates/Gate1Approval'
 import Gate2Approval from '../components/gates/Gate2Approval'
 import Gate3Approval from '../components/gates/Gate3Approval'
 import Gate4Approval from '../components/gates/Gate4Approval'
+import ErrorCard from '../components/ErrorCard'
 
 const MARKDOWN_AGENTS = new Set(['research', 'requirements', 'architecture', 'qa', 'planning'])
 
 function EventOutput({ event, defaultExpanded = false }) {
   const [expanded, setExpanded] = useState(defaultExpanded)
-  const fullContent = event.content || event.preview || event.output_preview || ''
+  const fullContent = event.content || event.preview || event.output_preview || event.message || ''
   const shortPreview = (event.preview || event.output_preview || fullContent).slice(0, 160)
   const isMarkdown = MARKDOWN_AGENTS.has(event.agent)
 
@@ -124,6 +125,10 @@ export default function ProjectDetailPage() {
         setStatus('awaiting_approval')
       } else if (data.status === 'cancelled') {
         setStatus('cancelled')
+      } else if (data.status === 'error_paused') {
+        setStatus('error_paused')
+      } else if (data.status === 'rate_limited') {
+        setStatus('rate_limited')
       } else if (data.status === 'running') {
         setStatus((prev) => (prev === 'awaiting_approval' || prev === 'done' ? 'connecting' : prev))
       }
@@ -146,7 +151,7 @@ export default function ProjectDetailPage() {
   useEffect(() => {
     const lastEvent = events[events.length - 1]
     if (!lastEvent) return
-    if (['gate_reached', 'pipeline_complete', 'project_cancelled', 'error'].includes(lastEvent.type)) {
+    if (['gate_reached', 'pipeline_complete', 'project_cancelled', 'error', 'agent_error', 'rate_limited', 'agent_skipped'].includes(lastEvent.type)) {
       // Clear the regenerating flag only after fresh metadata lands, so the
       // gate card never unmounts (and loses its diff/overlay state) in between.
       fetchMetadata().then(() => {
@@ -204,6 +209,66 @@ export default function ProjectDetailPage() {
     }, 1000)
   }
 
+  // Mirrors SKIPPABLE_AGENTS in pipeline.py — used when rebuilding the error
+  // card from persisted metadata after a reload (no live event to read from).
+  const SKIPPABLE_AGENTS = ['research', 'qa', 'devops']
+
+  // Recovery card data: prefer the live event (has retry_in/skippable), fall
+  // back to persisted failed_agent/failure_context so a reload or backend
+  // restart still shows the card.
+  const isErrorState = displayStatusIsError(status)
+  const lastErrorEvent = events
+    .slice()
+    .reverse()
+    .find((e) => e.type === 'agent_error' || e.type === 'rate_limited')
+  const errorInfo = !isErrorState
+    ? null
+    : lastErrorEvent
+      ? {
+          agent: lastErrorEvent.agent,
+          error_type: lastErrorEvent.error_type || (lastErrorEvent.type === 'rate_limited' ? 'rate_limit' : 'unknown'),
+          message: lastErrorEvent.message,
+          skippable: lastErrorEvent.skippable ?? SKIPPABLE_AGENTS.includes(lastErrorEvent.agent),
+          rate_limited: lastErrorEvent.type === 'rate_limited',
+          retry_in: lastErrorEvent.retry_in,
+          cycle: lastErrorEvent.cycle,
+          max_cycles: lastErrorEvent.max_cycles,
+          receivedAt: new Date(lastErrorEvent.timestamp).getTime() || Date.now(),
+        }
+      : projectMetadata?.failed_agent
+        ? {
+            agent: projectMetadata.failed_agent,
+            error_type: projectMetadata.failure_context?.error_type || 'unknown',
+            message: projectMetadata.failure_context?.message || '',
+            skippable: SKIPPABLE_AGENTS.includes(projectMetadata.failed_agent),
+            rate_limited: status === 'rate_limited',
+            retry_in: 60,
+            receivedAt: Date.now(),
+          }
+        : null
+
+  function displayStatusIsError(s) {
+    return s === 'error_paused' || s === 'rate_limited'
+  }
+
+  const handleRecover = async (action) => {
+    const res = await fetch(`http://localhost:8000/api/projects/${projectId}/recover`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action }),
+    })
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}))
+      throw new Error(body?.detail || `Recovery failed (HTTP ${res.status})`)
+    }
+    if (action === 'cancel') {
+      setStatus('cancelled')
+    } else {
+      setStatus('connecting')
+    }
+    setTimeout(fetchMetadata, 800)
+  }
+
   // Helper for border and badge colors
   const getEventStyle = (type) => {
     switch (type) {
@@ -224,9 +289,20 @@ export default function ProjectDetailPage() {
           badge: 'bg-blue-100 text-blue-800'
         }
       case 'error':
+      case 'agent_error':
         return {
           border: 'border-l-4 border-red-500',
           badge: 'bg-red-100 text-red-800'
+        }
+      case 'rate_limited':
+        return {
+          border: 'border-l-4 border-amber-500',
+          badge: 'bg-amber-100 text-amber-800'
+        }
+      case 'agent_skipped':
+        return {
+          border: 'border-l-4 border-gray-400',
+          badge: 'bg-gray-200 text-gray-700'
         }
       default:
         return {
@@ -246,7 +322,10 @@ export default function ProjectDetailPage() {
       case 'running':
         return 'bg-blue-100 text-blue-800 border-blue-200'
       case 'error':
+      case 'error_paused':
         return 'bg-red-100 text-red-800 border-red-200'
+      case 'rate_limited':
+        return 'bg-amber-100 text-amber-800 border-amber-200'
       case 'cancelled':
         return 'bg-gray-200 text-gray-700 border-gray-300'
       default:
@@ -336,6 +415,14 @@ export default function ProjectDetailPage() {
           regenerating={Boolean(regeneratingGate)}
           cycleInfo={cycleInfo}
         />
+      )}
+
+      {errorInfo && (
+        <div className="border-b border-gray-200 bg-[#f9fafb] px-6 py-3">
+          <div className="mx-auto max-w-6xl">
+            <ErrorCard info={errorInfo} onRecover={handleRecover} />
+          </div>
+        </div>
       )}
 
       {isFullWidthGate ? (
@@ -457,7 +544,7 @@ export default function ProjectDetailPage() {
                           </span>
                         </div>
 
-                        {(event.content || event.preview || event.output_preview) && (
+                        {(event.content || event.preview || event.output_preview || event.message) && (
                           <EventOutput event={event} />
                         )}
 

@@ -536,6 +536,89 @@ async def resume_project(project_id: str, request: ProjectResumeRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+class RecoverRequest(BaseModel):
+    action: str = Field(..., description="retry, skip, or cancel")
+
+
+def _db_status(project_id: str) -> str:
+    from app.core.database import get_db_connection
+    conn = get_db_connection()
+    try:
+        row = conn.execute("SELECT status FROM projects WHERE id = ?", (project_id,)).fetchone()
+        return row["status"] if row else ""
+    finally:
+        conn.close()
+
+
+@router.post("/{project_id}/recover")
+async def recover_project(project_id: str, request: RecoverRequest):
+    """Recover a failed project: retry the failed agent, skip it (skippable
+    agents only), or cancel. Valid only while error_paused / rate_limited."""
+    config = {"configurable": {"thread_id": project_id}}
+    state_snapshot = graph.get_state(config)
+    if not state_snapshot.values:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    status = _db_status(project_id)
+    if status not in ("error_paused", "rate_limited"):
+        raise HTTPException(status_code=409, detail=f"Project is '{status}', not in a recoverable error state")
+
+    values = state_snapshot.values
+    failed_agent = values.get("failed_agent") or (state_snapshot.next[0] if state_snapshot.next else "")
+    cancel_auto_retry(project_id)
+
+    if request.action == "cancel":
+        update_project_status(project_id, "cancelled", "cancelled")
+        await manager.broadcast(project_id, {"type": "project_cancelled", "project_id": project_id})
+        return {"status": "cancelled"}
+
+    if request.action == "retry":
+        retry_counts = dict(values.get("retry_counts") or {})
+        retry_counts[failed_agent] = retry_counts.get(failed_agent, 0) + 1
+        graph.update_state(config, {"retry_counts": retry_counts})
+        update_project_status(project_id, "running", failed_agent)
+        asyncio.create_task(run_graph_background(project_id, config))
+        return {
+            "status": "retrying",
+            "agent": failed_agent,
+            "retry_count": retry_counts[failed_agent],
+            "retry_cap_warning": retry_counts[failed_agent] >= 3,
+        }
+
+    if request.action == "skip":
+        if failed_agent not in SKIPPABLE_AGENTS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"'{failed_agent}' cannot be skipped — every downstream stage needs its output. Retry or cancel instead.",
+            )
+        reason = (values.get("failure_context") or {}).get("message", "unknown failure")[:200]
+        update = SKIPPABLE_AGENTS[failed_agent](reason)
+        history = list(values.get("stage_history") or [])
+        history.append({
+            "stage": failed_agent,
+            "attempt": 1 + sum(1 for entry in history if entry.get("stage") == failed_agent),
+            "trigger": "skipped",
+            "gate_origin": None,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        })
+        update["stage_history"] = history
+        update["log"] = list(values.get("log") or []) + [
+            f"{failed_agent}_agent: SKIPPED after failure — {reason}"
+        ]
+        update["failed_agent"] = ""
+        update["failure_context"] = None
+        # as_node: the checkpoint records this as the failed node's own output,
+        # so `next` advances past it and streaming resumes with the next stage.
+        node = state_snapshot.next[0] if state_snapshot.next else failed_agent
+        graph.update_state(config, update, as_node=node)
+        update_project_status(project_id, "running", failed_agent)
+        await manager.broadcast(project_id, {"type": "agent_skipped", "agent": failed_agent})
+        asyncio.create_task(run_graph_background(project_id, config))
+        return {"status": "skipped", "agent": failed_agent}
+
+    raise HTTPException(status_code=400, detail="action must be retry, skip, or cancel")
+
+
 # ── Per-file AI fix (Gate 4) ─────────────────────────────────────────────────
 # Ponytail: fixes run as a standalone LLM call + graph.update_state() while the
 # graph stays paused at gate 4 — resuming the graph would re-run coder nodes and

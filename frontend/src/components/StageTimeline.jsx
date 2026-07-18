@@ -34,7 +34,7 @@ const STAGE_DOC = {
   planning: 'implementation_plan',
 }
 
-const TRIGGER_LABEL = { initial: 'initial run', edit: 'requested changes', back: 'back-navigation' }
+const TRIGGER_LABEL = { initial: 'initial run', edit: 'requested changes', back: 'back-navigation', skipped: 'skipped after failure' }
 const GATE_LABEL = {
   human_gate_1: 'Gate 1',
   human_gate_2: 'Gate 2',
@@ -90,9 +90,14 @@ export default function StageTimeline({ projectState, status, events, regenerati
     }
   }
 
+  const isErrorStatus = status === 'error_paused' || status === 'rate_limited'
+
   const stageState = (key) => {
-    if (key === activeStage) return (byStage[key] || []).length ? 'regenerating' : 'active'
-    const done = hasHistory ? (byStage[key] || []).length > 0 : STAGE_DONE_FALLBACK[key](projectState)
+    if (isErrorStatus && projectState?.failed_agent === key) return 'error'
+    const attempts = byStage[key] || []
+    if (attempts.length && attempts[attempts.length - 1].trigger === 'skipped') return 'skipped'
+    if (key === activeStage) return attempts.length ? 'regenerating' : 'active'
+    const done = hasHistory ? attempts.length > 0 : STAGE_DONE_FALLBACK[key](projectState)
     return done ? 'done' : 'pending'
   }
 
@@ -126,10 +131,16 @@ export default function StageTimeline({ projectState, status, events, regenerati
                       ? `text-gray-600 ${hasDiff ? 'hover:bg-blue-50 cursor-pointer' : 'cursor-default'}`
                       : state === 'pending'
                         ? 'cursor-default text-gray-300'
-                        : 'bg-blue-50 text-blue-700'
+                        : state === 'error'
+                          ? 'bg-red-50 text-red-700'
+                          : state === 'skipped'
+                            ? 'cursor-default text-gray-400'
+                            : 'bg-blue-50 text-blue-700'
                   } ${diffStage === key ? 'ring-1 ring-blue-400' : ''}`}
                 >
                   {state === 'done' && <span className="text-green-500">✓</span>}
+                  {state === 'error' && <span className="h-2 w-2 rounded-full bg-red-500" />}
+                  {state === 'skipped' && <span className="text-gray-400">⊘</span>}
                   {state === 'active' && <span className="h-2 w-2 animate-pulse rounded-full bg-blue-500" />}
                   {state === 'regenerating' && (
                     <span className="h-3 w-3 animate-spin rounded-full border-[1.5px] border-blue-300 border-t-blue-600" />
