@@ -15,7 +15,7 @@ import json
 from pathlib import Path
 
 from app.exceptions import LLMError
-from app.utils.file_writer import process_and_write_generated_file, write_project_file
+from app.utils.file_writer import process_and_write_generated_file
 from app.validation import call_validated
 from .context_builder import build_file_context
 from .utils import get_tasks_for_phase
@@ -169,9 +169,9 @@ def frontend_coder_agent(state: dict) -> dict:
             # Gate 4 (the file browser reads from disk), and dependent imports
             # still resolve. Kept in generated_files so state == disk.
             stub = _failure_stub(filepath, str(e))
-            stub_result = write_project_file(project_id, filepath, stub)
+            stub_result = process_and_write_generated_file(project_id, task, stub, state)
             if stub_result["success"]:
-                generated_files[filepath] = stub
+                generated_files[filepath] = stub_result["content"]
             manager.broadcast_sync(project_id, {
                 "type": "file_error",
                 "filename": Path(filepath).name,
