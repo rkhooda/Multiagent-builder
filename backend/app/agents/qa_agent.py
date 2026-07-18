@@ -276,6 +276,22 @@ def qa_agent(state: dict) -> dict:
             errors.append(error_msg)
             print(f"[QAAgent] ERROR: {error_msg}")
 
+    # Fold the backend coder's write-time import warnings (Day 19 import fixer)
+    # into the report so unresolved imports surface in the Gate 4 QA panel with
+    # their file reference — the fixer flags what it cannot safely rewrite.
+    for entry in errors:
+        if not isinstance(entry, str) or not entry.startswith("import_warning:"):
+            continue
+        body = entry[len("import_warning:"):].strip()
+        fpath, _, desc = body.partition(": ")
+        all_issues.append({
+            "severity": "WARNING",
+            "trivial": False,
+            "file": fpath.strip() or None,
+            "line": None,
+            "description": (desc or body).strip(),
+        })
+
     qa_report = _build_report(project_name, len(generated_files), all_issues, auto_fixed_files)
     qa_issues_count = len(all_issues)
 

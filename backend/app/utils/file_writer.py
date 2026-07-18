@@ -116,20 +116,29 @@ def js_syntax_sanity(content: str, filepath: str) -> list:
     return warnings
 
 
-def process_and_write_generated_file(project_id: str, task: dict, raw_output: str, state: dict) -> dict:
+def process_and_write_generated_file(project_id: str, task: dict, raw_output: str,
+                                     state: dict, apply_import_fixer: bool = False) -> dict:
     """Shared write-time chain for every coder agent (Day 18 frontend, Day 19
     backend, Day 20 parallel runner reuse it unchanged): strip fences ->
-    JS syntax sanity -> write to disk. Returns a result dict the caller uses
-    to update generated_files and broadcast.
+    JS syntax sanity -> [opt-in] Python import repair -> write to disk. Returns
+    a result dict the caller uses to update generated_files and broadcast.
 
     Deliberately message-agnostic: validation + one-shot repair stay in the
     agent (call_validated needs the LLM message context), and state-update +
     the file_written broadcast stay in the caller (per-phase index/total
     differ). See the Day 18 ponytail #3 conclusion.
 
-    The returned `content` is fence-stripped and header-free — the exact form
-    generated_files must store so state and disk stay in sync and the Gate-4
-    clean_project_files pass is a no-op safety net rather than the mechanism.
+    `apply_import_fixer` opts a phase into deterministic import repair (Day 19,
+    ponytail #2). It is language-aware — the fixer no-ops on non-Python files —
+    so the frontend can opt in behind the same flag later. Safely-fixable
+    imports are rewritten in place; unresolved local imports are FLAGGED as
+    `import_warning:` entries appended to state["errors"], where the Gate 4 QA
+    panel surfaces them with their file reference.
+
+    The returned `content` is fence-stripped, header-free, and import-repaired —
+    the exact form generated_files must store so state and disk stay in sync and
+    the Gate-4 clean_project_files pass is a no-op safety net rather than the
+    mechanism.
     """
     filepath = task.get("filepath", "")
     log = state.get("log")
@@ -139,6 +148,18 @@ def process_and_write_generated_file(project_id: str, task: dict, raw_output: st
     if warnings and log is not None:
         log.append(f"coder: {filepath} syntax warnings: {'; '.join(warnings)}")
 
+    import_warnings = []
+    if apply_import_fixer:
+        from .import_fixer import fix_imports
+        tree = state.get("file_list") or list(state.get("generated_files", {}).keys())
+        clean, import_warnings = fix_imports(clean, filepath, tree)
+        if import_warnings:
+            errors = state.get("errors")
+            if errors is not None:
+                errors.extend(f"import_warning: {w}" for w in import_warnings)
+            if log is not None:
+                log.append(f"import_fixer: {filepath} — {len(import_warnings)} unresolved import(s) flagged")
+
     result = write_project_file(project_id, filepath, clean)
     return {
         "success": result["success"],
@@ -146,6 +167,7 @@ def process_and_write_generated_file(project_id: str, task: dict, raw_output: st
         "content": clean,
         "size_bytes": result["size_bytes"],
         "warnings": warnings,
+        "import_warnings": import_warnings,
         "error": result["error"],
     }
 
