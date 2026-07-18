@@ -526,3 +526,114 @@ behavior; zero projects were left in a zombie `running` state.**
   tolerance layers (per-file failures already degrade gracefully); the
   validation registry ships `min_code_lines` ready for the Day 18+ coder
   agents.
+
+## Day 18 observations
+
+Scope: rebuild the frontend coder from a stub into a real per-task generator —
+hardened prompt with a few-shot example, focused per-file context builder
+(context_builder.py), dependency-ordered sequential generation, shared write
+pipeline (process_and_write_generated_file), and per-file failure isolation
+integrated with the Day 17 error boundary. Tested directly against the frontend
+phase (not the full pipeline — see Environmental note) on a "TagNotes" tag-notes
+brief.
+
+### Task 0 triage — no blockers
+Day 17 sabotage passed all six scenarios with zero zombie `running` states, and
+the one real bug (Cohere empty-echo in repair) was already fixed in 707d692.
+Nothing blocked agent execution or recovery, so no triage fix was needed.
+
+### Issues found and fixed during the build
+
+#### 1. The whole frontend_code model chain was dead (CRITICAL, fixed)
+- Primary `openrouter/qwen/qwen3-coder:free` is per-model rate-limited (free
+  daily cap exhausted from testing) — every call in every test 429'd on both
+  attempts. Fallback `openrouter/cohere/north-mini-code:free` returned EMPTY
+  responses (the Day-17 Cohere empty-reply failure mode), so the first 3-file
+  test came out 0/3 with "0 non-empty lines" validation failures.
+- Verified against the live OpenRouter `/models` list: `deepseek/deepseek-chat:free`
+  (the stale "intended" fallback) is retired; qwen3-coder and north-mini-code
+  are present. Fixed by routing the fallback to `groq/llama-3.3-70b-versatile`
+  — reliable, code-capable, on a different provider (no shared OpenRouter free
+  limit), mirroring the architecture agent's Day-12 fix. Every generation in
+  every subsequent test succeeded via this fallback.
+
+#### 2. min_code_lines(10) too strict for minimal files (fixed)
+- A correct `src/lib/api.js` is ~7 lines and failed the 10-line floor, forcing
+  a needless repair. Lowered the coder floor to 5 — still catches empty/prose
+  responses, permits legitimately small files.
+
+### Generation metrics — before/after
+
+**Before (Day 12 / Day 15):** `frontend_code` was a stub — **0 frontend files
+generated** on either run (Day 12: 0/24 planned frontend files; Day 15 notes
+app: frontend still stub). No imports, no components, nothing.
+
+**After (Day 18), 11-file frontend phase (TagNotes):**
+- **11/11 files generated**, 0 failed. Per-file context 418–633 tokens each
+  (budget is ~4000) — the whole-architecture dump is gone.
+- Topological order correct: `api, formatDate, EmptyState, Header` (no deps)
+  first, then `NoteCard, NoteForm, NoteList, TagFilter, useNotes`, then
+  `NotesPage` (10th, depends on 5), `App` (11th, depends on page) last.
+- **Static checklist across all 11:** 0 markdown fences; **0 broken relative
+  imports** (every `./`/`../` import resolves to a real generated file);
+  **0 hallucinated endpoints** — only the `useNotes` hook calls the API
+  (`/notes`, `/notes?tag=`, POST `/notes`, DELETE `/notes/{id}` — all from the
+  architecture), every component correctly delegates; all 11 have a default
+  export; loading/error states and optional chaining present throughout.
+
+**Per-file pass/fail (would-run-without-manual-edit):** **9/11 fully correct.**
+The 2 failures are prop-name mismatches at the page↔child seam:
+- `NotesPage` passes `onCreated={createNote}` but `NoteForm` accepts `onCreate`.
+- `NotesPage` passes `count={...}` but `Header` accepts `noteCount`.
+Each component is individually correct and the app still *renders* (mismatched
+props are just `undefined` → the create button silently no-ops and the header
+count is blank); two one-line renames make it fully functional.
+
+**Honest estimate: ~82% (9/11) would run without any manual edit; the app
+renders end-to-end, with 2 features needing a one-line prop-rename to wire up.**
+Versus the Day 12/15 baseline of **0 frontend files**, this is the day's proof
+of value — and the remaining defect is a specific, fixable seam problem, not the
+wrong-imports / hallucinated-endpoints / oversized-context mess of the minimal
+implementation.
+
+#### Root cause of the seam mismatches (input for Day 21 prompt tuning)
+This is exactly the failure mode ponytail #2 flagged for the interface-summary
+strategy: the dependency summary injected into `NotesPage` shows
+`export default function NoteForm` but NOT its prop names (props are function
+parameters, not exports), so the consumer can't see the contract and each model
+picks its own prop names. Options for Day 21: have the summary extract the
+destructured-prop signature of the default-export component (still regex, no
+AST), or add an explicit "match the prop names used by the components you
+import" instruction with an example. The regex export extractor stays dumb;
+the fix belongs in what we extract, not in an AST parser.
+
+### Fault-injection sanity (per-file isolation) — PASS
+`FAULT_INJECTION=garbage:frontend_code:2` on the 3-file fixture forced `api.js`
+to fail (garbage output failed validation on the initial call AND the one
+repair). Result: `LLMOutputError` caught, a placeholder stub written to disk
+(`export default {}` with a failure comment), the file kept in
+`generated_files` (state == disk), and **the loop continued** — `NoteForm` and
+`App` generated normally. Final: 2 ok / 1 failed (33% < 50% → stage completed,
+did not halt), `partial_failures=['frontend/src/lib/api.js']`, honest
+`errors` entry. `stage_node` folded the partial report into `stage_history`
+(`trigger:'partial'`, `failed_files:[...]`, verified via unit call) without
+leaking the transient key into persisted state. The stub is on disk so the
+Gate-4 file browser shows it and Request-AI-Fix (which reads from disk) can
+regenerate it — mechanism verified; a live Gate-4 fix in a running server was
+not exercised today (quota).
+
+### Environmental / notes
+- **Ran the frontend phase directly, not through the full pipeline.**
+  qwen3-coder:free (also the architecture agent's primary) is fully rate-limited,
+  and a full research→planning run would burn Gemini/Groq quota that Day 19's
+  backend coder needs. The direct-phase run exercises the real agent code
+  (topological ordering, context builder, write pipeline, isolation) on a
+  realistic 11-file plan; only the upstream doc-generation stages were stubbed
+  with a hand-written architecture + plan fixture.
+- **All 14 generation calls this session went to the groq fallback** — qwen3-
+  coder:free returned 429 on every attempt. OpenRouter free coder capacity is
+  effectively unavailable right now; Day 19 should expect the same and lean on
+  groq/gemini.
+- `>50%` stage-halt path raises a recoverable `LLMError` (not the
+  non-recoverable `AgentError`), so a mass failure — usually transient rate
+  limits — is retryable via `/recover` rather than dead-ended.
