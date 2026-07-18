@@ -14,6 +14,7 @@ from app.agents.planning_agent import planning_agent
 from app.agents.database_agent import database_agent
 from app.agents.devops_agent import devops_agent
 from app.agents.qa_agent import qa_agent
+from app.agents.frontend_coder_agent import frontend_coder_agent
 from app.agents.utils import regeneration_target
 
 def human_gate_1(state: ProjectState) -> Dict:
@@ -184,24 +185,26 @@ def stage_node(stage: str, agent_fn):
         # every stage in a cascade to the decision + gate that triggered it.
         cycle = state.get("regen_cycle") or {}
         history = list(state.get("stage_history") or [])
-        history.append({
+        entry = {
             "stage": stage,
-            "attempt": 1 + sum(1 for entry in history if entry.get("stage") == stage),
+            "attempt": 1 + sum(1 for e in history if e.get("stage") == stage),
             "trigger": cycle.get("trigger", "initial"),
             "gate_origin": cycle.get("gate"),
             "timestamp": datetime.now(timezone.utc).isoformat(),
-        })
+        }
+        # A coder agent reports partial per-file failures via a transient key;
+        # fold it into this stage's history entry and drop it so it never
+        # leaks into the persisted ProjectState channels.
+        partial_failures = result.pop("partial_failures", None)
+        if partial_failures:
+            entry["failed_files"] = partial_failures
+            if entry["trigger"] == "initial":
+                entry["trigger"] = "partial"
+        history.append(entry)
         result["stage_history"] = history
         return result
     node.__name__ = f"{stage}_node"
     return node
-
-def frontend_code(state: ProjectState) -> Dict:
-    current_log = state.get("log") or []
-    return {
-        "log": current_log + ["frontend_code ran"],
-        "current_stage": "frontend_code"
-    }
 
 def backend_code(state: ProjectState) -> Dict:
     current_log = state.get("log") or []
@@ -225,7 +228,7 @@ workflow.add_node("human_gate_2", human_gate_2)
 workflow.add_node("architecture", stage_node("architecture", architecture_agent))
 workflow.add_node("planning", stage_node("planning", planning_agent))
 workflow.add_node("human_gate_3", human_gate_3)
-workflow.add_node("frontend_code", stage_node("frontend_code", frontend_code))
+workflow.add_node("frontend_code", stage_node("frontend_code", frontend_coder_agent))
 workflow.add_node("backend_code", stage_node("backend_code", backend_code))
 workflow.add_node("database", stage_node("database", database_agent))
 workflow.add_node("qa", stage_node("qa", qa_agent))
