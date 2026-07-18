@@ -367,7 +367,8 @@ tags" → NotesTags Day15). Pipeline ran research → gate 4 cleanly in ~7.5 min
 4. **Request Fix (error path)**: modal pre-lists the file's QA findings as chips, chip click
    appends to the instruction, dependents warning shown ("5 files import this one"),
    rate-limit failure surfaced inline with the file untouched.
-5. **Request Fix (success path)**: verified after the quota cooldown — see addendum below.
+5. **Request Fix (success path)**: verified after the quota cooldown — see addendum at the
+   end of this section.
 6. **Path traversal**: `path=../../.env` and URL-encoded variants → 400; missing file → 404.
 7. **Gate 4 routing**: approve → status `completed`, graph reaches END; reject wired through
    the same GATE_ROUTES map as gates 1–3 (allowed decisions now derive from that map, so the
@@ -380,6 +381,18 @@ tags" → NotesTags Day15). Pipeline ran research → gate 4 cleanly in ~7.5 min
   change), so it measures wall-clock including gate waits. Labeled "incl. reviews" in the UI.
 - **Tree-row kebab menu skipped.** The header Request-AI-Fix button covers the flow since a
   file must be open to describe a fix; add the kebab if fix-from-tree becomes a real need.
+
+### Addendum (post-cooldown): Request Fix success path — PASS
+
+Run against `14e1209b` (HabitTest, paused at gate 4), `backend/app/models/habit.py`,
+database-agent route. Full chain verified: 200 with `fix_count 1/3`, requested change present
+in the returned content, old content snapshotted into `previous_versions` (both in the
+response for the immediate diff and persisted in state for the reload-seeded diff),
+`fix_counts` persisted, `file_fix:` log line appended, gate still paused. The content
+endpoint (disk) and a re-downloaded ZIP both serve the fixed version — state, disk, and ZIP
+stayed identical. (The NotesTags Day15 project had been approved to `completed` before the
+cooldown elapsed, which also confirmed walkthrough 7's approve→END→completed path on a live
+click; the fix test moved to HabitTest since fixes are gate-4-only by design.)
 
 ## Day 16 observations
 
