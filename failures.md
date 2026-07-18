@@ -637,3 +637,129 @@ not exercised today (quota).
 - `>50%` stage-halt path raises a recoverable `LLMError` (not the
   non-recoverable `AgentError`), so a mass failure — usually transient rate
   limits — is retryable via `/recover` rather than dead-ended.
+
+## Day 19 observations
+
+Scope: rebuild the backend coder from the Day 12 stub into a real per-file
+FastAPI generator on the Day 18 infrastructure — FastAPI/SQLAlchemy/Pydantic-v2
+prompt with few-shot router + schema examples, structural + topological
+generation order, cross-file context injecting FULL model/schema bodies, an
+AST-based `fix_imports`, and deterministic infra files (config/database/main/
+requirements). Resolved the database/backend ownership boundary and reordered
+the graph. Tested directly against the backend phase (not the full pipeline —
+same quota reason as Day 18), on a notes / notes+tags fixture.
+
+### Task 0 triage — one shared-infra blocker fixed
+`backend_code` still routed to `(cohere/north-mini-code:free, qwen3-coder:free)`
+— the exact pair Day 18 proved dead (cohere returns empty, qwen3-coder per-model
+rate-limited). Repointed to `(qwen3-coder:free, groq/llama-3.3-70b-versatile)`
+mirroring frontend. As Day 18 predicted, every generation this session fell
+through to the groq fallback (qwen3-coder 429'd on every attempt).
+
+### Ownership & ordering (ponytail #1)
+The old graph ran `frontend -> backend_code -> database`, so routers would have
+been generated before any model file existed. Reordered to
+`frontend -> database -> backend_code`. Database agent owns models/migrations;
+backend coder consumes them (full-content context) and owns schemas/routers/
+services + the Python infra. `assert_single_owner` raises if a filepath is
+planned under both phases. Critically, NOTHING defined the declarative `Base`
+before (every model and db_utils imported a phantom `backend.app.database`) — the
+backend coder's `database.py` now owns `Base` + `get_db`, and the database prompt
+imports `from app.database import Base` with an `app.` package root.
+
+### Pair test (single resource) — fully runnable, CRUD verified end-to-end
+Generated database.py -> model -> schema -> router -> main (+ config,
+requirements) for a notes app. After the prompt fixes below:
+- **7/7 files generated, 0 failures, 0 import warnings.**
+- `python -m py_compile` passes on all 6 .py files (the Day-22-preview check).
+- **The app starts and a full CRUD smoke test passes on SQLite**: POST 201,
+  GET 200, LIST (pagination), PUT 200 (partial update via exclude_unset),
+  DELETE 204, GET-after-delete 404, /health ok. Router imports resolve
+  symbol-by-symbol against the REAL generated model (`Note`) and schema
+  (`NoteCreate/NoteUpdate/NoteResponse`); `note_id: int` matches the model's
+  integer pk; endpoints exactly match the API table (no invented PUT when the
+  table omitted it); the session dependency is used correctly; main.py registers
+  exactly the one generated router.
+
+### Three prompt-driven defects found by the pair test, fixed at the prompt
+Per "fix the prompt, not the output," each was fixed in the prompt and
+regenerated (never hand-edited):
+1. **Database model unstartable** — the prompt forced a UUID pk regardless of the
+   SQL schema (which said INTEGER), and the LLM put `mapped_column(...)` in the
+   annotation slot (`id: mapped_column(...) = ...`), which SQLAlchemy rejects at
+   import. This also mis-led the router into `note_id: UUID`. Fixed: schema-driven
+   pk type + a hard `Mapped[...] = mapped_column(...)` rule + a correct few-shot
+   model example. Router then correctly used `int`.
+2. **Pydantic v1/v2 mixing** — schema emitted a nested `class Config:` and a
+   `from_orm` classmethod. Fixed: hard v2 rule (top-level `model_config`, no
+   `class Config`/`from_orm`) + a schema few-shot.
+3. **datetime typed as str** — `NoteResponse.created_at: str` while the column is
+   `datetime` → ResponseValidationError 500 on every timestamped response. Fixed:
+   rule that schema field types mirror the model's column types.
+LLM variance is real: one intermediate regeneration invented a `class NoteBase:`
+WITHOUT `BaseModel` (breaking `List[NoteResponse]` as a response field); the
+schema few-shot with direct `BaseModel` inheritance stabilised it. Free-tier
+quality is not guaranteed per-call — the few-shots reduce, not eliminate, drift.
+
+### Full backend phase (two resources, direct run)
+notes+tags with a FK relationship: **10/10 planned files generated (2 models +
+2 schemas + 2 routers + 4 infra), 0 failures, 0 import warnings**, all 6 .py
+py_compile-clean. Static cross-import check: every router->model/schema/database
+import resolves symbol-by-symbol; `note.py` correctly imports `Tag` for its FK
+relationship; main.py registers BOTH routers; each router's endpoints match its
+API-table rows exactly. Runtime import could NOT be exercised here because the
+generated model uses `Mapped[int | None]` (PEP 604, valid for the target Python
+3.11+) and the only interpreter on this box is 3.9, which can't evaluate that
+union at runtime — a test-environment limit, not a generation defect (py_compile
+parses it fine, and the single-resource pair — which had no unions — ran fully).
+
+### import fixer (ponytail #2)
+AST-based, safe-fix-only (wrong prefix / wrong relative depth), flags phantom
+modules. 14 crafted unit tests pass. In these runs it made **0 auto-fixes and
+raised 0 flags** — the prompt's `app.` convention held on every file — but it is
+the deterministic safety net for when it doesn't, and warnings route into the
+Gate 4 QA panel as `import_warning` findings with file references.
+
+### requirements.txt (ponytail #3)
+Rendered from the curated `KNOWN_GOOD_VERSIONS` map: core stack always pinned,
+detected third-party imports pinned from the map, unknown imports left UNPINNED
+with a QA warning — the LLM never invents a version. The notes app produced a
+clean 5-line pinned requirements.txt (SQLite -> no psycopg2). NOTE: a scratch-venv
+`pip install` on this box failed to BUILD `pydantic-core` from source (no matching
+prebuilt wheel for the local interpreter + no Rust toolchain) — an environmental
+toolchain limit; the pins themselves are real, installable versions.
+
+### Fault path — PASS
+`FAULT_INJECTION=garbage:backend_code:2` on a 2-router fixture failed the first
+router (initial + repair both garbage). Result: a failure stub written to disk
+(visible/fixable at Gate 4), the failure recorded in `errors` + `partial_failures`
+(folded into `stage_history` by `stage_node`), the phase CONTINUED (1/2 = 50%,
+not >50%), and **main.py registered only the successful router** — the failed one
+excluded, exactly as designed. Per-file Gate-4 fix reads from disk (Day 15
+mechanism) so the stub is regenerable; a live-server Gate-4 fix was not exercised
+today (quota).
+
+### vs. Day 12 baseline
+Day 12: `backend_code` was a stub — **0 / 29 planned backend files generated**.
+The only Python that existed (database-agent models) had broken imports
+(`from .invoice import Invoice` to a never-generated file; `from
+backend.app.database import Base` to a module nothing defined; a wrong
+`DeclarativeBase` import path that raised on import). ~30-40% of what little was
+generated needed manual fixes; the app could not start.
+Day 19: the backend phase produces a **runnable FastAPI app** — model+router+
+schema+infra whose cross-imports resolve, whose fields/endpoints match the
+architecture, that starts and serves CRUD (single-resource verified end-to-end;
+two-resource verified static + py_compile, runtime-blocked only by the local
+3.9 interpreter). The phantom-`Base` and wrong-prefix import failures of Day 12
+are structurally eliminated (owned `database.py` + `app.` convention + fix_imports
+safety net).
+
+### Environmental / notes
+- Ran the backend phase directly (real database + backend agents on a
+  hand-written architecture+plan fixture), not the full research->planning
+  pipeline, to conserve shared Gemini/Groq free-tier quota — same rationale and
+  precedent as Day 18.
+- Every backend generation went to the groq fallback; qwen3-coder:free 429'd on
+  every attempt (OpenRouter free coder capacity still effectively unavailable).
+- Installed `sqlalchemy` + `pydantic-settings` into the builder's own venv to run
+  the generated app in isolation (the builder itself didn't depend on them).
