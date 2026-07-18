@@ -2,8 +2,7 @@ import json
 from pathlib import Path
 
 from ..core.connection_manager import manager
-from ..llm_router import call_llm
-from .research_validation import validate_research_report
+from ..validation import call_validated
 from .search import format_search_results, web_search
 from .utils import build_feedback_prompt, regeneration_target, truncate_for_context
 
@@ -396,35 +395,16 @@ Quality bar: if a sentence could appear in a report about any software product, 
         })
 
     print("[ResearchAgent] Calling LLM...")
-    report = call_llm(messages, "research", max_tokens=4000)
-
-    # Quality validation with targeted repair instructions
-    try:
-        sections_dict = json.loads(optional_sections_str) if optional_sections_str else {}
-    except Exception:
-        sections_dict = {}
-
-    passed, issues = validate_report_quality(report, sections_dict)
-
-    if not passed:
-        print(f"[ResearchAgent] Quality issues found: {issues}")
-        log.append(f"research_agent: quality check failed — {len(issues)} issues, retrying")
-
-        issues_formatted = "\n".join(f"- {issue}" for issue in issues)
-        messages.append({"role": "assistant", "content": report})
-        messages.append({
-            "role": "user",
-            "content": (
-                f"Your report has these quality problems that must be fixed:\n\n"
-                f"{issues_formatted}\n\n"
-                f"Rewrite the complete report addressing every issue above. "
-                f"Pay particular attention to specificity — every sentence must be specific to {project_name}, "
-                f"not generic advice that applies to any software product. "
-                f"Write the full corrected report now starting with # Research Report: {project_name}"
-            ),
-        })
-        report = call_llm(messages, "research", max_tokens=4500)
-        log.append(f"research_agent: retry complete — {len(report)} chars")
+    # Quality checks + one-shot repair live in the shared validation registry
+    # (app/validation.py) — validate_report_quality below is its plug-in.
+    report = call_validated(
+        messages, "research", state, max_tokens=4500,
+        original_instruction=(
+            f"Every sentence must be specific to {project_name}, not generic advice. "
+            f"Write the full corrected report now starting with # Research Report: {project_name}"
+        ),
+        log=log,
+    )
 
     log.append(f"research_agent: completed — {len(report)} chars")
     print(f"[ResearchAgent] Done. Length: {len(report)} chars")

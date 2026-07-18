@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from ..llm_router import call_llm
+from ..validation import call_validated
 from .utils import build_feedback_prompt, regeneration_target, truncate_for_context, parse_folder_structure, extract_mermaid_diagrams
 
 
@@ -18,64 +18,6 @@ REQUIRED_SECTIONS = [
 ]
 
 MIN_LENGTH = 1500
-
-
-def _call_with_repairs(messages: list[dict]) -> str:
-    """Call the architecture model with up to three increasingly strict attempts."""
-    architecture_doc = call_llm(messages, "architecture", max_tokens=5000)
-
-    for _ in range(3):
-        is_valid, missing_sections = validate_architecture_doc(architecture_doc)
-        file_list = parse_folder_structure(architecture_doc)
-        diagrams = extract_mermaid_diagrams(architecture_doc)
-
-        if (
-            len(architecture_doc) >= MIN_LENGTH
-            and is_valid
-            and len(file_list) >= 5
-            and len(diagrams) >= 1
-        ):
-            return architecture_doc
-
-        repair_notes = []
-        if len(architecture_doc) < MIN_LENGTH:
-            repair_notes.append(
-                f"- Document is too short at {len(architecture_doc)} characters; target at least {MIN_LENGTH}."
-            )
-        if missing_sections:
-            repair_notes.append(
-                "- Missing required sections:\n" + "\n".join(f"  - {section}" for section in missing_sections)
-            )
-        if len(file_list) < 5:
-            repair_notes.append(
-                f"- Folder structure was not parseable enough; only {len(file_list)} files were extracted."
-            )
-        if len(diagrams) < 1:
-            repair_notes.append("- No Mermaid diagrams were extracted.")
-        if "```text" in architecture_doc and "```" not in architecture_doc.split("```text", 1)[1]:
-            repair_notes.append("- The folder structure code block was left unclosed.")
-
-        messages.append({"role": "assistant", "content": architecture_doc})
-        messages.append(
-            {
-                "role": "user",
-                "content": (
-                    "Your previous response failed validation. Rewrite the FULL architecture document from scratch.\n\n"
-                    "Fix these issues exactly:\n"
-                    + "\n".join(repair_notes)
-                    + "\n\nNon-negotiable formatting rules:\n"
-                    "1. Use all required markdown headings exactly.\n"
-                    "2. Close every code fence.\n"
-                    "3. Keep the folder tree inside a single ```text fenced block.\n"
-                    "4. After the folder tree, continue with the remaining sections outside that code fence.\n"
-                    "5. Include one ```mermaid erDiagram``` block and one ```mermaid flowchart TD``` block.\n"
-                    "6. Output the entire document again, not a patch or addendum."
-                ),
-            }
-        )
-        architecture_doc = call_llm(messages, "architecture", max_tokens=5000)
-
-    return architecture_doc
 
 
 def validate_architecture_doc(doc: str) -> tuple[bool, list[str]]:
@@ -173,14 +115,19 @@ CRITICAL REQUIREMENTS:
             "content": build_feedback_prompt(previous_doc, human_feedback),
         })
 
-    print("[ArchitectureAgent] Calling DeepSeek V3 via OpenRouter...")
-    architecture_doc = _call_with_repairs(messages)
-
-    is_valid, missing_sections = validate_architecture_doc(architecture_doc)
-    if len(architecture_doc) < MIN_LENGTH:
-        log.append(f"architecture_agent: WARNING output length below target ({len(architecture_doc)} chars)")
-    if not is_valid:
-        log.append(f"architecture_agent: WARNING missing sections after retries {missing_sections}")
+    print("[ArchitectureAgent] Calling architecture model...")
+    # Length/section/tree/diagram checks + one repair via the shared registry.
+    architecture_doc = call_validated(
+        messages, "architecture", state, max_tokens=5000,
+        original_instruction=(
+            "Rewrite the FULL architecture document from scratch. Non-negotiable formatting rules: "
+            "use all required markdown headings exactly; close every code fence; keep the folder tree "
+            "inside a single ```text fenced block with every file explicitly named; include one "
+            "```mermaid erDiagram``` block and one ```mermaid flowchart TD``` block; output the entire "
+            "document again, not a patch."
+        ),
+        log=log,
+    )
 
     print("[ArchitectureAgent] Parsing folder structure to extract file list...")
     file_list = parse_folder_structure(architecture_doc)

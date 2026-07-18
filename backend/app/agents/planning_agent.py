@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from ..llm_router import call_llm
+from ..validation import call_validated
 from .utils import build_feedback_prompt, regeneration_target, truncate_for_context, parse_and_validate_plan
 
 
@@ -76,7 +76,6 @@ def planning_agent(state: dict) -> dict:
         if file_list
         else "No file list available"
     )
-    required_filepaths = set(file_list)
     planning_max_tokens = _get_planning_max_tokens(len(file_list))
 
     truncated_arch = truncate_for_context(architecture_doc, max_chars=12000)
@@ -129,73 +128,20 @@ CRITICAL RULES:
         })
 
     print("[PlanningAgent] Calling Gemini 2.5 Flash for task plan...")
-    response = call_llm(messages, "planning", max_tokens=planning_max_tokens)
-
-    plan, parse_errors = parse_and_validate_plan(response)
-
-    if plan is not None:
-        planned_filepaths = {task.filepath for task in plan.tasks}
-        missing_files = sorted(required_filepaths - planned_filepaths)
-        if missing_files:
-            parse_errors.append(
-                f"Plan is missing {len(missing_files)} required file tasks. Examples: {missing_files[:5]}"
-            )
-
-    repair_attempts = 0
-    while (
-        plan is None
-        or len(plan.tasks) < MIN_TASKS
-        or any("missing" in err.lower() and "file" in err.lower() for err in parse_errors)
-    ) and repair_attempts < 2:
-        repair_attempts += 1
-        print(
-            f"[PlanningAgent] Validation failed (attempt {repair_attempts}), sending repair prompt..."
-        )
-        log.append(
-            f"planning_agent: validation failed, repair attempt {repair_attempts}: {parse_errors[:3]}"
-        )
-
-        error_summary = "\n".join(parse_errors[:5]) if parse_errors else (
-            f"Only {len(plan.tasks) if plan else 0} tasks found, need at least {MIN_TASKS}"
-        )
-
-        messages.append({"role": "assistant", "content": response})
-        messages.append(
-            {
-                "role": "user",
-                "content": (
-                    f"Your JSON output had these problems:\n{error_summary}\n\n"
-                    "Please output the corrected JSON array only. "
-                    "Rules: start with [, end with ], no markdown fences, no explanation. "
-                    f"Must have at least {MIN_TASKS} tasks covering all files in the project. "
-                    "If your previous answer was cut off, rewrite the ENTIRE array from the beginning and ensure the final ] is present. "
-                    "Fix the specific errors listed above."
-                ),
-            }
-        )
-        response = call_llm(messages, "planning", max_tokens=planning_max_tokens)
-        plan, parse_errors = parse_and_validate_plan(response)
-        if plan is not None:
-            planned_filepaths = {task.filepath for task in plan.tasks}
-            missing_files = sorted(required_filepaths - planned_filepaths)
-            if missing_files:
-                parse_errors.append(
-                    f"Plan is missing {len(missing_files)} required file tasks. Examples: {missing_files[:5]}"
-                )
-
-    if plan is None:
-        error_msg = (
-            f"planning_agent: could not produce valid plan after {repair_attempts} repair attempts"
-        )
-        log.append(error_msg)
-        errors.append(error_msg)
-        print(f"[PlanningAgent] ERROR: {error_msg}")
-        return {
-            "implementation_plan": response,
-            "log": log,
-            "errors": errors,
-            "current_stage": "frontend_code",
-        }
+    # JSON/schema/dependency/coverage checks + one repair via the shared
+    # registry (the Day 10 loop moved into validation.py's _valid_plan). A
+    # second failure raises LLMOutputError — surfaced by the error boundary
+    # instead of the old silent garbage-plan-in-state fallback.
+    response = call_validated(
+        messages, "planning", state, max_tokens=planning_max_tokens,
+        original_instruction=(
+            "Output the corrected JSON array only: start with [, end with ], no markdown fences, "
+            f"no explanation. At least {MIN_TASKS} tasks covering every file in the project. "
+            "If your previous answer was cut off, rewrite the ENTIRE array and ensure the final ] is present."
+        ),
+        log=log,
+    )
+    plan, _ = parse_and_validate_plan(response)
 
     plan_json = json.dumps([task.model_dump() for task in plan.tasks], indent=2)
 

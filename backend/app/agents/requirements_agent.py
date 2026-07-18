@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from ..llm_router import call_llm
+from ..validation import call_validated
 from .utils import build_feedback_prompt, extract_tech_stack, regeneration_target, truncate_for_context
 
 SYSTEM_PROMPT = (
@@ -15,9 +15,6 @@ REQUIRED_SECTIONS = [
     "## Out of Scope",
     "## Tech Stack",
 ]
-
-MIN_LENGTH = 800
-
 
 def validate_requirements_doc(doc: str) -> tuple[bool, list[str]]:
     """
@@ -106,45 +103,17 @@ At the very end of your response, output the tech stack as a JSON code block."""
             "content": build_feedback_prompt(previous_doc, human_feedback),
         })
 
-    # ── First LLM call ────────────────────────────────────────────
-    print("[RequirementsAgent] Calling LLM (primary attempt)...")
-    response = call_llm(messages, "requirements", max_tokens=4500)
-
-    # ── Validate length ───────────────────────────────────────────
-    if len(response) < MIN_LENGTH:
-        print(f"[RequirementsAgent] Output too short ({len(response)} chars), retrying...")
-        log.append(f"requirements_agent: output too short ({len(response)} chars), retrying")
-
-        messages.append({"role": "assistant", "content": response})
-        messages.append({
-            "role": "user",
-            "content": (
-                f"Your response was only {len(response)} characters — far too short. "
-                "The requirements document must be at minimum 800 words and include ALL sections: "
-                "Functional Requirements (12+ items), Non-Functional Requirements, User Stories (8+ stories), "
-                "Out of Scope, Tech Stack Recommendation with justification, and the Tech Stack JSON block at the end. "
-                "Please write the complete document now."
-            )
-        })
-        response = call_llm(messages, "requirements", max_tokens=4500)
-
-    # ── Validate sections ─────────────────────────────────────────
-    is_valid, missing_sections = validate_requirements_doc(response)
-    if not is_valid:
-        print(f"[RequirementsAgent] Missing sections: {missing_sections}, retrying with repair prompt...")
-        log.append(f"requirements_agent: missing sections {missing_sections}, sending repair prompt")
-
-        messages.append({"role": "assistant", "content": response})
-        missing_list = "\n".join(f"- {s}" for s in missing_sections)
-        messages.append({
-            "role": "user",
-            "content": (
-                f"Your requirements document is missing these required sections:\n{missing_list}\n\n"
-                "Please output the COMPLETE requirements document again, ensuring every section above is present. "
-                "Do not truncate or summarise — write the full content for each section."
-            )
-        })
-        response = call_llm(messages, "requirements", max_tokens=4500)
+    # ── LLM call (length/section checks + one repair via the shared registry) ─
+    print("[RequirementsAgent] Calling LLM...")
+    response = call_validated(
+        messages, "requirements", state, max_tokens=4500,
+        original_instruction=(
+            "Output the COMPLETE requirements document with every required section — "
+            "Functional Requirements (12+ items), Non-Functional Requirements, User Stories (8+), "
+            "Out of Scope, Tech Stack — and the Tech Stack JSON block at the end."
+        ),
+        log=log,
+    )
 
     # ── Extract the tech stack JSON ───────────────────────────────
     print("[RequirementsAgent] Extracting tech stack JSON...")
