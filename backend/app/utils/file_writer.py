@@ -105,9 +105,10 @@ class ProcessedFile:
     content: str
     status: str  # "ok" | "failed"
     size_bytes: int = 0
-    warnings: list = field(default_factory=list)         # JS syntax-sanity hints
+    warnings: list = field(default_factory=list)         # parser findings (py/json/yaml)
     import_warnings: list = field(default_factory=list)  # unresolved Python imports
     error: str = None
+    repairs_spent: int = 0  # write-time LLM repairs, folded into retry_counts by the coordinator
 
 
 def process_generated_file(project_id: str, task: dict, raw_output: str,
@@ -172,6 +173,15 @@ def commit_generated_file(state: dict, processed: ProcessedFile, *, project_id: 
     from ..core.connection_manager import manager
 
     state.setdefault("generated_files", {})[processed.filepath] = processed.content
+
+    # Day 22: charge write-time repairs to the same per-file account the
+    # validation pass draws from, so one file cannot get 1 repair here and 2
+    # more later. Done HERE (coordinator, serialised) rather than in the worker.
+    if processed.repairs_spent:
+        from ..validation.report import repair_key
+        retry_counts = state.setdefault("retry_counts", {})
+        key = repair_key(processed.filepath)
+        retry_counts[key] = int(retry_counts.get(key, 0)) + processed.repairs_spent
 
     if processed.import_warnings:
         state.setdefault("errors", []).extend(

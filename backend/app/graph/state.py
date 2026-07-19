@@ -21,11 +21,12 @@ class ProjectState(TypedDict):
     devops_files: Dict[str, str]
     previous_versions: Dict[str, str]  # doc name -> prior content, set before an edit re-run overwrites it
     fix_counts: Dict[str, int]     # filepath -> AI fixes applied at gate 4 (capped per file)
+    validation_report: dict        # Day 22 automated-checks report (counts, issues, failure_rate)
 
     # Control fields
     replan_after_architecture: bool  # set on gate-3 'back' rerun: skip gate 2, flow straight to planning
     skip_gate_1: bool              # set on gate-2 'back' rerun: skip gate 1, flow straight to architecture
-    retry_counts: Dict[str, int]   # stage (or "file_fix:{path}") -> feedback-driven regeneration count
+    retry_counts: Dict[str, int]   # stage / "file_fix:{path}" / "repair:{path}" -> regeneration & repair count
     stage_history: List[dict]      # {stage, attempt, trigger, gate_origin, timestamp} per agent completion
     regen_cycle: Optional[dict]    # {"trigger": "edit"|"back", "gate": gate_name} during a feedback cycle
     failed_agent: str              # stage whose node raised; cleared when it succeeds

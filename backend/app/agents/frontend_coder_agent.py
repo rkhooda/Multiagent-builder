@@ -95,6 +95,7 @@ def frontend_coder_agent(state: dict) -> dict:
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": context},
         ]
+        tally = []  # worker-local: no shared-state mutation off the event loop
         raw = call_validated(
             messages, "frontend_code", state, max_tokens=1500,
             original_instruction="Output ONLY the file's code — no fences, no prose.",
@@ -103,8 +104,11 @@ def frontend_coder_agent(state: dict) -> dict:
             # node subprocess, so it is checked in the batched validation_pass —
             # spawning node per file across parallel workers is the trap.
             extra_validators=[syntax_of(task.get("filepath", ""))],
+            repair_tally=tally,
         )
-        return process_generated_file(project_id, task, raw, file_tree=file_tree)
+        processed = process_generated_file(project_id, task, raw, file_tree=file_tree)
+        processed.repairs_spent = len(tally)
+        return processed
 
     result = run_phase(
         fe_tasks, state, generate=generate, build_context=build_context,

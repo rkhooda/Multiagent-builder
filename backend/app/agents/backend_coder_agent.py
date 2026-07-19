@@ -168,6 +168,7 @@ def backend_coder_agent(state: dict) -> dict:
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": context},
         ]
+        tally = []  # worker-local: no shared-state mutation off the event loop
         raw = call_validated(
             messages, "backend_code", state, max_tokens=1500,
             original_instruction="Output ONLY the file's code — no fences, no prose.",
@@ -176,9 +177,12 @@ def backend_coder_agent(state: dict) -> dict:
             # one-repair budget. A syntactically dead model is not worth the
             # routers generated against it, so this catches it at write time.
             extra_validators=[syntax_of(task.get("filepath", ""))],
+            repair_tally=tally,
         )
-        return process_generated_file(
+        processed = process_generated_file(
             project_id, task, raw, file_tree=file_tree, apply_import_fixer=True)
+        processed.repairs_spent = len(tally)
+        return processed
 
     result = run_phase(
         llm_tasks, state, generate=generate, build_context=build_context,

@@ -204,7 +204,7 @@ def run_validators(agent_name: str, text: str, state: dict, extra: list = None) 
 
 def call_validated(messages: list, agent_type: str, state: dict, max_tokens=4000,
                    original_instruction: str = "", log: list = None,
-                   extra_validators: list = None) -> str:
+                   extra_validators: list = None, repair_tally: list = None) -> str:
     """call_llm + registry validation + ONE repair attempt.
 
     Second validation failure raises LLMOutputError for the error boundary.
@@ -214,6 +214,13 @@ def call_validated(messages: list, agent_type: str, state: dict, max_tokens=4000
     They participate in the same single repair attempt — a syntax error and a
     length problem are fixed by one call, not two, which is what keeps the
     write-time repair spend at exactly one per file.
+
+    `repair_tally` is a caller-owned list appended to when a repair call is
+    spent. It exists so write-time repairs charge the SAME per-file budget as
+    the Day 22 validation pass without this function touching shared state:
+    coder workers run in parallel threads, so incrementing state["retry_counts"]
+    here would race. The worker owns the list; the coordinator folds the count
+    in via commit_generated_file.
     """
     response = call_llm(messages, agent_type, max_tokens=max_tokens)
     problems = run_validators(agent_type, response, state, extra_validators)
@@ -233,6 +240,8 @@ def call_validated(messages: list, agent_type: str, state: dict, max_tokens=4000
     repair_messages = messages + (
         [{"role": "assistant", "content": response}] if response.strip() else []
     ) + [{"role": "user", "content": repair}]
+    if repair_tally is not None:
+        repair_tally.append(agent_type)
     response = call_llm(repair_messages, agent_type, max_tokens=max_tokens)
     problems = run_validators(agent_type, response, state, extra_validators)
     if problems:

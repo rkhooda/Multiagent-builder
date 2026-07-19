@@ -16,6 +16,7 @@ ISSUE_LINE_RE = re.compile(
 )
 
 REVIEW_INSTRUCTION = """Review this code for bugs, security issues, and missing error handling.
+{automated_block}
 
 Output ONLY a numbered list of specific issues, one per line, in exactly this format:
 N. [SEVERITY][TRIVIAL] filepath:line - description
@@ -193,6 +194,15 @@ def qa_agent(state: dict) -> dict:
             "current_stage": "devops"
         }
 
+    # Day 22: hand the reasoning model what the parsers already found, and tell
+    # it not to re-litigate. R1's tokens should go to logic and security, not to
+    # missing colons a free parser caught before it ever ran.
+    from ..validation.report import qa_context_block, render_summary
+    validation_report = state.get("validation_report") or {}
+    automated_block = qa_context_block(validation_report)
+    if automated_block:
+        automated_block = "\n" + automated_block + "\n"
+
     batches = _chunk_files(generated_files)
     all_issues = []
     failed_batches = 0
@@ -203,7 +213,9 @@ def qa_agent(state: dict) -> dict:
         print(f"[QAAgent] Reviewing batch {i + 1}/{len(batches)}: {batch_files}")
 
         try:
-            user_content = REVIEW_INSTRUCTION.format(files_block=_format_files_block(batch))
+            user_content = REVIEW_INSTRUCTION.format(
+                files_block=_format_files_block(batch),
+                automated_block=automated_block)
             messages = [
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": user_content}
@@ -293,6 +305,11 @@ def qa_agent(state: dict) -> dict:
         })
 
     qa_report = _build_report(project_name, len(generated_files), all_issues, auto_fixed_files)
+    # Prepend the automated-checks summary so the Gate 4 QA panel leads with what
+    # the machine established deterministically, before the model's opinions.
+    summary = render_summary(validation_report)
+    if summary:
+        qa_report = qa_report.replace("## Summary\n", f"## Summary\n{summary}\n\n", 1)
     qa_issues_count = len(all_issues)
 
     log.append(

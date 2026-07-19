@@ -161,6 +161,18 @@ Generate the complete file content now. Output ONLY the raw file content — no 
     log.append(f"devops_agent: fence cleanup pass — {cleaned_count} files cleaned")
     print(f"[DevOpsAgent] Cleanup pass: {cleaned_count} files cleaned")
 
+    # Day 22: devops runs AFTER the validation node, so its JSON/YAML is checked
+    # (and repaired within the same budget) here — otherwise docker-compose.yml
+    # and the CI configs would be the only files that ship unparsed.
+    from .validation_pass import validate_devops_artifacts
+    artifact_update = validate_devops_artifacts({
+        **state, "generated_files": generated_files, "devops_files": devops_files,
+        "log": log, "errors": errors,
+    })
+    if artifact_update:
+        generated_files = artifact_update["generated_files"]
+        devops_files = artifact_update["devops_files"]
+
     log.append(f"devops_agent: completed — {files_written} files written, {files_failed} failed")
     print(f"[DevOpsAgent] Done. {files_written} written, {files_failed} failed")
 
@@ -177,8 +189,12 @@ Generate the complete file content now. Output ONLY the raw file content — no 
     return {
         "generated_files": generated_files,
         "devops_files": devops_files,
+        **{k: v for k, v in (artifact_update or {}).items()
+           if k in ("validation_report", "retry_counts")},
         "log": log,
         "errors": errors,
-        "current_stage": "qa",
+        # current_stage names the NEXT stage: devops is the last node before the
+        # final review gate. ("qa" here was stale — qa now runs before devops.)
+        "current_stage": "human_gate_4",
         "_agent_event": True
     }

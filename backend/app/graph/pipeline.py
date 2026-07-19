@@ -14,6 +14,7 @@ from app.agents.planning_agent import planning_agent
 from app.agents.database_agent import database_agent
 from app.agents.devops_agent import devops_agent
 from app.agents.qa_agent import qa_agent
+from app.agents.validation_pass import validation_pass
 from app.agents.frontend_coder_agent import frontend_coder_agent
 from app.agents.backend_coder_agent import backend_coder_agent
 from app.agents.utils import regeneration_target
@@ -88,7 +89,7 @@ STAGE_ARTIFACTS = {
     "architecture": {"architecture_doc": "", "file_list": []},
     "planning": {"implementation_plan": "", "excluded_tasks": []},
     "code": {"generated_files": {}, "qa_report": "", "qa_issues_count": 0,
-             "devops_files": {}, "fix_counts": {}},
+             "devops_files": {}, "fix_counts": {}, "validation_report": {}},
 }
 # Doc fields snapshotted into previous_versions before clearing (diff source).
 SNAPSHOT_FIELDS = {"research_report", "requirements_doc", "architecture_doc", "implementation_plan"}
@@ -225,6 +226,9 @@ workflow.add_node("human_gate_3", human_gate_3)
 workflow.add_node("frontend_code", stage_node("frontend_code", frontend_coder_agent))
 workflow.add_node("backend_code", stage_node("backend_code", backend_coder_agent))
 workflow.add_node("database", stage_node("database", database_agent))
+# Day 22: batch syntax/import/artifact checks between the last file-producing
+# coder and QA, so no broken file reaches the QA agent or the download ZIP.
+workflow.add_node("validation", stage_node("validation", validation_pass))
 workflow.add_node("qa", stage_node("qa", qa_agent))
 workflow.add_node("devops", stage_node("devops", devops_agent))
 workflow.add_node("human_gate_4", human_gate_4)
@@ -280,7 +284,8 @@ workflow.add_conditional_edges(
 # when the backend coder generates routers that import them (Day 19 reorder).
 workflow.add_edge("frontend_code", "database")
 workflow.add_edge("database", "backend_code")
-workflow.add_edge("backend_code", "qa")
+workflow.add_edge("backend_code", "validation")
+workflow.add_edge("validation", "qa")
 workflow.add_edge("qa", "devops")
 workflow.add_edge("devops", "human_gate_4")
 workflow.add_conditional_edges(
