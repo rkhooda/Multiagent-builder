@@ -64,9 +64,13 @@ if _tracing_enabled():
               f"(project={os.environ['LANGCHAIN_PROJECT']})", flush=True)
     except Exception as e:                      # noqa: BLE001
         print(f"[Observability] LangSmith unavailable, continuing untraced: {e}", flush=True)
-else:
-    print("[Observability] LangSmith tracing disabled — local metrics still recorded",
+elif not metrics_store.is_enabled():
+    print("[Observability] DISABLED via OBSERVABILITY_ENABLED — no tracing, no metrics",
           flush=True)
+else:
+    print("[Observability] LangSmith tracing disabled "
+          "(set LANGCHAIN_TRACING_V2=true and a real LANGCHAIN_API_KEY to enable) "
+          "— local metrics still recorded", flush=True)
 
 
 DEFAULT_TIMEOUT_SECONDS = 90
