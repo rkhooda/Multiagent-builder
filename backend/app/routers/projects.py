@@ -347,6 +347,7 @@ def serialize_project_state(state_snapshot, project_id: str) -> dict:
         "previous_versions": values.get("previous_versions", {}),
         "fix_counts": values.get("fix_counts", {}),
         "retry_counts": values.get("retry_counts", {}),
+        "validation_report": values.get("validation_report", {}),
         "stage_history": values.get("stage_history", []),
         "current_stage": values.get("current_stage", ""),
         "human_feedback": values.get("human_feedback", ""),

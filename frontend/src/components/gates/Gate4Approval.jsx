@@ -23,6 +23,88 @@ function Stat({ label, children }) {
   )
 }
 
+/**
+ * Day 22 quality threshold banner. WARNS, never blocks — download stays
+ * enabled and the decision stays human. The rate is computed server-side as
+ * (files with unresolved mechanical issues) / (files attempted), each file
+ * counted once no matter how many problems it has.
+ */
+function QualityThresholdBanner({ report }) {
+  const [showBreakdown, setShowBreakdown] = useState(false)
+  if (!report || !report.below_threshold) return null
+
+  const pct = Math.round((report.failure_rate || 0) * 100)
+  const thresholdPct = Math.round((report.quality_threshold || 0.2) * 100)
+  const rows = [
+    ['Syntax errors (unrepaired)', report.syntax_errors_found],
+    ['Phantom imports', report.phantom_imports],
+    ['Missing packages', report.missing_packages],
+    ['Invalid JSON/YAML', report.artifact_errors],
+    ['Failed/blocked generation', report.generation_failed],
+  ].filter(([, count]) => count > 0)
+
+  return (
+    <div className="rounded-lg border border-amber-300 bg-amber-50 p-3">
+      <div className="flex items-start gap-2">
+        <span aria-hidden="true" className="text-base leading-none">⚠</span>
+        <div className="flex-1">
+          <p className="text-sm font-semibold text-amber-900">
+            Code quality below threshold: {pct}% of files have unresolved issues.
+          </p>
+          <p className="mt-0.5 text-xs text-amber-800">
+            Consider reviewing the architecture or replanning before downloading.
+            {' '}(Threshold: {thresholdPct}%. Download remains available.)
+          </p>
+          {report.repair_budget_exhausted && (
+            <p className="mt-1 text-xs font-medium text-amber-900">
+              Repair budget exhausted ({report.repair_calls_spent}/{report.repair_ceiling} calls).
+              A run needing this many repairs usually points at the prompts or architecture.
+            </p>
+          )}
+          {(report.degraded_tools || []).map((tool) => (
+            <p key={tool} className="mt-1 text-xs text-amber-800">Reduced checking: {tool}</p>
+          ))}
+          <button
+            type="button"
+            onClick={() => setShowBreakdown((open) => !open)}
+            aria-expanded={showBreakdown}
+            className="mt-1.5 text-xs font-semibold text-amber-900 underline hover:text-amber-700"
+          >
+            {showBreakdown ? 'Hide breakdown' : 'Show breakdown'}
+          </button>
+          {showBreakdown && (
+            <div className="mt-2 rounded border border-amber-200 bg-white p-2">
+              <table className="w-full text-xs">
+                <tbody>
+                  {rows.map(([label, count]) => (
+                    <tr key={label}>
+                      <td className="py-0.5 pr-3 text-gray-700">{label}</td>
+                      <td className="py-0.5 text-right font-semibold text-gray-900">{count}</td>
+                    </tr>
+                  ))}
+                  <tr className="border-t border-amber-200">
+                    <td className="py-0.5 pr-3 font-medium text-gray-700">
+                      Files affected / checked
+                    </td>
+                    <td className="py-0.5 text-right font-bold text-gray-900">
+                      {(report.unresolved_files || []).length} / {report.files_checked}
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+              {(report.unresolved_files || []).length > 0 && (
+                <ul className="mt-1.5 max-h-32 space-y-0.5 overflow-y-auto font-mono text-[10px] text-gray-600">
+                  {report.unresolved_files.map((path) => <li key={path}>{path}</li>)}
+                </ul>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function SummaryCard({ filesData, projectState, severityCounts }) {
   const totalIssues = severityCounts.critical + severityCounts.warnings + severityCounts.info
   const models = [...new Set(Object.values(projectState?.agent_models || {}))]
@@ -320,6 +402,8 @@ export default function Gate4Approval({ projectId, projectState, status, onResum
           {filesData ? `${filesData.total_files} files (${formatBytes(filesData.total_bytes)})` : 'the project'} shortly.
         </div>
       )}
+
+      <QualityThresholdBanner report={projectState?.validation_report} />
 
       <SummaryCard filesData={filesData} projectState={projectState} severityCounts={severityCounts} />
 

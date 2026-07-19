@@ -291,6 +291,13 @@ export default function ProjectDetailPage() {
           border: 'border-l-4 border-blue-500',
           badge: 'bg-blue-100 text-blue-800'
         }
+      // Day 22: automated checks get their own colour so the pass reads as a
+      // distinct step between coding and QA, not as another agent card.
+      case 'validation_complete':
+        return {
+          border: 'border-l-4 border-purple-500',
+          badge: 'bg-purple-100 text-purple-800'
+        }
       case 'error':
       case 'agent_error':
         return {
@@ -510,6 +517,41 @@ export default function ProjectDetailPage() {
                 {events.map((event, index) => {
                   const styles = getEventStyle(event.type)
                   
+                  // Day 22 automated-checks card: counts at a glance, amber when
+                  // the run finished below the quality threshold.
+                  if (event.type === 'validation_complete') {
+                    const importWarnings = event.import_warnings || 0
+                    const below = event.below_threshold
+                    return (
+                      <div key={index} className="relative flex items-start space-x-4 pl-8">
+                        <span className={`absolute left-0.5 top-1.5 h-6.5 w-6.5 rounded-full border-4 border-white flex items-center justify-center shadow-xs ${below ? 'bg-amber-500' : 'bg-purple-500'}`} />
+                        <div className={`flex-1 bg-white p-3 rounded-lg border shadow-xs border-l-4 ${below ? 'border-amber-500 border-amber-100' : 'border-purple-500 border-purple-100'}`}>
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm">{below ? '⚠' : '🔍'}</span>
+                            <span className="text-xs font-bold uppercase tracking-wide text-gray-800">
+                              Automated Checks
+                            </span>
+                            <span className="ml-auto font-mono text-[11px] text-gray-400">
+                              {event.files_checked} files
+                            </span>
+                          </div>
+                          <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-gray-600">
+                            <span>{event.syntax_errors} unresolved syntax</span>
+                            <span>{event.auto_repaired} auto-repaired</span>
+                            <span>{importWarnings} import warnings</span>
+                            {event.artifact_errors > 0 && <span>{event.artifact_errors} invalid JSON/YAML</span>}
+                            <span className="text-gray-400">
+                              repairs {event.repair_calls_spent}/{event.repair_ceiling}
+                            </span>
+                          </div>
+                          <div className="mt-1 text-[10px] font-medium text-gray-400">
+                            {formatTime(event.timestamp)}
+                          </div>
+                        </div>
+                      </div>
+                    )
+                  }
+
                   // Special rendering for per-file events (written / failed / blocked).
                   if (event.type === 'file_written' || event.type === 'file_failed' || event.type === 'file_blocked') {
                     const kind = event.type === 'file_written'
