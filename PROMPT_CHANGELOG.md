@@ -25,9 +25,28 @@ Follow it in order. The discipline is the deliverable as much as the fixes are.
    the institutional knowledge this file exists to hold.
 7. **Commit the change (or the revert + finding) on its own.**
 
-Regression protection: winning variants' sampled outputs are committed as golden
-files under `backend/tests/fixtures/prompt_tuning/golden/` and re-scored offline
-with `--rescore` at zero API cost. Run it after any prompt edit.
+### Regression protection (ponytail #3)
+
+**Two mechanisms, deliberately not three.**
+
+1. **This file** carries the *why*. Git shows what a line became; it cannot show
+   that a rule was measured, or that removing it costs 33 points of import
+   resolution. That is the gap a changelog exists to close.
+2. **Golden files + offline re-score** carry the *did it break*. The sampled
+   outputs that WON their A/B are committed under
+   `backend/tests/fixtures/prompt_tuning/golden/` and re-scored by
+   `backend/tests/test_prompt_regression.py` — zero API calls, skipped by default
+   under pytest, run deliberately after any prompt edit.
+
+**Version headers inside prompt files were considered and rejected.** They would
+be a third place to update by hand, duplicating what git already tracks and what
+this file already explains, and a hand-bumped version is exactly the kind of
+metadata that silently stops matching reality. The lightest scheme that is
+actually maintained beats the more complete one that rots.
+
+Known ceiling: golden files are fixed text, so the re-score proves the checks and
+fixtures still agree with the outputs we blessed. It guards the harness, not the
+model. Only a fresh A/B measures the model, and that costs calls.
 
 ### Measurement notes
 

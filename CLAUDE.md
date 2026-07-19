@@ -64,6 +64,16 @@ Two persistence layers exist side by side and both matter when debugging state i
 
 ---
 
+## Prompt-Change Discipline
+
+**Never edit a file in `prompts/` without a `PROMPT_CHANGELOG.md` entry and an A/B run.**
+The protocol (attribute the defect to its layer → write the hypothesis first →
+change one thing → A/B with `backend/scripts/ab_prompt_test.py` → keep or revert
+by the stated rule → record the verdict either way) is documented at the top of
+`PROMPT_CHANGELOG.md`. Run `python3 backend/tests/test_prompt_regression.py`
+(zero API cost) after any prompt edit. Layer attribution and the current defect
+taxonomy live in `docs/QUALITY_BASELINE.md`.
+
 ## Documentation Rules
 
 - `failures.md` (repo root) — append-only log of full-pipeline-test runs: what broke, root cause, fix, severity. Add an entry after any full end-to-end test, not after every small fix.
