@@ -246,3 +246,59 @@ The fixtures frozen today embed **today's** architecture style — in particular
 three-column endpoints table that causes D7. When Task 5 sharpens the architecture
 prompt, these fixtures will be measuring against a world that no longer exists.
 Re-freeze from a fresh run before the next tuning session.
+
+---
+
+## 6. Outcomes (Day 21)
+
+What the ranked fix list above actually produced. Full hypotheses, tables, and
+verdicts are in `PROMPT_CHANGELOG.md`; this is the index.
+
+| Fix | Layer | Change | Target criterion | Result | Verdict |
+|---|---|---|---|---|---|
+| #1 D5 | prompt | import-resolution rule + counter-examples | `imports_resolve` | 50% → **83%** | **KEEP** |
+| #2 D2 | context builder | sibling component interfaces for consumer files | `props_complete` | 0% → **100%** | **KEEP** |
+| #3 D6/D11 | prompt | router/schema separation block | `no_schema_redefinition` | 100% → 100% | **REVERT** |
+| Task 5 D7 | architecture | response shapes + component props + validators | rows with `Response` | 0/21 → **16/16** | **KEEP** |
+
+Cost: **0 OpenRouter calls** of a 30 budget. 33 calls to groq/gemini.
+
+### Corrections this day made to the taxonomy above
+
+- **D5 is broader than recorded.** The CSS-import violation did not reproduce in
+  6 fresh samples; the recurring defect is *phantom date libraries* — variant A
+  invented `luxon` twice and `date-fns` once. `intl` was one instance of a class.
+- **D6 is rarer than its ranking implied.** It appeared in exactly one file and
+  reproduced zero times in 6 samples. It was ranked #3 because it was an
+  *unambiguous* rule violation, which made it feel like a clean win. **Rule-
+  violation clarity is not defect frequency** — rank by measured frequency.
+- **D2's Day 18 root cause was wrong** (§3.1) and its fix was a context change,
+  not a prompt change.
+
+### Method lessons worth more than the individual fixes
+
+1. **A criterion that only detects a *wrong* value will reward an *absent* one.**
+   `props_match` passed a page that rendered `<Header />` with no props at all.
+   Pair every "not wrong" check with a "present and complete" check.
+2. **A specificity rule and its token ceiling ship together.** The sharper
+   architecture prompt truncated at the old `max_tokens` and produced *worse*
+   output than the vague one until the ceiling was raised.
+3. **Negative examples can be echoed.** Naming a forbidden package teaches its
+   name; one sample imported the exact two package names from the WRONG block.
+4. **Save raw outputs, not just pass/fail counts.** Fix #2's first verdict was
+   wrong; correcting it cost zero API calls only because the samples were on disk.
+
+### Carried forward
+
+- **D8** (missing `ForeignKey`) — database-agent prompt; truth *is* in the
+  architecture SQL, so it is a prompt fix, not an upstream one.
+- **D16** (no `create_all`/Alembic) — `backend_infra` template; no generated
+  backend has served a request against a real table.
+- **D1** (unused imports, 8 files) — highest frequency, cosmetic; a linter, not
+  prompt tokens.
+- **Planner dependency wiring** (17% vs 87% between runs) — the context-builder
+  fix routes around it for consumers, but the planner itself is still unreliable.
+- **Re-freeze fixtures** from a run using the new architecture before the next
+  tuning session (§5).
+- **Groq daily token cap** (100k TPD, ~3.3k per sample → ~30 samples/day) is the
+  real binding budget constraint, not OpenRouter.
