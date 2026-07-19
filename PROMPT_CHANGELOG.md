@@ -205,3 +205,52 @@ regeneration. Guard warns at 25, stops at 30.
   hit the daily rather than per-minute groq limit. Budget note for future
   sessions: ~3.3k tokens per coder A/B sample means the day's practical ceiling
   is ~30 samples, and that is the binding constraint, not OpenRouter.
+
+### Entry 4 — architecture agent: response shapes + component props
+
+- **Prompt file**: `prompts/architecture_agent.md` (+ the duplicate CRITICAL
+  REQUIREMENTS list in `architecture_agent.py`, which competes with the system
+  prompt and had to be updated in step)
+- **Defect**: D7 — the frontend and backend invent two different shapes for the
+  same resource (`schemas/note.py` exposes a scalar `tag_id`; `NoteCard.jsx`
+  iterates `note.tags` as an array; `TagFilter.jsx` renders `/tags` objects as
+  strings). D2's upstream half and D17 (`__init__.js` in a JS tree).
+- **Attribution**: **ARCHITECTURE (upstream)** — the only top-5 class no coder
+  prompt can fix. The real endpoints table is `| Endpoint | Method | Description |`:
+  three columns, **no response shape anywhere**, so the truth does not exist for
+  either coder to read.
+- **Deliberately NOT changed**: the folder-tree specificity rules. Real output
+  measured **0** occurrences of `...` and **0** of `[more`. They already work;
+  strengthening them would have been effort spent on a solved problem.
+- **Change**: require a 5-column endpoints table with a mandatory one-line
+  example JSON `Response` per row; require every component in the hierarchy to
+  name its props; forbid language-foreign files. Each rule is phrased to be
+  mechanically checkable, and each is backed by a validator in
+  `_architecture_specificity` — a prompt rule alone does not survive model drift.
+- **Verification** (one regeneration, `gemini-2.5-flash`, 0 OpenRouter):
+
+  | | endpoint rows | rows with `Response` | props named | validator problems |
+  |---|---|---|---|---|
+  | OLD | 21 | **0** | no | 3 |
+  | NEW | 16 | **16/16** | yes | **0** |
+
+  Doc grew 7287 → 18497 chars, 71 → 95 files, 2 diagrams retained.
+- **VERDICT: KEEP.**
+- **The change would have shipped broken.** The first regeneration *failed
+  validation*: at `max_tokens=5000` the 2.5×-longer document truncated mid-way
+  and lost its trailing Component/Security sections — the sharper prompt produced
+  strictly worse output than the vague one. Raised to 12000. **A specificity rule
+  and its token ceiling ship together**; adding output requirements without
+  raising the ceiling silently truncates. This is the general lesson, not a
+  one-off.
+- **Honest trade-off**: endpoint count fell 21 → 16 (still above the 15 minimum).
+  More detail per row, slightly fewer rows.
+- **Verification vehicle caveat**: gemini-2.5-flash was used because groq hit its
+  daily token cap and `qwen3-coder:free` (the production architecture primary)
+  429s on every attempt. Gemini is a *thinking* model, so part of the first
+  truncation may be reasoning-token consumption rather than pure output length —
+  the raised ceiling covers both. Re-verify on the production primary when
+  OpenRouter capacity returns.
+- **Fixture staleness**: today's fixtures embed the OLD three-column table. They
+  must be re-frozen from a run using this architecture before the next tuning
+  session, or they will measure against a world that no longer exists.

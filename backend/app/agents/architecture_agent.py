@@ -102,7 +102,10 @@ CRITICAL REQUIREMENTS:
 4. Include a Mermaid flowchart for the main data flow.
 5. Every filename in the folder structure must be the actual name the file will have - not generic names like 'component.jsx' or 'utils.py'. Use names based on the project's specific features.
 6. Include at least 2 Mermaid diagrams total: one ER diagram and one flowchart.
-7. Make the architecture specific to this project domain, with concrete tables, endpoints, and component names."""
+7. Make the architecture specific to this project domain, with concrete tables, endpoints, and component names.
+8. The API endpoints table must have the columns | Method | Path | Auth | Description | Response |, and EVERY row's Response cell must hold a concrete one-line example JSON body (an array for list endpoints). Not a type name, not "see schema". The coders read this cell to agree on one response shape — without it the frontend and backend invent two different ones.
+9. Every component in the hierarchy must name its props, e.g. `- NoteList (props: notes, onDelete)`, or `(props: none)`. Prop names are the contract between a page and its children.
+10. Never put `__init__.py` or any Python-only file in the frontend tree, and never put `__init__.js` anywhere — JavaScript has no such convention."""
 
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
@@ -118,7 +121,13 @@ CRITICAL REQUIREMENTS:
     print("[ArchitectureAgent] Calling architecture model...")
     # Length/section/tree/diagram checks + one repair via the shared registry.
     architecture_doc = call_validated(
-        messages, "architecture", state, max_tokens=5000,
+        # Day 21: raised from 5000. The specificity rules (an example response
+        # JSON on every endpoint row, props on every component) roughly 2.5x the
+        # document — a verified regeneration grew 7287 -> 18497 chars. At 5000 the
+        # doc truncated mid-way and failed validation on missing trailing
+        # sections, i.e. the sharper prompt produced WORSE output than the vague
+        # one. A specificity rule and its token ceiling ship together.
+        messages, "architecture", state, max_tokens=12000,
         original_instruction=(
             "Rewrite the FULL architecture document from scratch. Non-negotiable formatting rules: "
             "use all required markdown headings exactly; close every code fence; keep the folder tree "

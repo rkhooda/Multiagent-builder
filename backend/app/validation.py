@@ -57,6 +57,75 @@ def _requirements_sections(text, state):
     return [f"Missing required section: {s}" for s in missing]
 
 
+def _architecture_specificity(text, state):
+    """Day 21: mechanically enforce the specificity rules the coders depend on.
+
+    A prompt rule alone does not survive model drift — the model quietly stops
+    following it and nothing notices until generated code is wrong. These are the
+    cheap-to-check half of the Day 21 architecture rules, so a regression fails
+    validation and triggers the repair pass instead of shipping a vague blueprint.
+
+    Only rules with a real, measured defect behind them are enforced here. The
+    folder-tree shortcut rules are deliberately NOT checked: real output measured
+    0 occurrences of `...` and `[more`, so a validator would be dead weight.
+    """
+    import re as _re
+    from app.agents.context_builder import split_sections, _find_section, parse_api_table
+
+    problems = []
+    sections = split_sections(text)
+
+    # D7 — every endpoint row needs a concrete example response body. Without it
+    # the frontend and backend invent two different shapes for one resource.
+    api = _find_section(sections, ["api endpoint", "api routes", "endpoints", "rest api"])
+    if api:
+        rows = parse_api_table(api)
+        if rows:
+            missing = [r.get("path", "?") for r in rows if not (r.get("response") or "").strip()]
+            if missing:
+                problems.append(
+                    f"{len(missing)} API endpoint rows have an empty or missing Response "
+                    f"column (e.g. {missing[:3]}). Every row needs a concrete one-line "
+                    f"example JSON body — add a `Response` column if the table lacks one.")
+            vague = [r.get("path", "?") for r in rows
+                     if (r.get("response") or "").strip()
+                     and not _re.search(r"[{\[]", r.get("response", ""))]
+            if vague:
+                problems.append(
+                    f"{len(vague)} Response cells contain no JSON (e.g. {vague[:3]}). "
+                    f"Give a literal example body like "
+                    f'`{{"id": 1, "title": "string"}}`, not a type name or prose.')
+
+    # D2 — the component tree must name props, or every consumer guesses.
+    comp = _find_section(sections, ["component hierarchy", "component"])
+    if comp and "props:" not in comp.lower():
+        problems.append(
+            "The component hierarchy names no props. Annotate every component as "
+            "`- NoteList (props: notes, onDelete)`, or `(props: none)` — prop names "
+            "are the contract between a page and its children.")
+
+    # D17 — Python-only files inside a JS tree (and the reverse).
+    from app.agents.utils import parse_folder_structure
+    files = parse_folder_structure(text)
+    foreign = []
+    for p in files:
+        base = p.rsplit("/", 1)[-1]
+        in_frontend = _re.search(r"(^|/)frontend(/|$)", p) is not None
+        # `__init__.js` is the Python package convention leaking into a JS tree —
+        # the real NotesTags run planned four of them. Any .py under frontend/ is
+        # the same mistake in the other direction.
+        if base.startswith("__init__") and not base.endswith(".py"):
+            foreign.append(p)
+        elif in_frontend and p.endswith(".py"):
+            foreign.append(p)
+    if foreign:
+        problems.append(
+            f"Language-foreign files in the tree: {foreign[:4]}. JavaScript has no "
+            f"__init__ module convention — a JS/TS directory needs no index marker "
+            f"file, and a frontend tree never contains .py files.")
+    return problems
+
+
 def _architecture_quality(text, state):
     from app.agents.architecture_agent import validate_architecture_doc, MIN_LENGTH
     from app.agents.utils import parse_folder_structure, extract_mermaid_diagrams
@@ -90,7 +159,7 @@ def _valid_plan(text, state):
 VALIDATORS = {
     "research": [min_length(500), _research_quality],
     "requirements": [min_length(500), _requirements_sections],
-    "architecture": [min_length(800), _architecture_quality],
+    "architecture": [min_length(800), _architecture_quality, _architecture_specificity],
     "planning": [_valid_plan],
     "frontend_code": [min_code_lines(5)],
     "backend_code": [min_code_lines(5)],
