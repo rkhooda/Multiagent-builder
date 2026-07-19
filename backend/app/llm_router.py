@@ -15,19 +15,19 @@ load_dotenv(dotenv_path=os.path.join(os.path.dirname(os.path.dirname(__file__)),
 MODELS = {
     "research":     ("gemini/gemini-2.5-flash", "groq/llama-3.3-70b-versatile"),
     "requirements": ("gemini/gemini-2.5-flash", "openrouter/cohere/north-mini-code:free"),
-    "architecture": ("openrouter/qwen/qwen3-coder:free", "groq/llama-3.3-70b-versatile"),
+    # Day 23: openrouter/qwen/qwen3-coder:free was DELISTED ("This model is
+    # unavailable"), so it was a guaranteed-failing primary for every coder
+    # agent — one dead round trip per call before the groq fallback caught it.
+    # Groq llama-3.3-70b was already the proven fallback here, so it is promoted
+    # rather than swapping in an untested slug: the surviving free coder model
+    # (cohere/north-mini-code) still returns EMPTY responses (Day 18), and a new
+    # model would contaminate today's baseline latency/token measurements.
+    # Gemini is the cross-provider fallback so a groq rate limit is recoverable.
+    "architecture": ("groq/llama-3.3-70b-versatile", "gemini/gemini-2.5-flash"),
     "planning":     ("gemini/gemini-2.5-flash", "groq/llama-3.3-70b-versatile"),
-    # Fallback is Groq (not another OpenRouter free model): qwen3-coder hits
-    # per-model free rate limits and cohere/north-mini-code returns empty
-    # responses (Day 18) — groq llama-3.3-70b is a reliable code-capable model
-    # on a different provider, mirroring the architecture agent's fallback.
-    "frontend_code":("openrouter/qwen/qwen3-coder:free", "groq/llama-3.3-70b-versatile"),
-    # Same dead-chain fix as frontend_code (Day 18/19): cohere/north-mini-code
-    # returns EMPTY responses and qwen3-coder alone hits per-model free limits,
-    # so the previous (cohere, qwen) pair generated nothing. Groq llama-3.3-70b
-    # is the reliable, code-capable fallback on a different provider.
-    "backend_code": ("openrouter/qwen/qwen3-coder:free", "groq/llama-3.3-70b-versatile"),
-    "database":     ("groq/llama-3.3-70b-versatile", "openrouter/qwen/qwen3-coder:free"),
+    "frontend_code":("groq/llama-3.3-70b-versatile", "gemini/gemini-2.5-flash"),
+    "backend_code": ("groq/llama-3.3-70b-versatile", "gemini/gemini-2.5-flash"),
+    "database":     ("groq/llama-3.3-70b-versatile", "gemini/gemini-2.5-flash"),
     "qa":           ("openrouter/nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free", "gemini/gemini-2.5-flash"),
     "devops":       ("groq/llama-3.3-70b-versatile", "gemini/gemini-2.5-flash"),
 }

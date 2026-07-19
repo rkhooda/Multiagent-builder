@@ -1008,3 +1008,59 @@ returns a plausible-looking file that only a real parser rejects.
 - Thresholds and ceilings are set at their defaults on ONE run's evidence. Day 25
   (three full integration projects) is the intended tuning point — resist moving
   them before then.
+
+## Day 23 observations
+
+### Task 0 — LangSmith reality check (done BEFORE any tracing design)
+The PDF's "tracing works automatically, no code changes" claim is **false for
+this repo**, for a more basic reason than the LiteLLM-vs-LangChain one:
+
+- **`LANGCHAIN_API_KEY` is the literal placeholder `your_key_here`, and
+  `LANGCHAIN_TRACING_V2=false`.** Both have sat unchanged since Day 1. No trace
+  has ever been emitted, so **the dashboard could not be inspected** — there is
+  no account credential to inspect it with. The Day 1 "install + env placeholder"
+  step was never finished, and nothing since then depended on it, so it went
+  unnoticed for 22 days.
+- `langsmith 0.4.37` **is** installed in `backend/venv` (it is in
+  `requirements.txt`), so the SDK half of the setup is real. Only the key is missing.
+- Consequence for today: the "explore a working dashboard" branch of Task 4 is
+  **blocked on a user-supplied key**, not on code. Everything else — usage
+  capture, the local metrics store, the UI panel, Day 26's evidence table —
+  is independent of LangSmith and was built first, deliberately.
+
+### Task 0 — degradation behaviour, measured not assumed
+Probed `@traceable` with the placeholder key and tracing forced on:
+- The traced function **returned its result normally**; the `403 Forbidden` was
+  swallowed by langsmith's background uploader and only logged. **The SDK already
+  provides the Task 5 isolation contract** — a bad key cannot fail a run. This
+  removed the need for a hand-written try/except around every trace emit.
+- Overhead, 60 calls, steady state (SDK init excluded):
+  `tracing=true` median **1.49ms** / `tracing=false` median **1.28ms`
+  -> **~0.21ms added per call**, against LLM calls of 2-30s. Negligible; no
+  batching or async queue needed for the LangSmith side.
+
+### Task 0 — blocking triage fix: another delisted OpenRouter slug
+`openrouter/qwen/qwen3-coder:free` now returns `NotFoundError: This model is
+unavailable`. It was the **primary** for `architecture`, `frontend_code`, and
+`backend_code`, and the fallback for `database` — so every coder call was
+spending one guaranteed-failing round trip before falling through to Groq.
+This is the *second* time this exact slug has died (see Day 18) and it would
+have silently inflated every latency number this day exists to measure.
+
+Live `/api/v1/models` free tier is down to **14 models**, of which the only
+remaining coder-oriented one is `cohere/north-mini-code:free` — the model Day 18
+recorded as returning EMPTY responses. So there is no drop-in replacement.
+Fix applied: promote the already-proven `groq/llama-3.3-70b-versatile` to primary
+for those agents, with `gemini/gemini-2.5-flash` as a cross-provider fallback.
+Deliberately did **not** adopt an untested slug (`poolside/laguna-m.1:free`,
+`openai/gpt-oss-20b:free`) — today's purpose is a clean baseline, and a new model
+would confound it. Worth revisiting once metrics exist to compare against.
+Caveat: four agents now share Groq as primary, concentrating load on one
+provider's rate limit; the Gemini fallback is what makes that recoverable.
+
+### Provider token-usage reliability (Task 1 verification)
+| provider | `resp.usage` populated? | notes |
+|---|---|---|
+| `gemini/gemini-2.5-flash` | yes | also reports `reasoning_tokens` under `completion_tokens_details` |
+| `groq/llama-3.3-70b-versatile` | yes | also reports server-side `queue_time`/`prompt_time` |
+| `openrouter/*` | **unverified** | could not test: the coder slug is delisted; QA's nemotron slug is alive but untested for usage |
