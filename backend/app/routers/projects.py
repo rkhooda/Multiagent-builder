@@ -16,6 +16,7 @@ from app.graph.state import ProjectState
 from app.core.connection_manager import manager
 from app.core.database import insert_project, update_project_status, get_all_projects
 from app.utils.file_writer import OUTPUTS_ROOT
+from app.observability import metrics_store
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
 
@@ -804,6 +805,17 @@ def _project_output_dir(project_id: str) -> Path:
     if not directory.is_dir():
         raise HTTPException(status_code=404, detail="No generated files for this project")
     return directory
+
+
+@router.get("/{project_id}/metrics")
+def get_project_metrics(project_id: str):
+    """Per-run token/latency rollup for the metrics panel.
+
+    Projects created before Day 23 have no rows; run_summary returns
+    has_metrics=False with zeroed totals so the UI renders an explanation
+    instead of an error.
+    """
+    return metrics_store.run_summary(project_id)
 
 
 @router.get("/{project_id}/files")
