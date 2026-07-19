@@ -1,0 +1,54 @@
+from typing import List, Optional
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.orm import Session
+from datetime import datetime
+
+from app.database import get_db
+from app.models.note import Note
+from app.schemas.note import NoteCreate, NoteUpdate, NoteResponse
+
+router = APIRouter(prefix="/api/notes", tags=["notes"])
+
+
+@router.get("/", response_model=List[NoteResponse])
+async def list_notes(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
+    return db.query(Note).offset(skip).limit(limit).all()
+
+
+@router.get("/{note_id}", response_model=NoteResponse)
+async def get_note(note_id: int, db: Session = Depends(get_db)):
+    note = db.query(Note).filter(Note.id == note_id).first()
+    if note is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Note not found")
+    return note
+
+
+@router.post("/", response_model=NoteResponse, status_code=status.HTTP_201_CREATED)
+async def create_note(payload: NoteCreate, db: Session = Depends(get_db)):
+    note = Note(**payload.model_dump())
+    db.add(note)
+    db.commit()
+    db.refresh(note)
+    return note
+
+
+@router.put("/{note_id}", response_model=NoteResponse)
+async def update_note(note_id: int, payload: NoteUpdate, db: Session = Depends(get_db)):
+    note = db.query(Note).filter(Note.id == note_id).first()
+    if note is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Note not found")
+    for field, value in payload.model_dump(exclude_unset=True).items():
+        setattr(note, field, value)
+    db.commit()
+    db.refresh(note)
+    return note
+
+
+@router.delete("/{note_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_note(note_id: int, db: Session = Depends(get_db)):
+    note = db.query(Note).filter(Note.id == note_id).first()
+    if note is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Note not found")
+    db.delete(note)
+    db.commit()
+    return None

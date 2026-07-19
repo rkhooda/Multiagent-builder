@@ -159,3 +159,49 @@ regeneration. Guard warns at 25, stops at 30.
 - **Golden files**: 3 passing B samples added; 7/7 golden re-score clean.
 - **Regression**: 9/9 scheduler, 14/14 import fixer.
 - **Cost**: 6 groq calls, **0 OpenRouter**. (Re-scoring: 0.)
+
+### Entry 3 — backend coder: router/schema separation + annotation syntax — **REVERTED**
+
+- **Prompt file**: `prompts/backend_coder_agent.md` (change NOT applied)
+- **Defect**: D6 — `day19-fullphase/routers/notes.py:14-34` redefines
+  `NoteCreate`/`NoteUpdate`/`NoteResponse`, shadowing its own line-11 imports.
+  D11 — `models/note.py:16,20` use `Mapped[int | None]` against the prompt's
+  explicit `Optional[X]` preference.
+- **Attribution**: **PROMPT**. The router had its schema's full body injected and
+  redefined it anyway, against l.16 *"Do NOT redefine models in a router."*
+- **Hypothesis**: same shape as the Entry 1 change that worked — both rules are
+  stated positively and in passing among many others, so a dedicated WRONG/RIGHT
+  block should raise adherence. Counter-examples written *structurally* (a class
+  statement in a router) rather than by naming forbidden identifiers, per the
+  echo finding in Entry 1.
+- **Measured by**: `no_schema_redefinition` (target), plus `no_pep604_union`,
+  `py_compile`, `uses_session_dependency`, on `be_router_notes` and
+  `be_schema_note`. N=3.
+- **Result** (`groq/llama-3.3-70b-versatile`, 10 of 12 samples — see cost note):
+
+  | Criterion | A | B | Δ |
+  |---|---|---|---|
+  | `no_schema_redefinition` **(target)** | 3/3 (100%) | 3/3 (100%) | **0** |
+  | `no_pep604_union` | 6/6 (100%) | 4/4 (100%) | 0 |
+  | `uses_session_dependency` | 3/3 (100%) | 3/3 (100%) | 0 |
+  | `py_compile` | 6/6 (100%) | 4/4 (100%) | 0 |
+  | `no_fences`, `min_lines` | 6/6 | 4/4 | 0 |
+
+- **VERDICT: REVERT.** The existing prompt is already at **100% on the target**.
+  There is no headroom: the change would add ~15 lines to every backend
+  generation call, forever, for zero measurable gain.
+- **The real lesson — rule-violation clarity is not defect frequency.** D6 was
+  ranked #3 largely because it was an *unambiguous* violation of an explicit
+  rule, which made it feel like an easy, attributable win. But it appeared in
+  exactly **one file** in the whole reviewed corpus and did not reproduce once in
+  6 fresh samples. The clarity of the violation made it look more common than it
+  was. Rank by measured frequency, not by how cleanly a defect can be blamed.
+- **Missing samples do not change the verdict.** The two lost samples were
+  `be_schema_note`, a fixture that does not carry the target criterion at all;
+  the target comparison (`be_router_notes`, 3 vs 3) is complete. A cannot be
+  beaten from 100%.
+- **Cost**: 10 groq calls, **0 OpenRouter**. The run was cut short by groq's
+  **daily** token cap (100k TPD, 99423 used) — the first time this project has
+  hit the daily rather than per-minute groq limit. Budget note for future
+  sessions: ~3.3k tokens per coder A/B sample means the day's practical ceiling
+  is ~30 samples, and that is the binding constraint, not OpenRouter.
