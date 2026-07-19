@@ -97,7 +97,41 @@ def _fault_injection(agent_type: str, model: str):
             raise llm_exc.AuthenticationError(message="fault-injected auth failure", llm_provider="fault", model=model)
         if kind == "garbage":
             return "ok"
+        # Day 22: substantial-but-unparseable output. `garbage` returns 2 chars
+        # and trips the LENGTH validator, which exercises the Day 17 path; this
+        # produces a plausible-looking file that only a real parser rejects, so
+        # it is the fault that actually reaches the syntax validator + repair.
+        if kind == "syntaxerr":
+            return _BROKEN_JS if "front" in agent_type else _BROKEN_PY
     return None
+
+
+_BROKEN_PY = '''from fastapi import APIRouter, HTTPException
+from sqlalchemy.orm import Session
+
+router = APIRouter(prefix="/api/notes", tags=["notes"])
+
+
+@router.get("/")
+def list_notes(db: Session)
+    """Missing colon on the line above — parses only after repair."""
+    return db.query(Note).all()
+'''
+
+_BROKEN_JS = '''import React, { useState } from 'react';
+
+export default function NoteList({ notes, onDelete }) {
+  const [query, setQuery] = useState('');
+  return (
+    <div className="list">
+      <input value={query} onChange={(e) => setQuery(e.target.value)} />
+      {notes.map((note) => (
+        <span key={note.id}>{note.title}</div>
+      ))}
+    </div>
+  );
+}
+'''
 
 
 def _log_attempt(agent_type: str, model: str, attempt: int, outcome: str, started: float):

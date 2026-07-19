@@ -887,3 +887,124 @@ edges, per-file isolation) PLUS an honest `blocked` status and transitive
 blocking that saves LLM calls on files doomed by a failed dependency. The
 sequential path is not a separate code path — it is the same scheduler at
 `max_concurrent=1` (`GENERATION_MODE=sequential`), the permanent debugging lever.
+
+## Day 22 observations
+
+Scope: replace the placeholder structural heuristics with real parsers, wire
+genuine syntax errors into the existing repair machinery under a bounded budget,
+extend checking to JS imports and JSON/YAML artifacts, aggregate everything into
+an automated-checks report prepended to the QA report, and warn at Gate 4 when
+too many files still fail after repair.
+
+### Placement (ponytail #1) — hybrid, and Python needed no new machinery
+The laziest correct answer was rung 2, not rung 7. `call_validated` already does
+validate -> one repair -> re-validate with the message context, inside the
+worker's permit, and `ast.parse`/`compile` are stdlib and in-process. So the
+Python check is just another registry validator, and because `REPAIR_PROMPT`
+interpolates `{errors}`, the "syntax error at line N" precision prompt IS the
+validator's returned string — no separate repair path was written.
+
+The one real obstacle: validators are `fn(text, state)` and cannot see the
+filepath, and putting it in `state` would race across parallel coder workers.
+Solved with a per-call closure (`syntax_of`) threaded through a new
+`extra_validators` kwarg, which shares the SINGLE existing repair attempt — so a
+syntax error and a length problem are still fixed by one call, not two.
+
+JS went post-phase because it needs a node subprocess and spawning one per file
+across three parallel workers is pure churn. Cross-file import resolution is
+whole-tree by nature and could not have been done at write time anyway.
+
+**Gap in the day's plan, found while reading the graph:** the real order is
+`frontend_code -> database -> backend_code -> validation -> qa -> devops`. DevOps
+— the YAML/JSON producer — runs AFTER qa, so a validation node before qa can
+never see `docker-compose.yml` or the CI configs. Rather than reorder the graph,
+the same parsers and the same budget run inline at the end of the devops node and
+merge into the existing report. Without that, the DevOps agent's output would
+have remained the one file category shipping completely unparsed.
+
+### JS tooling (ponytail #2) — @babel/parser, and the JSX trap
+Nothing was installed: node 22 is present but `node --check` has no JSX, and the
+frontend's rolldown lives in a gitignored `node_modules` belonging to the
+builder's own UI (wrong coupling for a backend check). So one dependency was
+unavoidable.
+
+Chose `@babel/parser` over acorn+acorn-jsx (two packages, still no TS) and
+esbuild (one package but a per-arch native binary, and a bundler cosplaying as a
+linter). Installs as 4 pure-JS `@babel/*` packages, ~5MB, no binary.
+**Correction to the initial assessment:** it is not zero-dependency as first
+assumed — it pulls `@babel/types` and two helpers. Verified and the code comment
+was corrected rather than left overstating.
+
+The tiebreaker was economic: Babel is the most tolerant parser, and a false
+positive here does not merely skew a report — it buys a paid OpenRouter repair of
+an already-correct file. `test_valid_jsx_passes` was written BEFORE any repair
+wiring, exactly as the day's constraint demanded; plain acorn would fail every
+generated React component and every metric downstream would lie.
+
+### Repair economics (ponytail #3)
+Per-file cap 2, run ceiling 10, both through `retry_counts` under `repair:{path}`.
+Write-time repairs charge the same account via a worker-local tally folded in by
+`commit_generated_file` (coordinator-only) — incrementing `retry_counts` inside a
+parallel worker would race, so Day 20's purity boundary stayed intact.
+
+**Deliberate deviation from the brief:** Gate 4's `fix_counts` was NOT merged into
+the automatic budget. Those fixes are human-initiated; pooling them means a
+machine's failed auto-repairs could exhaust the budget a user needs to click
+"fix this file". Both are surfaced together in the Gate 4 breakdown, so it is one
+VIEW over two ledgers rather than one ledger.
+
+Threshold is defined precisely as
+`|union of files with unresolved mechanical issues| / |files attempted|`.
+Union of paths, so a file with three problems counts once. Denominator is
+attempted rather than planned. Failed/blocked files come from `stage_history`,
+not from parsing — Day 20 writes a syntactically VALID stub for them, so parsers
+alone would report those files healthy.
+
+A crashed repair call still charges its slot; otherwise a persistently failing
+file would retry forever.
+
+### Verification
+- **Crafted-breakage suites, zero LLM calls** (`test_validation.py` 20/20,
+  `test_validation_pass.py` 14/14, ~4s combined): valid JSX + modern syntax pass;
+  unbalanced JSX, broken destructuring and prose leak fail with line numbers;
+  Python missing-colon reports the right line; the `compile`-only class
+  (duplicate argument) is caught where `ast.parse` alone passes; phantom relative
+  imports, missing packages, broken JSON/YAML flagged; per-file cap stops at 2;
+  run ceiling stops at 10 and sets `repair_budget_exhausted`; import warnings
+  never buy a repair call; node-missing degrades loudly instead of reporting
+  clean.
+- **Live repair (real models)**: a broken router + broken JSX component both
+  repaired successfully (qwen3-coder:free 429'd, groq fallback served both — the
+  documented pattern), repaired Python verified to parse, and a genuine phantom
+  import caught in the fixture.
+- **Scoped live run** (real frontend coder, `FAULT_INJECTION=syntaxerr:frontend_code:1`,
+  upstream docs from the Day 21 fixture — same quota precedent as Days 19/21):
+  3 files generated, the injected broken file caught by the batch parser,
+  repaired with one real call, **all 3 files parse post-repair**, budget 1/10,
+  `retry_counts` correct, and the QA report carried the prepended
+  `**AUTOMATED CHECKS**` summary.
+- **Regression**: Day 20 fake-generator suite 9/9, Day 19 import fixer 14/14,
+  Day 21 golden `--rescore` 7/7, frontend `vite build` clean.
+
+Added a `syntaxerr` fault kind: `garbage` returns 2 chars and trips the LENGTH
+validator (the Day 17 path), so it never reached the syntax validator. `syntaxerr`
+returns a plausible-looking file that only a real parser rejects.
+
+### Honest limits on today's evidence
+- **The QA-focus comparison is NOT established.** The live run produced a single
+  3-file batch with 1 QA issue — far too small to claim R1's reasoning
+  "noticeably shifted" from syntax to logic. The mechanism is verified (the
+  structured findings and the do-not-re-litigate instruction demonstrably reach
+  the QA prompt, asserted in-test), but the qualitative payoff is unmeasured. A
+  real before/after against a Day 19-era report needs a full-size run — Day 25.
+- **The Gate 4 banner was not exercised in a browser.** Its trigger flag
+  (`below_threshold`) was verified live (25% > 20% -> True) and the component
+  compiles under `vite build`, but the rendered DOM and the breakdown popover
+  were not clicked through in a running server. `QUALITY_THRESHOLD=0.01` was
+  confirmed to load and override.
+- **No full research->devops pipeline run.** Same quota reasoning as Days 18-21:
+  qwen3-coder:free 429'd on every attempt again this session, and a full run
+  would burn shared free-tier capacity for weaker signal than the scoped run gave.
+- Thresholds and ceilings are set at their defaults on ONE run's evidence. Day 25
+  (three full integration projects) is the intended tuning point — resist moving
+  them before then.
