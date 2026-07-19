@@ -1,0 +1,10 @@
+{
+  "name": "multiagent-builder-syntax-check",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Batch JSX/TS-aware syntax checker for generated files (Day 22).",
+  "dependencies": {
+    "@babel/parser": "^7.28.0"
+  }
+}
