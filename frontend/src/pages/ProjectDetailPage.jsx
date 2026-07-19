@@ -431,9 +431,12 @@ export default function ProjectDetailPage() {
       {/* Compact token/latency rollup. Rendered only once a run has reached a
           settled state — on a project still in research the "no metrics yet"
           empty state would read as an error rather than as "too early".
+          Suppressed at gate 4, which renders the full panel itself; showing both
+          put two identical "Run Metrics" cards on the same screen.
           Fetches once on mount; no polling, since the numbers only matter after
-          a stage completes and Gate 4 shows the full table. */}
-      {(displayStatus === 'completed' || displayStatus === 'awaiting_approval') && (
+          a stage completes. */}
+      {(displayStatus === 'completed' || displayStatus === 'awaiting_approval')
+        && !gateName.includes('gate_4') && (
         <div className="border-b border-gray-200 bg-[#f9fafb] px-6 py-3">
           <div className="mx-auto max-w-6xl">
             <MetricsPanel projectId={projectId} compact />

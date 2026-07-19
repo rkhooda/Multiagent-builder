@@ -81,8 +81,17 @@ export default function MetricsPanel({ projectId, compact = false }) {
     )
   }
 
+  // by_agent counts SUCCESSFUL calls (averages are over those); latency_by_agent
+  // counts every attempt. Keep them as distinct columns — merging them let the
+  // attempt count overwrite the call count, so a row could read "5 calls"
+  // beside averages computed from the single call that actually returned.
   const latency = Object.fromEntries((data.latency_by_agent || []).map((r) => [r.agent, r]))
-  const rows = (data.by_agent || []).map((r) => ({ ...r, ...(latency[r.agent] || {}) }))
+  const rows = (data.by_agent || []).map((r) => ({
+    ...r,
+    attempts: latency[r.agent]?.calls,
+    p50_ms: latency[r.agent]?.p50_ms,
+    p95_ms: latency[r.agent]?.p95_ms,
+  }))
   const missingUsage = rows.reduce((a, r) => a + (r.missing_usage || 0), 0)
 
   return (
@@ -116,7 +125,12 @@ export default function MetricsPanel({ projectId, compact = false }) {
             <thead>
               <tr className="border-b border-gray-200 text-[10px] uppercase tracking-wide text-gray-500">
                 <th className="py-1.5 pr-3 font-semibold">Agent</th>
-                <th className="py-1.5 pr-3 font-semibold">Calls</th>
+                <th className="py-1.5 pr-3 font-semibold" title="Successful calls — averages are over these">
+                  Calls
+                </th>
+                <th className="py-1.5 pr-3 font-semibold" title="All attempts, including retries and fallovers">
+                  Att.
+                </th>
                 <th className="py-1.5 pr-3 font-semibold">Avg In</th>
                 <th className="py-1.5 pr-3 font-semibold">Avg Out</th>
                 <th className="py-1.5 pr-3 font-semibold">p50</th>
@@ -129,6 +143,9 @@ export default function MetricsPanel({ projectId, compact = false }) {
                 <tr key={r.agent} className="border-b border-gray-100 last:border-0">
                   <td className="py-1.5 pr-3 font-mono text-[11px]">{r.agent}</td>
                   <td className="py-1.5 pr-3">{r.calls}</td>
+                  <td className={`py-1.5 pr-3 ${r.attempts > r.calls ? 'font-semibold text-amber-700' : ''}`}>
+                    {r.attempts ?? '—'}
+                  </td>
                   <td className="py-1.5 pr-3">{fmt(r.avg_prompt_tokens)}</td>
                   <td className="py-1.5 pr-3">{fmt(r.avg_completion_tokens)}</td>
                   <td className="py-1.5 pr-3">{ms(r.p50_ms)}</td>
