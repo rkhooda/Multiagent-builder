@@ -5,6 +5,7 @@ import remarkGfm from 'remark-gfm'
 import { useProjectStream } from '../hooks/useProjectStream'
 import ApprovalGate from '../components/ApprovalGate'
 import StageTimeline from '../components/StageTimeline'
+import MetricsPanel from '../components/MetricsPanel'
 import Gate1Approval from '../components/gates/Gate1Approval'
 import Gate2Approval from '../components/gates/Gate2Approval'
 import Gate3Approval from '../components/gates/Gate3Approval'
@@ -425,6 +426,19 @@ export default function ProjectDetailPage() {
           regenerating={Boolean(regeneratingGate)}
           cycleInfo={cycleInfo}
         />
+      )}
+
+      {/* Compact token/latency rollup. Rendered only once a run has reached a
+          settled state — on a project still in research the "no metrics yet"
+          empty state would read as an error rather than as "too early".
+          Fetches once on mount; no polling, since the numbers only matter after
+          a stage completes and Gate 4 shows the full table. */}
+      {(displayStatus === 'completed' || displayStatus === 'awaiting_approval') && (
+        <div className="border-b border-gray-200 bg-[#f9fafb] px-6 py-3">
+          <div className="mx-auto max-w-6xl">
+            <MetricsPanel projectId={projectId} compact />
+          </div>
+        </div>
       )}
 
       {errorInfo && (

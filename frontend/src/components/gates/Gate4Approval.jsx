@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import FileBrowser, { formatBytes } from './FileBrowser'
 import QAReportPanel, { parseQAReport } from './QAReportPanel'
 import DiffView from './DiffView'
+import MetricsPanel from '../MetricsPanel'
 
 const API = 'http://localhost:8000/api/projects'
 const MAX_FIXES_PER_FILE = 3
@@ -132,7 +133,9 @@ function SummaryCard({ filesData, projectState, severityCounts }) {
           {formatDuration(projectState?.generation_seconds)}
           <span className="ml-1 text-[10px] font-normal text-gray-400">incl. reviews</span>
         </Stat>
-        <Stat label="Token Cost">$0.00 <span className="text-[10px] font-normal text-gray-400">free tiers</span></Stat>
+        {/* The old "Token Cost $0.00" stat moved to MetricsPanel below: on free
+            tiers the dollar figure is always zero and says nothing, while the
+            token counts it was standing in for are the real budget. */}
       </div>
       {models.length > 0 && (
         <div className="mt-3 flex flex-wrap items-center gap-1.5">
@@ -406,6 +409,8 @@ export default function Gate4Approval({ projectId, projectState, status, onResum
       <QualityThresholdBanner report={projectState?.validation_report} />
 
       <SummaryCard filesData={filesData} projectState={projectState} severityCounts={severityCounts} />
+
+      <MetricsPanel projectId={projectId} />
 
       {/* Partial-generation warning — reload-safe: derived from stage_history's
           per-stage failed_files (which the coder records as failed + blocked),
