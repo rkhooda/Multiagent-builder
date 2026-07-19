@@ -6,6 +6,15 @@ from pydantic import BaseModel, Field, field_validator
 VALID_PHASES = Literal["database", "backend", "frontend", "devops"]
 VALID_COMPLEXITY = Literal["low", "medium", "high"]
 
+# Real files the devops phase must be able to plan, none of which have an
+# extension. Without these the entire plan fails validation the moment the model
+# proposes a Dockerfile — which it does on essentially every run, taking the
+# coder and QA stages down with it.
+EXTENSIONLESS_FILENAMES = frozenset({
+    "Dockerfile", "Makefile", "Procfile", "Jenkinsfile", "Caddyfile",
+    "LICENSE", "CODEOWNERS",
+})
+
 
 class TaskSchema(BaseModel):
     id: str = Field(
@@ -48,8 +57,15 @@ class TaskSchema(BaseModel):
     @field_validator("filepath")
     @classmethod
     def validate_filepath_has_extension(cls, v: str) -> str:
-        if "." not in v.split("/")[-1]:
-            raise ValueError(f"Filepath '{v}' must include a file extension")
+        name = v.split("/")[-1]
+        # Dockerfile.dev / Dockerfile.prod are conventional variants.
+        if name.split(".")[0] in EXTENSIONLESS_FILENAMES:
+            return v
+        if "." not in name:
+            raise ValueError(
+                f"Filepath '{v}' must include a file extension "
+                f"(or be one of: {', '.join(sorted(EXTENSIONLESS_FILENAMES))})"
+            )
         return v
 
     @field_validator("description")
