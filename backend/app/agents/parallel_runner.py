@@ -183,16 +183,23 @@ async def run_tasks_parallel(tasks, state, *, generate, build_context, stub_for,
             write_stub(task, reason, "file_blocked")  # single broadcast inside
             return "blocked"
 
+        err = None
         async with sem:  # one permit for the worker's whole lifetime (both LLM calls)
             broadcast("file_started", task)
-            context = build_context(task, state)  # loop; sees committed deps
             try:
+                # build_context is INSIDE the boundary: it runs real parsing over
+                # LLM-authored architecture text, so it can raise on malformed
+                # input (Day 20's truncate_for_context NameError was exactly this).
+                # Outside the try, one such raise propagated through the dependent
+                # gather and killed the whole phase — no stub, no error record.
+                # A context failure is a per-file failure like any other.
+                context = build_context(task, state)  # loop; sees committed deps
                 processed = await asyncio.to_thread(generate, task, context)
             except Exception as e:  # per-file isolation — record, stub, keep going
                 processed, err = None, str(e)
 
         if processed is None or processed.status != "ok":
-            err = err if processed is None else (processed.error or "write failed")
+            err = err or (processed.error if processed else None) or "write failed"
             result.failed.append(fp)
             state.setdefault("errors", []).append(f"{phase}_coder: {fp} failed after repair: {err}")
             write_stub(task, err, "file_failed")  # single broadcast inside

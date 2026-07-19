@@ -196,7 +196,41 @@ def test_no_duplicate_broadcasts():
     _clean()
 
 
-# ── 6. Cycle guard ──────────────────────────────────────────────────────────
+# ── 6. A context-builder raise is isolated to its own file ─────────────────
+def test_context_builder_failure_is_isolated():
+    """build_context parses LLM-authored architecture text, so it CAN raise on
+    malformed input (Day 20: truncate_for_context NameError). Before Day 21 it
+    ran outside the try, so one raise propagated through the dependent gather
+    and killed the entire phase. It must fail exactly one file instead."""
+    tasks = [_task("A"), _task("B"), _task("C"), _task("D", ["B"])]
+    _clean()
+    _broadcasts.clear()
+    state = _fresh_state(tasks)
+    gen, _ = make_generate()
+
+    def exploding_context(task, st):
+        if task["id"] == "B":
+            raise NameError("name 'truncate_for_context' is not defined")
+        return build_context(task, st)
+
+    result = run_phase(
+        tasks, state, generate=gen, build_context=exploding_context,
+        stub_for=stub_for, phase="test", project_id=PROJECT_ID,
+        file_tree=state["file_list"], max_concurrent=3)
+
+    # The phase completed rather than raising; B failed, D blocked behind it.
+    assert sorted(result.ok) == ["A.py", "C.py"], result.ok
+    assert result.failed == ["B.py"], result.failed
+    assert result.blocked == ["D.py"], result.blocked
+    # B was stubbed on disk + in state (Gate-4 visible/fixable), not silently lost.
+    assert "B.py" in state["generated_files"]
+    assert "STUB" in state["generated_files"]["B.py"]
+    # The real cause is recorded, not swallowed.
+    assert any("truncate_for_context" in e for e in state["errors"]), state["errors"]
+    _clean()
+
+
+# ── 7. Cycle guard ──────────────────────────────────────────────────────────
 def test_cycle_detection():
     tasks = [_task("X", ["Y"]), _task("Y", ["X"])]
     try:
@@ -216,6 +250,7 @@ TESTS = [
     ("permit discipline (cap never exceeded)", test_permit_discipline),
     ("sequential mode determinism", test_sequential_mode),
     ("no duplicate lifecycle broadcasts", test_no_duplicate_broadcasts),
+    ("context-builder raise isolated to one file", test_context_builder_failure_is_isolated),
     ("cycle detection", test_cycle_detection),
 ]
 
