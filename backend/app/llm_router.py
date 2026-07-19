@@ -134,7 +134,43 @@ export default function NoteList({ notes, onDelete }) {
 '''
 
 
-def _log_attempt(agent_type: str, model: str, attempt: int, outcome: str, started: float):
+# Providers that omitted usage — warned once each, not per call.
+_usage_warned: set = set()
+
+
+def _extract_usage(resp, model: str) -> dict:
+    """Pull normalised token counts off a litellm response.
+
+    Free-tier providers occasionally omit `usage` entirely; that is recorded as
+    None rather than 0 so averages can exclude it instead of being dragged down
+    by fake zeros. Verified populated for gemini and groq (Day 23).
+    """
+    u = getattr(resp, "usage", None)
+    if u is None:
+        if model not in _usage_warned:
+            _usage_warned.add(model)
+            print(f"[LLM] WARNING: {model} returned no usage — tokens recorded as null",
+                  flush=True)
+        return {"prompt_tokens": None, "completion_tokens": None, "total_tokens": None}
+    return {k: getattr(u, k, None)
+            for k in ("prompt_tokens", "completion_tokens", "total_tokens")}
+
+
+def _log_attempt(agent_type: str, model: str, attempt: int, outcome: str, started: float,
+                 usage: dict = None, project_id: str = None, label: str = None,
+                 context_chars: int = None):
+    """Structured per-attempt record — the single observability choke point.
+
+    Every attempt on every outcome path (ok/timeout/rate_limit/auth/error)
+    already routed through here, so this is where usage and identity are
+    captured too: one function instead of tracing calls in nine agents. A failed
+    attempt and the fallback attempt that succeeded are separate records, so
+    latency for both survives and only the successful one carries tokens.
+
+    `project_id`/`label` are passed down explicitly from the caller — coder
+    workers run in threads via asyncio.to_thread, where thread-locals and
+    ambient context do not reliably map back to the originating file.
+    """
     entry = {
         "agent_type": agent_type,
         "model": model,
@@ -142,10 +178,20 @@ def _log_attempt(agent_type: str, model: str, attempt: int, outcome: str, starte
         "outcome": outcome,
         "latency_ms": int((time.monotonic() - started) * 1000),
     }
+    if project_id:
+        entry["project_id"] = project_id
+    if label:
+        entry["label"] = label
+    if context_chars is not None:
+        entry["context_chars"] = context_chars
+    entry.update(usage or {"prompt_tokens": None, "completion_tokens": None,
+                           "total_tokens": None})
     print(f"[LLM] {json.dumps(entry)}", flush=True)
+    return entry
 
 
-def call_llm(messages: list, agent_type: str, max_tokens=4000, timeout=None) -> str:
+def call_llm(messages: list, agent_type: str, max_tokens=4000, timeout=None,
+             project_id: str = None, label: str = None) -> str:
     """LLM call with a classified-error retry policy over the provider chain.
 
     Per model: one same-model retry on 429 (after a per-tier wait) or timeout;
@@ -153,8 +199,15 @@ def call_llm(messages: list, agent_type: str, max_tokens=4000, timeout=None) -> 
     pure waste); unclassified errors (404s, 5xx) also move to the next tier.
     Chain: primary -> fallback -> Ollama (when detected). Raises a typed
     LLMError subclass when the whole chain is exhausted.
+
+    `project_id`/`label` are optional attribution passed straight through to the
+    per-attempt record; callers that omit them still work, their rows just carry
+    no project. Returns the content string — the signature stays compatible so
+    all eleven existing call sites are untouched, and usage is captured as a
+    side effect rather than by widening the return type.
     """
     primary, fallback = MODELS.get(agent_type, MODELS["research"])
+    context_chars = sum(len(m.get("content") or "") for m in messages)
     chain = [primary, fallback]
     ollama = get_ollama_model()
     if ollama:
@@ -170,6 +223,12 @@ def call_llm(messages: list, agent_type: str, max_tokens=4000, timeout=None) -> 
             try:
                 injected = _fault_injection(agent_type, model)
                 if injected is not None:
+                    # Recorded like any other attempt (with null usage — no real
+                    # provider replied) so the zero-cost fake-generator suite can
+                    # exercise the metrics path without spending quota.
+                    _log_attempt(agent_type, model, attempt, "ok", started,
+                                 project_id=project_id, label=label,
+                                 context_chars=context_chars)
                     return injected
                 resp = completion(
                     model=model,
@@ -178,7 +237,9 @@ def call_llm(messages: list, agent_type: str, max_tokens=4000, timeout=None) -> 
                     temperature=0.3,
                     timeout=timeout,
                 )
-                _log_attempt(agent_type, model, attempt, "ok", started)
+                _log_attempt(agent_type, model, attempt, "ok", started,
+                             usage=_extract_usage(resp, model), project_id=project_id,
+                             label=label, context_chars=context_chars)
                 return resp.choices[0].message.content or ""
             except llm_exc.Timeout:
                 last_error = LLMTimeoutError(
@@ -191,13 +252,19 @@ def call_llm(messages: list, agent_type: str, max_tokens=4000, timeout=None) -> 
             except (llm_exc.AuthenticationError, llm_exc.PermissionDeniedError) as e:
                 last_error = LLMAuthError(f"{model} auth failed: {e}", agent_type, model)
                 auth_failures += 1
-                _log_attempt(agent_type, model, attempt, "auth", started)
+                _log_attempt(agent_type, model, attempt, "auth", started,
+                             project_id=project_id, label=label,
+                             context_chars=context_chars)
                 break  # bad key never fixes itself — next tier immediately
             except Exception as e:
                 last_error = LLMError(f"{model} failed: {e}", agent_type, model)
-                _log_attempt(agent_type, model, attempt, "error", started)
+                _log_attempt(agent_type, model, attempt, "error", started,
+                             project_id=project_id, label=label,
+                             context_chars=context_chars)
                 break  # unclassified (dead slug 404, 5xx, ...) — next tier
-            _log_attempt(agent_type, model, attempt, outcome, started)
+            _log_attempt(agent_type, model, attempt, outcome, started,
+                         project_id=project_id, label=label,
+                         context_chars=context_chars)
             if attempt == 1:
                 if outcome == "rate_limit":
                     time.sleep(RATE_LIMIT_WAITS[min(tier, len(RATE_LIMIT_WAITS) - 1)])
