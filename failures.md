@@ -1064,3 +1064,125 @@ provider's rate limit; the Gemini fallback is what makes that recoverable.
 | `gemini/gemini-2.5-flash` | yes | also reports `reasoning_tokens` under `completion_tokens_details` |
 | `groq/llama-3.3-70b-versatile` | yes | also reports server-side `queue_time`/`prompt_time` |
 | `openrouter/*` | **unverified** | could not test: the coder slug is delisted; QA's nemotron slug is alive but untested for usage |
+
+### Day 26 evidence table — measured baseline (project `day23-baseline`)
+
+Live run, real providers. Upstream research/requirements from the Day 21
+fixture; the coder phase ran a fixed 4-task plan (Day 22 precedent). Queryable
+again any time via `metrics_store` — this table is a snapshot, not the source.
+
+**Totals:** 20 attempts (9 ok, 11 failed), 20,983 input + 79,271 output =
+**100,254 tokens**, 722s summed LLM wall-clock.
+
+| agent | ok calls | avg in | avg out | total in | total out |
+|---|---|---|---|---|---|
+| planning | 1 | 5,631 | 21,472 | 5,631 | 21,472 |
+| qa | 2 | 1,840 | **17,110** | 3,680 | 34,220 |
+| architecture | 2 | 2,147 | 10,969 | 4,294 | 21,937 |
+| frontend_code | 4 | 1,845 | 411 | 7,378 | 1,642 |
+
+| agent | attempts | p50 | p95 | max |
+|---|---|---|---|---|
+| planning | 5 | **84.5s** | 90.2s | 90.2s |
+| qa | 3 | 7.9s | 354.4s | **354.4s** |
+| frontend_code | 6 | 0.8s | 5.2s | 5.2s |
+| architecture | 6 | 0.2s | 46.5s | 46.5s |
+
+**Slowest 2 agents: `planning` (p50 84.5s) and `qa` (max 354s).**
+**Top 2 by token spend: `planning` (27k) and `qa` (38k).**
+
+#### Where the measurements contradicted the expectations
+
+The brief predicted "architecture — large output; QA ~20k INPUT tokens". Both
+were wrong on this run, and the direction of the error matters for Day 26:
+
+- **QA is output-heavy, not input-heavy** — 1.8k in vs **17.1k out** per call.
+  The reasoning model (`nemotron-3-nano-omni-...-reasoning`) emits its reasoning
+  as completion tokens. The predicted ~20k input assumed a large codebase under
+  review; this run reviewed only 4 small files, so the input figure will grow on
+  a full project while the output figure is a property of the MODEL. Optimising
+  QA's *input* (context trimming) would have been aimed at the wrong half.
+- **`planning`, not `architecture`, is the most expensive agent** on both axes —
+  21.5k output tokens and an 84.5s p50. It emits the entire task plan as JSON in
+  one call, which is inherently the largest single output in the pipeline.
+- **QA's 354s max** is a single call against the OpenRouter reasoning model,
+  roughly 45x its own p50. Any per-run timeout budget must account for it.
+
+Caveat: 1-2 ok calls per agent. These are order-of-magnitude signals, not stable
+means. Day 25's three full integration projects are what turn them into a real
+baseline — do not tune thresholds on this table alone.
+
+#### Provider reliability, measured
+
+| model | ok | failed | failure mode |
+|---|---|---|---|
+| `groq/llama-3.3-70b-versatile` | 3 | **8** | rate_limit |
+| `gemini/gemini-2.5-flash` | 5 | 2 | timeout |
+| `openrouter/nvidia/nemotron-...-reasoning:free` | 1 | 1 | error |
+
+**8 of 11 failures were Groq rate limits — a direct consequence of today's
+triage fix** concentrating architecture/frontend_code/backend_code/database onto
+Groq as primary after `qwen3-coder:free` was delisted. The pipeline still
+completed (Gemini fallback absorbed it), but this is now the top routing risk
+and the instrumentation caught it on its first real run. Rebalancing primaries
+across providers is a Day 26 candidate, and there is now data to justify it.
+
+#### Parallel attribution proof (Task 6)
+
+Four coder files generated concurrently, real providers:
+
+| file | attempts | in | out |
+|---|---|---|---|
+| `NoteCard.jsx` | 1 | 1,678 | 383 |
+| `NoteList.jsx` | 1 | 1,712 | 148 |
+| `lib/api.js` | 1 | 1,673 | 200 |
+| `pages/NotesPage.jsx` | **3** | 2,315 | 911 |
+
+Every row carries its own filepath, and NotesPage's three attempts (rate-limit
+fallover) stayed attributed to NotesPage rather than smearing across the batch
+or collapsing onto the last-finished task. This is the explicit-identity design
+working — the failure mode it prevents would have made every per-file number
+above meaningless. Also asserted at zero cost in `test_metrics_attribution.py`.
+
+### Day 23 blocking bug found BY the instrumentation
+
+The first baseline run showed `planning` spending 24k input tokens and 66s to
+produce a plan that was then discarded. Root cause: `TaskSchema` rejected any
+filepath without a dot, so the moment the planner proposed `backend/Dockerfile`
+the entire plan failed validation — and the coder, validation and QA stages
+silently received an empty task list and generated nothing. Fixed by allowing
+conventional extensionless filenames. This class of failure (expensive work
+silently discarded) is exactly what per-attempt metrics make visible.
+
+### Honest limits on today's evidence
+- **The LangSmith dashboard has never been opened.** No API key was ever
+  configured, so the trace-emit path is implemented and its failure behaviour is
+  probed, but nothing about the rendered dashboard, trace nesting under phases,
+  or metadata filtering has been confirmed. Everything claimed about LangSmith
+  in `docs/OBSERVABILITY.md` beyond the degradation contract is untested.
+- **No full research->devops pipeline run.** Same quota reasoning as Days 18-22,
+  compounded by the Groq rate limiting above. `research`, `requirements`,
+  `backend_code`, `database` and `devops` have NO rows in the baseline table.
+- **The metrics UI was not exercised in a browser.** The endpoint was verified
+  live with curl (including the has_metrics=false path) and the components
+  compile under `vite build`, but the panel was not rendered in a running app.
+- Per-agent sample sizes are 1-2 successful calls. Treat every number above as
+  a direction, not a value.
+
+### Day 23 UI verification — what was real and what was staged
+The metrics panel and the Day 22 quality banner WERE rendered and clicked
+through in a browser (both servers running, `/projects/day23-baseline`):
+- Token/latency stats and the per-agent table showed the **real** measured
+  numbers above, fetched live from the endpoint.
+- The Day 22 "Show breakdown" popover opened and listed its rows — closing the
+  Day 22 open item "the banner was not exercised in a browser".
+
+Two defects were found this way that `vite build` could not catch: two identical
+"Run Metrics" cards at gate 4, and an attempt count overwriting the call count so
+planning read "5 calls" beside averages from its 1 successful call. Both fixed.
+
+**Caveat on the `day23-baseline` project row:** its LangGraph checkpoint was
+seeded by hand to park it at gate 4, and its `validation_report` values
+(25% failure rate, 1 phantom import) are **synthetic** — chosen to force the
+banner into its below-threshold state. The `agent_runs` metrics for that project
+are entirely real. Do not read that checkpoint as a genuine end-to-end run.
