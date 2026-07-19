@@ -210,6 +210,26 @@ def check_props_match(output, fx):
     return (not bad, "; ".join(bad) if bad else "")
 
 
+def check_props_complete(output, fx):
+    """D2, the other half. `props_match` only fails on a WRONG prop, so a page
+    that renders <Header /> with no props at all passes it trivially — while
+    being just as broken (the header renders no count, the form cannot submit).
+    This requires every prop in a rendered child's signature to actually be
+    passed. Without it the A/B rewards omission."""
+    sigs = fx.get("child_signatures") or {}
+    if not sigs:
+        return (True, "n/a")
+    src = _strip(output)
+    bad = []
+    for tag, props in sigs.items():
+        for attrs in re.findall(JSX_ATTR_RE.format(tag=tag), src, re.S):
+            passed = set(ATTR_NAME_RE.findall(attrs))
+            missing = [p for p in props if p not in passed]
+            if missing:
+                bad.append(f"<{tag}> missing {missing}")
+    return (not bad, "; ".join(bad) if bad else "")
+
+
 def check_py_compile(output, fx):
     src = _strip(output)
     try:
@@ -252,6 +272,7 @@ CHECKS = {
     "guards_api_data": check_guards_api_data,
     "endpoints_subset": check_endpoints_subset,
     "props_match": check_props_match,
+    "props_complete": check_props_complete,
     "py_compile": check_py_compile,
     "no_schema_redefinition": check_no_schema_redefinition,
     "no_pep604_union": check_no_pep604_union,
@@ -334,8 +355,18 @@ def run_ab(args):
     print(f"A={variants['A']}\nB={variants['B']}\n")
 
     for fx in fixtures:
-        context = rebuild_context(fx) if args.rebuild_context else fx["context"]
+        # The variable under test may be the PROMPT or the CONTEXT BUILDER.
+        # --rebuild-context b re-runs the live builder for variant B only, so a
+        # context change is A/B'd exactly like a prompt change: same prompt,
+        # frozen context vs rebuilt context.
+        contexts = {"A": fx["context"], "B": fx["context"]}
+        if args.rebuild_context:
+            rebuilt = rebuild_context(fx)
+            for vk in ("A", "B"):
+                if args.rebuild_context in ("both", vk.lower()):
+                    contexts[vk] = rebuilt
         for vk in ("A", "B"):
+            context = contexts[vk]
             for s in range(args.samples):
                 out = generate(prompts[vk], context, args.model, budget)
                 sc = score(out, fx)
@@ -449,9 +480,10 @@ def main():
     p.add_argument("--label", default="run")
     p.add_argument("--save", help="directory for sampled outputs")
     p.add_argument("--sleep", type=float, default=1.0, help="seconds between calls")
-    p.add_argument("--rebuild-context", action="store_true",
-                   help="re-run the real context builder instead of the frozen string "
-                        "(use when A/B-ing a context_builder change)")
+    p.add_argument("--rebuild-context", choices=["a", "b", "both"],
+                   help="re-run the live context builder instead of the frozen string, "
+                        "for this variant only. Use `b` to A/B a context_builder "
+                        "change: same prompt, frozen context vs rebuilt context.")
     p.add_argument("--append-report", action="store_true")
     p.add_argument("--rescore", metavar="DIR", help="offline re-score, zero API calls")
     p.add_argument("--freeze", action="store_true", help="rebuild fixtures from checkpoints")

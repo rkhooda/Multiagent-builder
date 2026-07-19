@@ -1,0 +1,70 @@
+import { useState, useEffect } from 'react';
+import api from '../lib/api';
+import formatDate from '../lib/formatDate';
+import EmptyState from './EmptyState';
+
+export default function NoteCard({ note }) {
+  const [tags, setTags] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    let active = true;
+    api
+      .get(`/api/notes/${note?.id}/tags`)
+      .then((res) => {
+        if (active) setTags(res.data ?? []);
+      })
+      .catch((err) => {
+        if (active) setError(err?.response?.data?.detail ?? 'Failed to load tags');
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [note?.id]);
+
+  const handleDelete = () => {
+    api
+      .delete(`/api/notes/${note?.id}`)
+      .then(() => {
+        // TODO: implement note deletion logic
+      })
+      .catch((err) => {
+        console.error(err);
+      });
+  };
+
+  if (loading) {
+    return <div className="p-6 text-center text-gray-500">Loading note…</div>;
+  }
+
+  if (error) {
+    return <div className="p-6 text-center text-red-600">{error}</div>;
+  }
+
+  return (
+    <div className="bg-white rounded-lg shadow-md p-4">
+      <h2 className="text-lg font-bold mb-2">{note?.title ?? 'Untitled'}</h2>
+      <p className="text-gray-600 mb-4">{note?.content ?? ''}</p>
+      <div className="flex flex-wrap mb-4">
+        {tags.map((tag) => (
+          <span key={tag?.id} className="bg-gray-100 text-gray-600 px-2 py-1 rounded mr-2">
+            {tag?.name ?? 'Unknown'}
+          </span>
+        ))}
+      </div>
+      <button
+        className="bg-red-500 hover:bg-red-700 text-white font-bold py-2 px-4 rounded"
+        onClick={handleDelete}
+      >
+        Delete
+      </button>
+      <p className="text-gray-400 text-xs mt-2">
+        Created at {formatDate(note?.created_at) ?? 'Unknown'}
+      </p>
+    </div>
+  );
+}

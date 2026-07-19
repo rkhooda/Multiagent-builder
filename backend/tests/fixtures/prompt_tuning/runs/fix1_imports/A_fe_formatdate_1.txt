@@ -1,0 +1,9 @@
+import { DateTime } from 'luxon';
+
+const formatDate = (dateString) => {
+  if (!dateString) return 'Unknown date';
+  const dt = DateTime.fromISO(dateString);
+  return dt.toFormat('yyyy-LL-dd');
+};
+
+export default formatDate;

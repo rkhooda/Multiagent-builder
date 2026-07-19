@@ -1,0 +1,59 @@
+import { useState, useEffect } from 'react';
+import api from '../lib/api';
+import Header from '../components/Header';
+import NoteForm from '../components/NoteForm';
+import NoteList from '../components/NoteList';
+
+export default function NotesPage() {
+  const [notes, setNotes] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    let active = true;
+    api
+      .get('/api/notes')
+      .then((res) => {
+        if (active) setNotes(res.data ?? []);
+      })
+      .catch((err) => {
+        if (active) setError(err?.response?.data?.detail ?? 'Failed to load notes');
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  if (loading) {
+    return (
+      <div className="h-screen flex items-center justify-center p-6 text-center text-gray-500">
+        Loading notes…
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="h-screen flex items-center justify-center p-6 text-center text-red-600">
+        {error}
+      </div>
+    );
+  }
+
+  return (
+    <div className="h-screen flex flex-col">
+      <Header />
+      <main className="flex-1 flex flex-col md:flex-row">
+        <div className="md:w-1/2 xl:w-1/3 p-6">
+          <NoteForm />
+        </div>
+        <div className="md:w-1/2 xl:w-2/3 p-6">
+          <NoteList notes={notes} />
+        </div>
+      </main>
+    </div>
+  );
+}

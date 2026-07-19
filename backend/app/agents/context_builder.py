@@ -252,6 +252,44 @@ def _folder_map(file_list: list, phase_prefix: str = "frontend/src") -> str:
     return "\n".join(f"  {p}" for p in paths)
 
 
+def _is_consumer(filepath: str) -> bool:
+    """A file that composes other components — a page or the app shell. These are
+    where prop-name mismatches happen, because they are the only files that pass
+    props rather than receive them."""
+    low = (filepath or "").lower()
+    return "/pages/" in low or low.rsplit("/", 1)[-1] in ("app.jsx", "app.tsx")
+
+
+def _sibling_signatures(filepath: str, file_list: list, generated_files: dict,
+                        already: set) -> list:
+    """Interface summaries of every already-generated component/hook a consumer
+    might import, regardless of what the planner put in `requires`.
+
+    Day 21 (D2): the planner's frontend dependency wiring is unreliable —
+    measured at 17% of tasks on one real run vs 87% on another. When `requires`
+    is empty the consumer sees no dependency block at all, so it cannot know that
+    NoteForm takes `onCreate` and invents `onCreated` instead. This mirrors what
+    `_build_backend_context` already does for models/schemas ("cross-file truth,
+    not trust") — discover from the file tree, not from the plan.
+
+    Signatures only (one line per file), never bodies: the prop contract is in
+    the destructured parameter list, which `extract_exports` already captures,
+    and a dozen one-line signatures cost ~200 chars against a 16K budget.
+    """
+    out = []
+    for path in sorted(file_list or []):
+        if path in already or path == filepath:
+            continue
+        low = path.lower()
+        if not ("/components/" in low or "/hooks/" in low):
+            continue
+        content = generated_files.get(path)
+        if not content:
+            continue
+        out.append(f"--- {path} (interface) ---\n{extract_exports(content)}")
+    return out
+
+
 def _tasks_by_id(implementation_plan_str: str) -> dict:
     try:
         tasks = json.loads(implementation_plan_str)
@@ -329,6 +367,14 @@ def _build_frontend_context(task: dict, state: dict, phase_prefix: str = "fronte
             dep_blocks.append(f"--- {dep_path} (exports) ---\n{extract_exports(content)}")
             dep_are_full.append(False)
 
+    # Consumers additionally see the interface of every generated component/hook,
+    # whether or not the planner wired it into `requires` (D2).
+    sibling_blocks = []
+    if _is_consumer(filepath):
+        already = {by_id[d].get("filepath") for d in (task.get("requires") or [])
+                   if by_id.get(d)}
+        sibling_blocks = _sibling_signatures(filepath, file_list, generated_files, already)
+
     folder_map = _folder_map(file_list, phase_prefix)
 
     def assemble() -> str:
@@ -347,6 +393,12 @@ def _build_frontend_context(task: dict, state: dict, phase_prefix: str = "fronte
             parts += ["", "ARCHITECTURE — COMPONENTS / FRONTEND LAYOUT", component_block]
         if dep_blocks:
             parts += ["", "DEPENDENCY FILES (already generated — import from these)"] + dep_blocks
+        if sibling_blocks:
+            parts += [
+                "",
+                "COMPONENT INTERFACES (already generated — if you render one of "
+                "these, pass EXACTLY the props in its signature, spelled identically)",
+            ] + sibling_blocks
         if folder_map:
             parts += [
                 "",

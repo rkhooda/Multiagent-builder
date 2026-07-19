@@ -1,0 +1,170 @@
+{
+  "model": "groq/llama-3.3-70b-versatile",
+  "samples": 3,
+  "variant_a": "/Users/rkhooda/Desktop/Coding/Projects/multiagent-builder/prompts/frontend_coder_agent.md",
+  "variant_b": "/Users/rkhooda/.claude/jobs/1d2f06fc/tmp/variants/fe_B1.md",
+  "runs": [
+    {
+      "variant": "A",
+      "fixture": "fe_formatdate",
+      "sample": 0,
+      "output": "```javascript\nimport { DateTime } from 'luxon';\n\nconst formatDate = (isoDate) => {\n  if (!isoDate) return 'Unknown date';\n  const date = DateTime.fromISO(isoDate);\n  return date.toLocaleString(DateTime.DATE_MED);\n};\n\nexport default formatDate;\n```",
+      "scores": {
+        "no_fences": false,
+        "min_lines": true,
+        "imports_resolve": false,
+        "no_css_import": true
+      }
+    },
+    {
+      "variant": "A",
+      "fixture": "fe_formatdate",
+      "sample": 1,
+      "output": "import { DateTime } from 'luxon';\n\nconst formatDate = (dateString) => {\n  if (!dateString) return 'Unknown date';\n  const dt = DateTime.fromISO(dateString);\n  return dt.toFormat('yyyy-LL-dd');\n};\n\nexport default formatDate;",
+      "scores": {
+        "no_fences": true,
+        "min_lines": true,
+        "imports_resolve": false,
+        "no_css_import": true
+      }
+    },
+    {
+      "variant": "A",
+      "fixture": "fe_formatdate",
+      "sample": 2,
+      "output": "import { format } from 'date-fns';\n\nconst formatDate = (dateString) => {\n  if (!dateString) return 'Unknown';\n  const date = new Date(dateString);\n  return format(date, 'MMM d, yyyy');\n};\n\nexport default formatDate;",
+      "scores": {
+        "no_fences": true,
+        "min_lines": true,
+        "imports_resolve": false,
+        "no_css_import": true
+      }
+    },
+    {
+      "variant": "B",
+      "fixture": "fe_formatdate",
+      "sample": 0,
+      "output": "import { Intl } from 'intl';\nimport { DateTimeFormat } from 'intl-datetimeformat';\n\nconst formatDate = (dateString) => {\n  if (!dateString) return 'Unknown date';\n  const date = new Date(dateString);\n  const formatter = new Intl.DateTimeFormat('en-US', {\n    year: 'numeric',\n    month: 'short',\n    day: 'numeric',\n  });\n  return formatter.format(date);\n};\n\nexport { formatDate };",
+      "scores": {
+        "no_fences": true,
+        "min_lines": true,
+        "imports_resolve": false,
+        "no_css_import": true
+      }
+    },
+    {
+      "variant": "B",
+      "fixture": "fe_formatdate",
+      "sample": 1,
+      "output": "import { useState } from 'react';\n\nconst formatDate = (dateString) => {\n  const date = new Date(dateString);\n  const year = date.getFullYear();\n  const month = date.toLocaleString('default', { month: 'short' });\n  const day = date.getDate();\n  return `${month} ${day}, ${year}`;\n};\n\nexport { formatDate };",
+      "scores": {
+        "no_fences": true,
+        "min_lines": true,
+        "imports_resolve": true,
+        "no_css_import": true
+      }
+    },
+    {
+      "variant": "B",
+      "fixture": "fe_formatdate",
+      "sample": 2,
+      "output": "import { useState } from 'react';\n\nconst formatDate = (dateString) => {\n  const date = new Date(dateString);\n  const year = date.getFullYear();\n  const month = date.toLocaleString('default', { month: 'short' });\n  const day = date.getDate();\n  return `${month} ${day}, ${year}`;\n};\n\nexport { formatDate };",
+      "scores": {
+        "no_fences": true,
+        "min_lines": true,
+        "imports_resolve": true,
+        "no_css_import": true
+      }
+    },
+    {
+      "variant": "A",
+      "fixture": "fe_notecard",
+      "sample": 0,
+      "output": "import { useState, useEffect } from 'react';\nimport api from '../lib/api';\nimport formatDate from '../lib/formatDate';\nimport EmptyState from './EmptyState';\n\nexport default function NoteCard({ note }) {\n  const [tags, setTags] = useState([]);\n  const [loading, setLoading] = useState(true);\n  const [error, setError] = useState(null);\n\n  useEffect(() => {\n    let active = true;\n    api\n      .get(`/api/notes/${note?.id}/tags`)\n      .then((res) => {\n        if (active) setTags(res.data ?? []);\n      })\n      .catch((err) => {\n        if (active) setError(err?.response?.data?.detail ?? 'Failed to load tags');\n      })\n      .finally(() => {\n        if (active) setLoading(false);\n      });\n    return () => {\n      active = false;\n    };\n  }, [note?.id]);\n\n  const handleDelete = () => {\n    api\n      .delete(`/api/notes/${note?.id}`)\n      .then(() => {\n        // TODO: refresh note list\n      })\n      .catch((err) => {\n        setError(err?.response?.data?.detail ?? 'Failed to delete note');\n      });\n  };\n\n  if (loading) {\n    return <div className=\"p-6 text-center text-gray-500\">Loading note\u2026</div>;\n  }\n\n  if (error) {\n    return <div className=\"p-6 text-center text-red-600\">{error}</div>;\n  }\n\n  if (!note) {\n    return <EmptyState />;\n  }\n\n  return (\n    <div className=\"bg-white rounded-lg shadow-md p-4\">\n      <h2 className=\"text-lg font-bold mb-2\">{note?.title ?? 'Untitled'}</h2>\n      <p className=\"text-gray-600 mb-4\">{note?.content ?? ''}</p>\n      <ul className=\"flex flex-wrap mb-4\">\n        {tags.map((tag) => (\n          <li key={tag?.id} className=\"mr-2 mb-2 bg-gray-100 rounded-lg px-2 py-1 text-gray-600\">\n            {tag?.name ?? 'Unknown'}\n          </li>\n        ))}\n      </ul>\n      <div className=\"flex justify-between\">\n        <span className=\"text-gray-600 text-xs\">{formatDate(note?.created_at ?? '')}</span>\n        <button\n          className=\"bg-red-500 hover:bg-red-700 text-white font-bold py-2 px-4 rounded-lg\"\n          onClick={handleDelete}\n        >\n          Delete\n        </button>\n      </div>\n    </div>\n  );\n}",
+      "scores": {
+        "no_fences": true,
+        "min_lines": true,
+        "imports_resolve": true,
+        "no_css_import": true,
+        "has_default_export": true,
+        "guards_api_data": true,
+        "endpoints_subset": true
+      }
+    },
+    {
+      "variant": "A",
+      "fixture": "fe_notecard",
+      "sample": 1,
+      "output": "import api from '../lib/api';\nimport formatDate from '../lib/formatDate';\nimport { useState, useEffect } from 'react';\nimport EmptyState from './EmptyState';\n\nexport default function NoteCard({ note }) {\n  const [tags, setTags] = useState([]);\n  const [loading, setLoading] = useState(true);\n  const [error, setError] = useState(null);\n\n  useEffect(() => {\n    let active = true;\n    api\n      .get(`/api/notes/${note?.id}/tags`)\n      .then((res) => {\n        if (active) setTags(res.data ?? []);\n      })\n      .catch((err) => {\n        if (active) setError(err?.response?.data?.detail ?? 'Failed to load tags');\n      })\n      .finally(() => {\n        if (active) setLoading(false);\n      });\n    return () => {\n      active = false;\n    };\n  }, [note?.id]);\n\n  const handleDelete = () => {\n    api\n      .delete(`/api/notes/${note?.id}`)\n      .then(() => {\n        // TODO: refresh note list\n      })\n      .catch((err) => {\n        setError(err?.response?.data?.detail ?? 'Failed to delete note');\n      });\n  };\n\n  if (loading) {\n    return <div className=\"p-6 text-center text-gray-500\">Loading note\u2026</div>;\n  }\n\n  if (error) {\n    return <div className=\"p-6 text-center text-red-600\">{error}</div>;\n  }\n\n  if (!note) {\n    return <EmptyState />;\n  }\n\n  return (\n    <div className=\"bg-white rounded-lg shadow-md p-4\">\n      <h2 className=\"text-lg font-bold mb-2\">{note?.title ?? 'Untitled'}</h2>\n      <p className=\"text-gray-600 mb-4\">{note?.content ?? ''}</p>\n      <ul className=\"flex flex-wrap mb-4\">\n        {tags.map((tag) => (\n          <li key={tag?.id} className=\"bg-gray-100 text-gray-600 py-1 px-2 mr-2 rounded\">\n            {tag?.name ?? 'Unknown'}\n          </li>\n        ))}\n      </ul>\n      <div className=\"flex justify-between\">\n        <span className=\"text-gray-400\">{formatDate(note?.created_at) ?? 'Unknown'}</span>\n        <button\n          onClick={handleDelete}\n          className=\"bg-red-500 hover:bg-red-700 text-white font-bold py-1 px-2 rounded\"\n        >\n          Delete\n        </button>\n      </div>\n    </div>\n  );\n}",
+      "scores": {
+        "no_fences": true,
+        "min_lines": true,
+        "imports_resolve": true,
+        "no_css_import": true,
+        "has_default_export": true,
+        "guards_api_data": true,
+        "endpoints_subset": true
+      }
+    },
+    {
+      "variant": "A",
+      "fixture": "fe_notecard",
+      "sample": 2,
+      "output": "import React from 'react';\nimport api from '../lib/api';\nimport formatDate from '../lib/formatDate';\n\nexport default function NoteCard({ note }) {\n  const [tags, setTags] = React.useState([]);\n  const [loading, setLoading] = React.useState(true);\n  const [error, setError] = React.useState(null);\n\n  React.useEffect(() => {\n    let active = true;\n    api\n      .get(`/api/notes/${note?.id}/tags`)\n      .then((res) => {\n        if (active) setTags(res.data ?? []);\n      })\n      .catch((err) => {\n        if (active) setError(err?.response?.data?.detail ?? 'Failed to load tags');\n      })\n      .finally(() => {\n        if (active) setLoading(false);\n      });\n    return () => {\n      active = false;\n    };\n  }, [note?.id]);\n\n  const handleDelete = () => {\n    api\n      .delete(`/api/notes/${note?.id}`)\n      .then(() => {\n        // TODO: refresh note list\n      })\n      .catch((err) => {\n        console.error(err);\n      });\n  };\n\n  if (loading) {\n    return <div className=\"p-6 text-center text-gray-500\">Loading note\u2026</div>;\n  }\n\n  if (error) {\n    return <div className=\"p-6 text-center text-red-600\">{error}</div>;\n  }\n\n  return (\n    <div className=\"bg-white rounded-lg shadow-md p-4\">\n      <h2 className=\"text-lg font-bold mb-2\">{note?.title ?? 'Untitled'}</h2>\n      <p className=\"text-gray-600 mb-4\">{note?.content ?? ''}</p>\n      <ul className=\"flex flex-wrap mb-4\">\n        {tags.map((tag) => (\n          <li key={tag?.id} className=\"bg-gray-200 py-1 px-2 mr-2 rounded\">\n            {tag?.name ?? 'Unknown'}\n          </li>\n        ))}\n      </ul>\n      <div className=\"flex justify-between\">\n        <span className=\"text-xs text-gray-400\">{formatDate(note?.created_at) ?? 'Unknown'}</span>\n        <button\n          className=\"bg-red-500 hover:bg-red-700 text-white font-bold py-1 px-2 rounded\"\n          onClick={handleDelete}\n        >\n          Delete\n        </button>\n      </div>\n    </div>\n  );\n}",
+      "scores": {
+        "no_fences": true,
+        "min_lines": true,
+        "imports_resolve": true,
+        "no_css_import": true,
+        "has_default_export": true,
+        "guards_api_data": true,
+        "endpoints_subset": true
+      }
+    },
+    {
+      "variant": "B",
+      "fixture": "fe_notecard",
+      "sample": 0,
+      "output": "import { useState, useEffect } from 'react';\nimport api from '../lib/api';\nimport formatDate from '../lib/formatDate';\nimport EmptyState from './EmptyState';\n\nexport default function NoteCard({ note }) {\n  const [tags, setTags] = useState([]);\n  const [loading, setLoading] = useState(true);\n  const [error, setError] = useState(null);\n\n  useEffect(() => {\n    let active = true;\n    api\n      .get(`/api/notes/${note?.id}/tags`)\n      .then((res) => {\n        if (active) setTags(res.data ?? []);\n      })\n      .catch((err) => {\n        if (active) setError(err?.response?.data?.detail ?? 'Failed to load tags');\n      })\n      .finally(() => {\n        if (active) setLoading(false);\n      });\n    return () => {\n      active = false;\n    };\n  }, [note?.id]);\n\n  const handleDelete = () => {\n    api\n      .delete(`/api/notes/${note?.id}`)\n      .then(() => {\n        // TODO: implement note deletion logic\n      })\n      .catch((err) => {\n        console.error(err);\n      });\n  };\n\n  if (loading) {\n    return <div className=\"p-6 text-center text-gray-500\">Loading note\u2026</div>;\n  }\n\n  if (error) {\n    return <div className=\"p-6 text-center text-red-600\">{error}</div>;\n  }\n\n  return (\n    <div className=\"bg-white rounded-lg shadow-md p-4\">\n      <h2 className=\"text-lg font-bold mb-2\">{note?.title ?? 'Untitled'}</h2>\n      <p className=\"text-gray-600 mb-4\">{note?.content ?? ''}</p>\n      <div className=\"flex flex-wrap mb-4\">\n        {tags.map((tag) => (\n          <span key={tag?.id} className=\"bg-gray-100 text-gray-600 px-2 py-1 rounded mr-2\">\n            {tag?.name ?? 'Unknown'}\n          </span>\n        ))}\n      </div>\n      <button\n        className=\"bg-red-500 hover:bg-red-700 text-white font-bold py-2 px-4 rounded\"\n        onClick={handleDelete}\n      >\n        Delete\n      </button>\n      <p className=\"text-gray-400 text-xs mt-2\">\n        Created at {formatDate(note?.created_at) ?? 'Unknown'}\n      </p>\n    </div>\n  );\n}",
+      "scores": {
+        "no_fences": true,
+        "min_lines": true,
+        "imports_resolve": true,
+        "no_css_import": true,
+        "has_default_export": true,
+        "guards_api_data": true,
+        "endpoints_subset": true
+      }
+    },
+    {
+      "variant": "B",
+      "fixture": "fe_notecard",
+      "sample": 1,
+      "output": "```javascript\nimport { useState, useEffect } from 'react';\nimport api from '../lib/api';\nimport formatDate from '../lib/formatDate';\nimport EmptyState from './EmptyState';\n\nexport default function NoteCard({ note }) {\n  const [tags, setTags] = useState([]);\n  const [loading, setLoading] = useState(true);\n  const [error, setError] = useState(null);\n\n  useEffect(() => {\n    let active = true;\n    api\n      .get(`/api/notes/${note?.id}/tags`)\n      .then((res) => {\n        if (active) setTags(res.data ?? []);\n      })\n      .catch((err) => {\n        if (active) setError(err?.response?.data?.detail ?? 'Failed to load tags');\n      })\n      .finally(() => {\n        if (active) setLoading(false);\n      });\n    return () => {\n      active = false;\n    };\n  }, [note?.id]);\n\n  const handleDelete = () => {\n    api\n      .delete(`/api/notes/${note?.id}`)\n      .then(() => {\n        // TODO: refresh the note list\n      })\n      .catch((err) => {\n        setError(err?.response?.data?.detail ?? 'Failed to delete note');\n      });\n  };\n\n  if (loading) {\n    return <div className=\"p-6 text-center text-gray-500\">Loading note\u2026</div>;\n  }\n\n  if (error) {\n    return <div className=\"p-6 text-center text-red-600\">{error}</div>;\n  }\n\n  if (!note) {\n    return <EmptyState />;\n  }\n\n  return (\n    <div className=\"bg-white rounded-lg shadow-md p-4\">\n      <h2 className=\"text-lg font-bold mb-2\">{note?.title ?? 'Untitled'}</h2>\n      <p className=\"text-gray-600 mb-4\">{note?.content ?? ''}</p>\n      <ul className=\"flex flex-wrap mb-4\">\n        {tags.map((tag) => (\n          <li key={tag?.id} className=\"bg-gray-100 text-gray-600 px-2 py-1 mr-2 rounded\">\n            {tag?.name}\n          </li>\n        ))}\n      </ul>\n      <button\n        className=\"bg-red-500 hover:bg-red-700 text-white font-bold py-2 px-4 rounded\"\n        onClick={handleDelete}\n      >\n        Delete\n      </button>\n      <p className=\"text-gray-400 text-xs mt-2\">\n        Created at {formatDate(note?.created_at) ?? 'Unknown'}\n      </p>\n    </div>\n  );\n}\n```",
+      "scores": {
+        "no_fences": false,
+        "min_lines": true,
+        "imports_resolve": true,
+        "no_css_import": true,
+        "has_default_export": true,
+        "guards_api_data": true,
+        "endpoints_subset": true
+      }
+    },
+    {
+      "variant": "B",
+      "fixture": "fe_notecard",
+      "sample": 2,
+      "output": "import { useState, useEffect } from 'react';\nimport api from '../lib/api';\nimport formatDate from '../lib/formatDate';\nimport EmptyState from './EmptyState';\n\nexport default function NoteCard({ note }) {\n  const [tags, setTags] = useState([]);\n  const [loading, setLoading] = useState(true);\n  const [error, setError] = useState(null);\n\n  useEffect(() => {\n    let active = true;\n    api\n      .get(`/api/notes/${note?.id}/tags`)\n      .then((res) => {\n        if (active) setTags(res.data ?? []);\n      })\n      .catch((err) => {\n        if (active) setError(err?.response?.data?.detail ?? 'Failed to load tags');\n      })\n      .finally(() => {\n        if (active) setLoading(false);\n      });\n    return () => {\n      active = false;\n    };\n  }, [note?.id]);\n\n  const handleDelete = () => {\n    api\n      .delete(`/api/notes/${note?.id}`)\n      .then(() => {\n        // TODO: refresh the note list\n      })\n      .catch((err) => {\n        console.error(err);\n      });\n  };\n\n  if (loading) {\n    return <div className=\"p-6 text-center text-gray-500\">Loading note\u2026</div>;\n  }\n\n  if (error) {\n    return <div className=\"p-6 text-center text-red-600\">{error}</div>;\n  }\n\n  if (!note) {\n    return <EmptyState />;\n  }\n\n  return (\n    <div className=\"bg-white rounded-lg shadow-md p-4\">\n      <h2 className=\"text-lg font-bold mb-2\">{note?.title ?? 'Untitled'}</h2>\n      <p className=\"text-gray-600 mb-4\">{note?.content ?? ''}</p>\n      <ul className=\"flex flex-wrap mb-4\">\n        {tags.map((tag) => (\n          <li key={tag?.id} className=\"bg-gray-100 text-gray-600 px-2 py-1 rounded-md mr-2 mb-2\">\n            {tag?.name ?? 'Unknown'}\n          </li>\n        ))}\n      </ul>\n      <button\n        onClick={handleDelete}\n        className=\"bg-red-500 hover:bg-red-700 text-white font-bold py-2 px-4 rounded\"\n      >\n        Delete\n      </button>\n      <p className=\"text-gray-400 text-xs mt-2\">\n        Created at {formatDate(note?.created_at) ?? 'Unknown'}\n      </p>\n    </div>\n  );\n}",
+      "scores": {
+        "no_fences": true,
+        "min_lines": true,
+        "imports_resolve": true,
+        "no_css_import": true,
+        "has_default_export": true,
+        "guards_api_data": true,
+        "endpoints_subset": true
+      }
+    }
+  ]
+}

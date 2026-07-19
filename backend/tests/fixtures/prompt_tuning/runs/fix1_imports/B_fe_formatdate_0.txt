@@ -1,0 +1,15 @@
+import { Intl } from 'intl';
+import { DateTimeFormat } from 'intl-datetimeformat';
+
+const formatDate = (dateString) => {
+  if (!dateString) return 'Unknown date';
+  const date = new Date(dateString);
+  const formatter = new Intl.DateTimeFormat('en-US', {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+  });
+  return formatter.format(date);
+};
+
+export { formatDate };

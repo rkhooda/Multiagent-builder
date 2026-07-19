@@ -22,6 +22,7 @@
     "no_css_import",
     "has_default_export",
     "props_match",
+    "props_complete",
     "guards_api_data"
   ],
   "state": {

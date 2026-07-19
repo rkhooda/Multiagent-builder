@@ -1,0 +1,9 @@
+import { format } from 'date-fns';
+
+const formatDate = (dateString) => {
+  if (!dateString) return 'Unknown';
+  const date = new Date(dateString);
+  return format(date, 'MMM d, yyyy');
+};
+
+export default formatDate;

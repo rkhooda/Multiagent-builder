@@ -1,0 +1,11 @@
+```javascript
+import { DateTime } from 'luxon';
+
+const formatDate = (isoDate) => {
+  if (!isoDate) return 'Unknown date';
+  const date = DateTime.fromISO(isoDate);
+  return date.toLocaleString(DateTime.DATE_MED);
+};
+
+export default formatDate;
+```

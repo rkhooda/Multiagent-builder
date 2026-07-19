@@ -99,3 +99,63 @@ regeneration. Guard warns at 25, stops at 30.
 - **Golden files**: 4 passing B samples under
   `backend/tests/fixtures/prompt_tuning/golden/`, all re-scoring clean.
 - **Cost**: 12 groq calls, **0 OpenRouter**.
+
+### Entry 2 — context builder (NOT a prompt): sibling component interfaces
+
+- **File**: `backend/app/agents/context_builder.py` — recorded here because it
+  changes what the coder sees, which is the same contract a prompt edit changes.
+- **Defect**: D2 — prop/interface mismatch across a file seam. `NotesPage` passes
+  `onCreated=` to a `NoteForm` that accepts `onCreate`, and `count=` to a `Header`
+  that accepts `noteCount`. Severity **breaks-feature** (note creation silently
+  no-ops).
+- **Attribution**: **CONTEXT BUILDER / PLANNER — not the prompt.** `failures.md`
+  Day 18 blamed the exports extractor for dropping prop names. Re-running it
+  proves otherwise: it emits `export default function NoteForm({ onCreate }) {`
+  verbatim, and `Header.jsx` (448 chars) fell under the full-injection threshold
+  and was injected whole. Acting on the Day 18 note would have rewritten an
+  extractor that already works.
+  The real second cause is the planner: frontend `requires` wiring measured
+  **3/17 (17%)** on the NotesTags run vs **21/24 (87%)** on FreelanceInvoicer.
+  With `requires` empty the consumer gets **no dependency block at all**, so no
+  prompt rule can help — the truth is simply absent.
+- **Hypothesis**: injecting the one-line interface of every already-generated
+  component/hook into consumer files (pages, App), independent of `requires`,
+  puts the prop contract in front of the model in the 83% of cases the planner
+  misses. Mirrors what `_build_backend_context` already does for models/schemas
+  ("cross-file truth, not trust") rather than inventing a new mechanism.
+- **Measured by**: `props_match` (target) on `fe_notespage_unwired` — the task
+  exactly as the real planner emitted it, `requires=[]`. N=3.
+- **Deterministic pre-check** (0 API calls): rebuilding the unwired fixture's
+  context grows it 2389 → 3282 chars and `onCreate`, `noteCount`, `onDelete` go
+  from absent to present. Signatures only, never bodies: ~890 chars against a
+  16K budget.
+- **Result**: see below.
+- **Result** (`groq/llama-3.3-70b-versatile`, N=3, 6 samples, `--rebuild-context b`):
+
+  | Criterion | A (frozen ctx) | B (rebuilt ctx) | Δ |
+  |---|---|---|---|
+  | `props_complete` **(target)** | 0/3 (0%) | 3/3 (100%) | **+100 pts** |
+  | `props_match` | 3/3 (100%) | 3/3 (100%) | 0 |
+  | `no_fences` | 3/3 | 3/3 | 0 |
+  | `min_lines` | 3/3 | 3/3 | 0 |
+  | `imports_resolve` | 3/3 | 3/3 | 0 |
+  | `has_default_export` | 3/3 | 3/3 | 0 |
+
+- **VERDICT: KEEP.**
+- **The first run returned the wrong verdict, and why that matters.** Scored only
+  on `props_match`, A passed 3/3 and the rule said REVERT. Inspecting the samples
+  showed A rendering `<Header />`, `<NoteForm />`, `<NoteList notes={notes} />` —
+  passing **no props at all**. `props_match` only fails on a *wrong* prop, so
+  omitting the seam entirely scored as success while being just as broken: the
+  header renders no count and the form cannot submit.
+  The criterion was one-sided, not the change. Added `props_complete` (every prop
+  in a rendered child's signature must actually be passed) and **re-scored the
+  already-saved samples offline — zero additional API calls**. This is precisely
+  what `--rescore` exists for, and it is the day's strongest argument for saving
+  raw outputs rather than only pass/fail counts.
+  Lesson for the protocol: a criterion that can only detect a *wrong* value will
+  quietly reward *absent* values. Pair every "not wrong" check with a
+  "present and complete" check.
+- **Golden files**: 3 passing B samples added; 7/7 golden re-score clean.
+- **Regression**: 9/9 scheduler, 14/14 import fixer.
+- **Cost**: 6 groq calls, **0 OpenRouter**. (Re-scoring: 0.)
