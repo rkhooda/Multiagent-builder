@@ -293,15 +293,31 @@ def rebuild_context(fx):
 
 
 # ── run ─────────────────────────────────────────────────────────────────────
-def generate(prompt_text, context, model, budget, max_tokens=1500):
+def generate(prompt_text, context, model, budget, max_tokens=1500, retries=6):
+    """One sampled generation. Retries on 429 with the provider's own suggested
+    wait — groq's free tier caps tokens-per-minute (12k), which a 3500-token
+    A/B sample trips every ~3 calls. A retried 429 is the SAME logical sample,
+    so budget is spent once, on success only."""
+    import re as _re
     from litellm import completion
+    import litellm.exceptions as _exc
+
     budget.check(model)
     messages = [{"role": "system", "content": prompt_text},
                 {"role": "user", "content": context}]
-    resp = completion(model=model, messages=messages, max_tokens=max_tokens,
-                      temperature=0.3, timeout=90)
-    budget.spend(model)
-    return resp.choices[0].message.content or ""
+    for attempt in range(retries):
+        try:
+            resp = completion(model=model, messages=messages, max_tokens=max_tokens,
+                              temperature=0.3, timeout=90)
+            budget.spend(model)
+            return resp.choices[0].message.content or ""
+        except _exc.RateLimitError as e:
+            if attempt == retries - 1:
+                raise
+            m = _re.search(r"try again in ([\d.]+)s", str(e))
+            wait = float(m.group(1)) + 1.0 if m else 20.0
+            print(f"      (429; waiting {wait:.0f}s)", flush=True)
+            time.sleep(wait)
 
 
 def run_ab(args):

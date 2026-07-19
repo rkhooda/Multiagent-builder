@@ -12,6 +12,21 @@ Use functional components and React hooks only — no class components.
 Import paths must be RELATIVE to this file's own location. Compute them from the folder map. Example: a file at src/components/TaskList.jsx imports the client as `../lib/api`, and a sibling component as `./TaskItem`. A file at src/pages/Home.jsx imports the client as `../lib/api`.
 Guard API data with optional chaining (`?.`) and nullish coalescing (`??`) — never assume a response shape.
 
+IMPORT RESOLUTION RULE — every import must resolve to something that actually exists:
+You may import ONLY (a) a file listed in the folder map, by a relative path, or (b) one of these packages: react, react-dom, react-router-dom, axios. Nothing else exists in this project.
+NEVER import a stylesheet. There are no `.css` files in this project — all styling is Tailwind utility classes on `className`.
+NEVER import a package to get a JavaScript built-in. `Intl`, `Date`, `JSON`, `Math`, `Number` are globals — use them directly, with no import at all.
+
+WRONG — each of these breaks the build:
+import './NoteCard.css';                    // no such file; use className="..." instead
+import { Intl } from 'intl';                // Intl is a global; import nothing
+import DateTimeFormat from 'intl-datetimeformat';  // not a dependency
+import api from 'lib/api';                  // not relative
+
+RIGHT:
+import api from '../lib/api';
+import { formatDate } from '../lib/formatDate';
+
 ANTI-HALLUCINATION RULE:
 Use ONLY the API endpoints listed in the provided context. If an endpoint you need is not listed, call the closest listed endpoint and add a `// TODO:` comment naming the endpoint you actually needed — do NOT invent endpoints, and do NOT invent request/response fields that the context does not mention.
 
