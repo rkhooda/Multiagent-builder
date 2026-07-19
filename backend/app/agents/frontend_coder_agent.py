@@ -16,7 +16,7 @@ from pathlib import Path
 
 from app.exceptions import LLMError
 from app.utils.file_writer import process_generated_file
-from app.validation import call_validated
+from app.validation import call_validated, syntax_of
 from .context_builder import build_file_context
 from .parallel_runner import run_phase
 from .utils import get_tasks_for_phase
@@ -99,6 +99,10 @@ def frontend_coder_agent(state: dict) -> dict:
             messages, "frontend_code", state, max_tokens=1500,
             original_instruction="Output ONLY the file's code — no fences, no prose.",
             log=None,
+            # Day 22: covers .json artifacts written by this phase. .jsx needs a
+            # node subprocess, so it is checked in the batched validation_pass —
+            # spawning node per file across parallel workers is the trap.
+            extra_validators=[syntax_of(task.get("filepath", ""))],
         )
         return process_generated_file(project_id, task, raw, file_tree=file_tree)
 

@@ -92,31 +92,6 @@ def write_project_file(project_id: str, filepath: str, content: str, add_header:
         }
 
 
-def js_syntax_sanity(content: str, filepath: str) -> list:
-    """Cheap structural sanity for JS/JSX/TS files — NOT a parser.
-
-    Returns a list of warning strings (empty = looks structurally OK). These
-    are warnings, never fatal: brace/paren counting is naive about strings and
-    comments, so a mismatch is a hint, not proof. Day 22 deep-validation
-    (acorn AST parse, import resolution, endpoint cross-check) is the hook
-    point that replaces these heuristics.
-    """
-    ext = Path(filepath).suffix.lower()
-    if ext not in {'.js', '.jsx', '.ts', '.tsx', '.mjs'}:
-        return []
-    if not content.strip():
-        return ["file is empty after cleaning"]
-
-    warnings = []
-    if content.count('{') != content.count('}'):
-        warnings.append(f"unbalanced braces ({content.count('{')} open / {content.count('}')} close)")
-    if content.count('(') != content.count(')'):
-        warnings.append(f"unbalanced parens ({content.count('(')} open / {content.count(')')} close)")
-    if 'import ' not in content and 'export ' not in content:
-        warnings.append("no import or export statement — likely truncated or prose")
-    return warnings
-
-
 @dataclass
 class ProcessedFile:
     """Result of processing one generated file — PURE data, no shared state.
@@ -154,7 +129,13 @@ def process_generated_file(project_id: str, task: dict, raw_output: str,
     """
     filepath = task.get("filepath", "")
     clean = strip_code_fences(raw_output)
-    warnings = js_syntax_sanity(clean, filepath)
+    # Day 22: real in-process parsers (ast/compile for .py, json/yaml for
+    # artifacts) replace the Day 18 brace heuristic. Free, so it runs on every
+    # file regardless of which agent produced it — including agents that do not
+    # route through call_validated. JS/JSX is absent here on purpose: it needs a
+    # node subprocess, batched post-phase in validation_pass.
+    from ..validation.syntax import validate_content
+    warnings = [i.describe() for i in validate_content(clean, filepath)]
 
     import_warnings = []
     if apply_import_fixer:

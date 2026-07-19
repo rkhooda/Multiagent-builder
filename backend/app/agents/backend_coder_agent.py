@@ -24,7 +24,7 @@ from app.utils.backend_infra import (
     render_main,
     render_requirements,
 )
-from app.validation import call_validated
+from app.validation import call_validated, syntax_of
 from .context_builder import build_file_context, backend_file_kind, _resource_of, _same_resource
 from .parallel_runner import run_phase
 from .utils import get_tasks_for_phase, assert_single_owner
@@ -172,6 +172,10 @@ def backend_coder_agent(state: dict) -> dict:
             messages, "backend_code", state, max_tokens=1500,
             original_instruction="Output ONLY the file's code — no fences, no prose.",
             log=None,
+            # Day 22: real ast/compile parse of THIS file, inside the existing
+            # one-repair budget. A syntactically dead model is not worth the
+            # routers generated against it, so this catches it at write time.
+            extra_validators=[syntax_of(task.get("filepath", ""))],
         )
         return process_generated_file(
             project_id, task, raw, file_tree=file_tree, apply_import_fixer=True)

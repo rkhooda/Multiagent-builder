@@ -41,6 +41,32 @@ def min_code_lines(n: int = 5):
     return check
 
 
+def syntax_of(filepath: str):
+    """Day 22: a real parser check for ONE file, as a registry validator.
+
+    Deliberately a closure over the filepath rather than reading it from
+    `state`: coder workers run in parallel threads against one shared state
+    dict, so a "current file" key there would race. The closure is per-call and
+    thread-confined.
+
+    Returns problems as plain strings carrying the exact parser message and
+    line, which REPAIR_PROMPT interpolates verbatim — so the precision repair
+    prompt ("syntax error at line 42: ...") needs no separate machinery, it is
+    just what this validator returned.
+
+    Python/JSON/YAML only. JS/JSX needs a node subprocess and is batched
+    post-phase in the validation_pass node — spawning node per file inside
+    parallel workers is the latency trap we avoid by construction.
+    """
+    def check(text, state):
+        from app.utils.code_cleaner import strip_code_fences
+        from app.validation.syntax import validate_content
+        # Line numbers refer to the fence-stripped code, which is what the model
+        # is asked to re-emit, so they line up with what it sees.
+        return [i.describe() for i in validate_content(strip_code_fences(text), filepath)]
+    return check
+
+
 def _research_quality(text, state):
     from app.agents.research_agent import validate_report_quality
     try:
@@ -171,18 +197,26 @@ REPAIR_PROMPT = (
 )
 
 
-def run_validators(agent_name: str, text: str, state: dict) -> list:
-    return [problem for validator in VALIDATORS.get(agent_name, []) for problem in validator(text, state)]
+def run_validators(agent_name: str, text: str, state: dict, extra: list = None) -> list:
+    validators = list(VALIDATORS.get(agent_name, [])) + list(extra or [])
+    return [problem for validator in validators for problem in validator(text, state)]
 
 
 def call_validated(messages: list, agent_type: str, state: dict, max_tokens=4000,
-                   original_instruction: str = "", log: list = None) -> str:
+                   original_instruction: str = "", log: list = None,
+                   extra_validators: list = None) -> str:
     """call_llm + registry validation + ONE repair attempt.
 
     Second validation failure raises LLMOutputError for the error boundary.
+
+    `extra_validators` carries per-call checks the static registry cannot express
+    because they depend on which FILE is being generated (Day 22 syntax_of).
+    They participate in the same single repair attempt — a syntax error and a
+    length problem are fixed by one call, not two, which is what keeps the
+    write-time repair spend at exactly one per file.
     """
     response = call_llm(messages, agent_type, max_tokens=max_tokens)
-    problems = run_validators(agent_type, response, state)
+    problems = run_validators(agent_type, response, state, extra_validators)
     if not problems:
         return response
 
@@ -200,7 +234,7 @@ def call_validated(messages: list, agent_type: str, state: dict, max_tokens=4000
         [{"role": "assistant", "content": response}] if response.strip() else []
     ) + [{"role": "user", "content": repair}]
     response = call_llm(repair_messages, agent_type, max_tokens=max_tokens)
-    problems = run_validators(agent_type, response, state)
+    problems = run_validators(agent_type, response, state, extra_validators)
     if problems:
         raise LLMOutputError(
             f"Output failed validation after one repair attempt: {'; '.join(problems[:5])}",
