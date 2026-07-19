@@ -107,7 +107,8 @@ Generate the complete file content now. Output ONLY the raw file code — no exp
         ]
 
         try:
-            code = call_llm(messages, "database", max_tokens=2500)
+            code = call_llm(messages, "database", max_tokens=2500,
+                            project_id=project_id, label=filepath)
 
             if len(code.strip()) < 30:
                 # Retry once with stronger instruction
@@ -116,7 +117,8 @@ Generate the complete file content now. Output ONLY the raw file code — no exp
                     "role": "user",
                     "content": "Your response was too short or empty. Generate the complete, full file content now."
                 })
-                code = call_llm(messages, "database", max_tokens=2500)
+                code = call_llm(messages, "database", max_tokens=2500,
+                            project_id=project_id, label=filepath)
 
             # Write to disk immediately
             result = write_project_file(project_id, filepath, code)

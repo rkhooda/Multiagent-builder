@@ -204,7 +204,8 @@ def run_validators(agent_name: str, text: str, state: dict, extra: list = None) 
 
 def call_validated(messages: list, agent_type: str, state: dict, max_tokens=4000,
                    original_instruction: str = "", log: list = None,
-                   extra_validators: list = None, repair_tally: list = None) -> str:
+                   extra_validators: list = None, repair_tally: list = None,
+                   label: str = None) -> str:
     """call_llm + registry validation + ONE repair attempt.
 
     Second validation failure raises LLMOutputError for the error boundary.
@@ -221,8 +222,15 @@ def call_validated(messages: list, agent_type: str, state: dict, max_tokens=4000
     coder workers run in parallel threads, so incrementing state["retry_counts"]
     here would race. The worker owns the list; the coordinator folds the count
     in via commit_generated_file.
+
+    `label` attributes the metrics rows to the file being generated. It is passed
+    explicitly (not read from ambient context) because coder workers run in a
+    thread pool, where thread-locals do not map back to the originating task.
+    project_id comes off `state`, which every caller already threads through.
     """
-    response = call_llm(messages, agent_type, max_tokens=max_tokens)
+    project_id = state.get("project_id") if isinstance(state, dict) else None
+    response = call_llm(messages, agent_type, max_tokens=max_tokens,
+                        project_id=project_id, label=label)
     problems = run_validators(agent_type, response, state, extra_validators)
     if not problems:
         return response
@@ -242,7 +250,11 @@ def call_validated(messages: list, agent_type: str, state: dict, max_tokens=4000
     ) + [{"role": "user", "content": repair}]
     if repair_tally is not None:
         repair_tally.append(agent_type)
-    response = call_llm(repair_messages, agent_type, max_tokens=max_tokens)
+    # Same label as the first attempt: per-file token spend should aggregate
+    # across the original and its repair. Repairs are already counted separately
+    # by the Day 22 repair_tally / retry_counts.
+    response = call_llm(repair_messages, agent_type, max_tokens=max_tokens,
+                        project_id=project_id, label=label)
     problems = run_validators(agent_type, response, state, extra_validators)
     if problems:
         raise LLMOutputError(

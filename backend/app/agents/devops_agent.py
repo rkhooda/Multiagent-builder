@@ -116,7 +116,8 @@ Generate the complete file content now. Output ONLY the raw file content — no 
         ]
 
         try:
-            content = call_llm(messages, "devops", max_tokens=2000)
+            content = call_llm(messages, "devops", max_tokens=2000,
+                               project_id=project_id, label=filepath)
 
             if len(content.strip()) < 20:
                 messages.append({"role": "assistant", "content": content})
@@ -124,7 +125,8 @@ Generate the complete file content now. Output ONLY the raw file content — no 
                     "role": "user",
                     "content": "Your response was too short. Generate the complete file content now."
                 })
-                content = call_llm(messages, "devops", max_tokens=2000)
+                content = call_llm(messages, "devops", max_tokens=2000,
+                               project_id=project_id, label=filepath)
 
             result = write_project_file(project_id, filepath, content)
 

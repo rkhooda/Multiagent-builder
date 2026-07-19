@@ -90,7 +90,8 @@ def _repair_file(project_id, filepath, content, issue, js_available):
     )
     try:
         raw = call_llm([{"role": "user", "content": prompt}],
-                       _agent_for(filepath), max_tokens=2000)
+                       _agent_for(filepath), max_tokens=2000,
+                       project_id=project_id, label=filepath)
     except Exception as e:
         print(f"[Validation] repair call failed for {filepath}: {e}", flush=True)
         return None, [issue]

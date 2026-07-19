@@ -8,6 +8,7 @@ from litellm import completion
 import litellm.exceptions as llm_exc
 
 from app.exceptions import LLMAuthError, LLMError, LLMRateLimitError, LLMTimeoutError
+from app.observability import metrics_store
 
 # Load environment variables from the parent directory of backend/app (i.e. backend/.env)
 load_dotenv(dotenv_path=os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env"))
@@ -31,6 +32,42 @@ MODELS = {
     "qa":           ("openrouter/nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free", "gemini/gemini-2.5-flash"),
     "devops":       ("groq/llama-3.3-70b-versatile", "gemini/gemini-2.5-flash"),
 }
+
+# ── LangSmith tracing (optional, never required) ─────────────────────────────
+# Traces the completion call itself so prompts, responses and token usage appear
+# per ATTEMPT, nested under whatever parent run is active — parallel coder
+# workers therefore land under their phase instead of scattering as orphans.
+# When tracing is off or the SDK is missing this is a plain passthrough, so the
+# call path is identical and costs nothing.
+def _plain_completion(**kwargs):
+    return completion(**kwargs)
+
+
+def _tracing_enabled() -> bool:
+    if not metrics_store.is_enabled():
+        return False
+    if os.getenv("LANGCHAIN_TRACING_V2", "").lower() not in ("true", "1"):
+        return False
+    key = os.getenv("LANGCHAIN_API_KEY", "")
+    # The Day 1 placeholder was never replaced; treat it as absent rather than
+    # emitting 403s on every call.
+    return bool(key) and key != "your_key_here"
+
+
+_traced_completion = _plain_completion
+if _tracing_enabled():
+    try:
+        from langsmith import traceable
+        os.environ.setdefault("LANGCHAIN_PROJECT", "multiagent-builder")
+        _traced_completion = traceable(run_type="llm", name="llm_attempt")(_plain_completion)
+        print("[Observability] LangSmith tracing ENABLED "
+              f"(project={os.environ['LANGCHAIN_PROJECT']})", flush=True)
+    except Exception as e:                      # noqa: BLE001
+        print(f"[Observability] LangSmith unavailable, continuing untraced: {e}", flush=True)
+else:
+    print("[Observability] LangSmith tracing disabled — local metrics still recorded",
+          flush=True)
+
 
 DEFAULT_TIMEOUT_SECONDS = 90
 # Wait before the single same-model retry on a 429, per tier: primary, fallback, ollama.
@@ -187,6 +224,10 @@ def _log_attempt(agent_type: str, model: str, attempt: int, outcome: str, starte
     entry.update(usage or {"prompt_tokens": None, "completion_tokens": None,
                            "total_tokens": None})
     print(f"[LLM] {json.dumps(entry)}", flush=True)
+    metrics_store.record_agent_run(
+        agent=agent_type, model=model, attempt=attempt, outcome=outcome,
+        project_id=project_id, label=label, context_chars=context_chars,
+        latency_ms=entry["latency_ms"], **(usage or {}))
     return entry
 
 
@@ -230,12 +271,23 @@ def call_llm(messages: list, agent_type: str, max_tokens=4000, timeout=None,
                                  project_id=project_id, label=label,
                                  context_chars=context_chars)
                     return injected
-                resp = completion(
+                resp = _traced_completion(
                     model=model,
                     messages=messages,
                     max_tokens=max_tokens,
                     temperature=0.3,
                     timeout=timeout,
+                    # Filterable in the dashboard by project, agent and attempt.
+                    # Ignored by the passthrough when tracing is off.
+                    **({"langsmith_extra": {
+                        "name": f"{agent_type}:{model}",
+                        "tags": [f"agent:{agent_type}", f"model:{model}",
+                                 f"attempt:{attempt}"]
+                                + ([f"project:{project_id}"] if project_id else []),
+                        "metadata": {"agent": agent_type, "model": model,
+                                     "attempt": attempt, "project_id": project_id,
+                                     "label": label, "context_chars": context_chars},
+                    }} if _traced_completion is not _plain_completion else {}),
                 )
                 _log_attempt(agent_type, model, attempt, "ok", started,
                              usage=_extract_usage(resp, model), project_id=project_id,

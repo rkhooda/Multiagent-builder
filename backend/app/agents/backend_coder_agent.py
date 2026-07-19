@@ -177,6 +177,8 @@ def backend_coder_agent(state: dict) -> dict:
             # one-repair budget. A syntactically dead model is not worth the
             # routers generated against it, so this catches it at write time.
             extra_validators=[syntax_of(task.get("filepath", ""))],
+            # Explicit per-file attribution — see frontend_coder_agent.
+            label=task.get("filepath", ""),
             repair_tally=tally,
         )
         processed = process_generated_file(

@@ -104,6 +104,10 @@ def frontend_coder_agent(state: dict) -> dict:
             # node subprocess, so it is checked in the batched validation_pass —
             # spawning node per file across parallel workers is the trap.
             extra_validators=[syntax_of(task.get("filepath", ""))],
+            # Explicit per-file attribution: these workers run in a thread pool,
+            # so ambient/thread-local context cannot identify which file a call
+            # belongs to. Proven by the parallel-attribution test.
+            label=task.get("filepath", ""),
             repair_tally=tally,
         )
         processed = process_generated_file(project_id, task, raw, file_tree=file_tree)
