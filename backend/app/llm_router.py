@@ -1,5 +1,6 @@
 import json
 import os
+import threading
 import time
 import urllib.request
 
@@ -96,6 +97,82 @@ AGENT_TIMEOUT_SECONDS = {
 }
 # Wait before the single same-model retry on a 429, per tier: primary, fallback, ollama.
 RATE_LIMIT_WAITS = [2, 10, 5]
+
+# ── Per-model request pacing (Day 25) ────────────────────────────────────────
+# WHY. The parallel coder phases fire one call per file with no rate awareness.
+# On the Day 25 simple run that produced 59 rate-limit outcomes against 13
+# successes and lost 34 of 47 frontend files — not because any model rejected
+# the WORK, but because it never received the request. Both providers were
+# limited at once, so failing over could not help either.
+#
+# A 429 is not a dead model. It is a recoverable condition whose only remedy is
+# waiting, which makes the old policy — two retries seconds apart, then mark the
+# file failed — exactly wrong: it converts a slowdown into permanent data loss
+# and, by retrying instantly, deepens the burst that caused it.
+#
+# So requests to a model are spaced by a minimum interval, enforced across ALL
+# threads (the coder pool is a thread pool, so this must be process-wide, not
+# per-worker). Defaults are derived from the free-tier limits that actually
+# bind: Gemini 2.5 Flash by requests/minute, Groq by TOKENS/minute (12k TPM
+# against ~4k-token coder calls is ~3 requests/min, far tighter than its 30 RPM).
+#
+# ponytail: a fixed interval, not a token bucket. It needs no token accounting,
+# no per-response bookkeeping, and is impossible to get subtly wrong. Upgrade to
+# a real bucket only if bursting into unused headroom is ever worth the
+# complexity. Tune with LLM_MIN_INTERVAL_<PROVIDER> without a code change.
+_PACE_DEFAULTS = {
+    "gemini": 6.5,   # ~10 RPM free tier
+    "groq": 8.0,     # TPM-bound; empirically survivable for ~4k-token calls
+    "openrouter": 3.0,
+    "ollama": 0.0,   # local, unmetered
+}
+_pace_lock = threading.Lock()
+_next_allowed = {}
+
+
+def _provider_of(model: str) -> str:
+    return (model or "").split("/", 1)[0].lower()
+
+
+def min_interval_for(model: str) -> float:
+    provider = _provider_of(model)
+    env = os.getenv(f"LLM_MIN_INTERVAL_{provider.upper()}")
+    if env:
+        try:
+            return max(0.0, float(env))
+        except ValueError:
+            pass
+    return _PACE_DEFAULTS.get(provider, 0.0)
+
+
+def _pace(model: str):
+    """Block until this model's next slot, then reserve the one after it.
+
+    The reservation happens under the lock BEFORE sleeping, so N concurrent
+    workers queue into distinct slots instead of all sleeping the same interval
+    and then stampeding together — which would reproduce the exact burst this
+    exists to prevent.
+    """
+    interval = min_interval_for(model)
+    if interval <= 0:
+        return
+    with _pace_lock:
+        now = time.monotonic()
+        slot = max(now, _next_allowed.get(model, 0.0))
+        _next_allowed[model] = slot + interval
+    delay = slot - time.monotonic()
+    if delay > 0:
+        time.sleep(delay)
+
+
+def _penalise(model: str):
+    """After a 429, push this model's next slot out by a full extra interval."""
+    interval = min_interval_for(model)
+    if interval <= 0:
+        return
+    with _pace_lock:
+        _next_allowed[model] = max(_next_allowed.get(model, 0.0),
+                                   time.monotonic()) + interval
 
 
 # ── Ollama tier-3 detection ──────────────────────────────────────────────────
@@ -295,6 +372,7 @@ def call_llm(messages: list, agent_type: str, max_tokens=4000, timeout=None,
                                  project_id=project_id, label=label,
                                  context_chars=context_chars)
                     return injected
+                _pace(model)
                 resp = _traced_completion(
                     model=model,
                     messages=messages,
@@ -343,7 +421,13 @@ def call_llm(messages: list, agent_type: str, max_tokens=4000, timeout=None,
                          context_chars=context_chars)
             if attempt == 1:
                 if outcome == "rate_limit":
-                    time.sleep(RATE_LIMIT_WAITS[min(tier, len(RATE_LIMIT_WAITS) - 1)])
+                    # Push the model's next slot out, then wait at least a full
+                    # interval. The old flat 2s retried well inside the window
+                    # that had just rejected us, so the retry was near-certain
+                    # to fail too and cost the file its last attempt.
+                    _penalise(model)
+                    time.sleep(max(RATE_LIMIT_WAITS[min(tier, len(RATE_LIMIT_WAITS) - 1)],
+                                   min_interval_for(model)))
                 continue  # one same-model retry for 429/timeout
             break  # second failure on this model — next tier
 

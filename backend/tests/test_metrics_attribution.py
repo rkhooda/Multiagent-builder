@@ -98,5 +98,41 @@ check("qa clears its observed 354s runtime",
 check("small-output agents still use the default",
       AGENT_TIMEOUT_SECONDS.get("research", DEFAULT_TIMEOUT_SECONDS) == DEFAULT_TIMEOUT_SECONDS)
 
+# ── per-model pacing (Day 25) ────────────────────────────────────────────────
+# The coder pool is a THREAD pool, so pacing must hold process-wide. If it were
+# per-worker, N workers would each wait the interval and then fire together —
+# reproducing the burst that lost 34 of 47 files on the first integration run.
+import threading as _threading  # noqa: E402
+import time as _time  # noqa: E402
+
+os.environ["LLM_MIN_INTERVAL_GEMINI"] = "0.2"
+from app.llm_router import _pace, min_interval_for  # noqa: E402
+
+check("interval is env-tunable without a code change",
+      min_interval_for("gemini/gemini-2.5-flash") == 0.2)
+check("an unmetered local model is never paced",
+      min_interval_for("ollama/llama3") == 0.0)
+
+_stamps = []
+
+
+def _paced_call():
+    _pace("gemini/gemini-2.5-flash")
+    _stamps.append(_time.monotonic())
+
+
+_threads = [_threading.Thread(target=_paced_call) for _ in range(5)]
+for _t in _threads:
+    _t.start()
+for _t in _threads:
+    _t.join()
+_stamps.sort()
+_gaps = [_stamps[i + 1] - _stamps[i] for i in range(len(_stamps) - 1)]
+
+check("concurrent threads queue into distinct slots, not a stampede",
+      all(g >= 0.15 for g in _gaps))
+check("5 paced calls span at least 4 intervals",
+      (_stamps[-1] - _stamps[0]) >= 0.6)
+
 print(f"\n{passed} passed, {failed} failed")
 sys.exit(1 if failed else 0)
