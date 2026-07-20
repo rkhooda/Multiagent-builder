@@ -14,7 +14,11 @@ from datetime import datetime, timezone
 from app.graph.pipeline import graph, GATE_ROUTES, STAGE_ORDER, SKIPPABLE_AGENTS, invalidate_downstream
 from app.graph.state import ProjectState
 from app.core.connection_manager import manager
-from app.core.database import insert_project, update_project_status, get_all_projects
+from app.core.database import (
+    insert_project, update_project_status, get_all_projects,
+    update_project_rollups, delete_project_row,
+)
+from app.models import status as status_vocab
 from app.utils.file_writer import OUTPUTS_ROOT
 from app.observability import metrics_store
 
@@ -99,9 +103,20 @@ def get_next_event(iterator):
     except StopIteration:
         return None
 
+# ── Live-run registry (the liveness half of the position model) ──────────────
+# Ponytail #1: the checkpointer's `next` is the authoritative answer to WHERE a
+# project is, but it cannot answer WHETHER anything is still driving it — a
+# process killed mid-node leaves next=<that node> and SQLite status=running
+# forever. That is the zombie. Liveness is only ever true inside the process
+# that owns the task, so it is deliberately in-memory: a restart empties this
+# set, which is exactly the correct answer after a restart.
+_live_runs: set = set()
+
+
 async def run_graph_background(project_id: str, config: dict, initial_state=None):
     loop = asyncio.get_running_loop()
     current_agent = "unknown"
+    _live_runs.add(project_id)
     try:
         stream_iterator = await loop.run_in_executor(
             executor, 
@@ -156,6 +171,16 @@ async def run_graph_background(project_id: str, config: dict, initial_state=None
                 
                 # Update SQLite database project status and current stage
                 update_project_status(project_id, "running", stage)
+
+                # Denormalised list rollups, stamped as the values become known
+                # rather than recomputed per row on every list request.
+                if "generated_files" in node_output or "qa_issues_count" in node_output:
+                    update_project_rollups(
+                        project_id,
+                        files_generated=(len(node_output["generated_files"])
+                                         if "generated_files" in node_output else None),
+                        qa_issues_count=node_output.get("qa_issues_count"),
+                    )
                 
         state_snapshot = graph.get_state(config)
         if state_snapshot.next:
@@ -192,6 +217,8 @@ async def run_graph_background(project_id: str, config: dict, initial_state=None
         except Exception as handler_err:
             print(f"[Failure] handler itself failed for {project_id}: {handler_err}", flush=True)
             update_project_status(project_id, "error_paused", current_agent)
+    finally:
+        _live_runs.discard(project_id)
 
 
 # ── Failure handling & recovery ──────────────────────────────────────────────
@@ -308,6 +335,50 @@ def compute_generation_seconds(project_id: str):
         return None
 
 
+def derive_position(state_snapshot, project_id: str, db_status: str) -> dict:
+    """The single source of truth for "where is this project RIGHT NOW".
+
+    Ponytail #1: three candidate signals, ranked by how much they can lie.
+      - checkpointer `next`  — authoritative for POSITION. It is literally what a
+        resume will execute next. Never stale.
+      - projects.status      — authoritative for INTENT, stale-prone for liveness
+        (a killed process leaves `running` behind forever).
+      - state.current_stage  — a naming convention ("names the NEXT stage"),
+        written by whichever node ran last. Useful as a label, never as truth.
+
+    So: position comes from `next`, liveness from `next` + the in-process live-run
+    registry. `phase` is what the UI switches on:
+      gate        -> render that gate's approval card (cold or live, identically)
+      running     -> a task really is streaming; render the live feed
+      interrupted -> ZOMBIE: next is an agent node but nothing is driving it.
+                     Offer Resume instead of a spinner that will never resolve.
+      error       -> error_paused / rate_limited; render the recovery card
+      terminal    -> completed / cancelled
+    """
+    next_node = state_snapshot.next[0] if state_snapshot.next else None
+    is_live = project_id in _live_runs
+
+    if db_status in (status_vocab.ERROR_PAUSED, status_vocab.RATE_LIMITED):
+        phase = "error"
+    elif next_node is None:
+        phase = "terminal"
+    elif next_node.startswith("human_gate_"):
+        phase = "gate"
+    elif is_live:
+        phase = "running"
+    else:
+        phase = "interrupted"
+
+    return {
+        "phase": phase,
+        "next_node": next_node,
+        "gate": next_node if phase == "gate" else None,
+        "is_live": is_live,
+        # Everything except a finished graph can be re-entered from the checkpoint.
+        "resumable": phase in ("gate", "interrupted", "error"),
+    }
+
+
 def serialize_project_state(state_snapshot, project_id: str) -> dict:
     """Centralized serialization of LangGraph state snapshot to API response."""
     from app.llm_router import MODELS
@@ -359,6 +430,7 @@ def serialize_project_state(state_snapshot, project_id: str) -> dict:
         "failure_context": values.get("failure_context"),
         "status": status,
         "next_gate": next_gate,
+        "position": derive_position(state_snapshot, project_id, status),
         "generation_seconds": compute_generation_seconds(project_id),
         "agent_models": {agent: primary for agent, (primary, _) in MODELS.items()},
     }
@@ -374,9 +446,21 @@ def save_error_to_state(config, error_message: str):
         print(f"[DB ERROR] Failed to save execution error to state: {db_err}", flush=True)
 
 @router.get("")
-def list_projects():
-    """Retrieve all projects from the SQLite database."""
-    return get_all_projects()
+def list_projects(status: Optional[str] = None, sort: str = "created_at"):
+    """Enriched project list, newest-first, with server-side filter and sort.
+
+    `interrupted` is derived per row from the live-run registry rather than
+    persisted: a `running` row that no task in this process is driving is a
+    zombie by definition, and that check is an in-memory set lookup — no
+    checkpoint load per row. This is what stops the list showing a dead
+    "running" spinner for a project the server was killed under.
+    """
+    rows = get_all_projects(status_filter=status, sort=sort)
+    for row in rows:
+        row["interrupted"] = (
+            row["status"] == status_vocab.RUNNING and row["id"] not in _live_runs
+        )
+    return {"projects": rows, "total": len(rows)}
 
 @router.post("")
 async def create_project(request: ProjectCreateRequest):
