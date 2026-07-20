@@ -7,7 +7,6 @@ SYSTEM_PROMPT = (Path(__file__).resolve().parents[3] / "prompts" / "qa_agent.md"
 
 BATCH_SIZE = 3
 MAX_BATCH_CHARS = 60000  # ~15K tokens at ~4 chars/token
-QA_TIMEOUT_SECONDS = 90
 MAX_AUTO_FIXES_PER_FILE = 1
 
 ISSUE_LINE_RE = re.compile(
@@ -221,7 +220,7 @@ def qa_agent(state: dict) -> dict:
                 {"role": "user", "content": user_content}
             ]
 
-            raw_output = call_llm(messages, "qa", max_tokens=3000, timeout=QA_TIMEOUT_SECONDS,
+            raw_output = call_llm(messages, "qa", max_tokens=3000,
                                   project_id=project_id)
             batch_issues = _parse_issues(raw_output, batch_files)
             all_issues.extend(batch_issues)
@@ -271,7 +270,7 @@ def qa_agent(state: dict) -> dict:
                     content=generated_files[filepath]
                 )}
             ]
-            fixed_content = call_llm(fix_messages, "qa", max_tokens=3000, timeout=QA_TIMEOUT_SECONDS,
+            fixed_content = call_llm(fix_messages, "qa", max_tokens=3000,
                                       project_id=project_id, label=filepath)
 
             if len(fixed_content.strip()) < 20:

@@ -84,5 +84,19 @@ per_file = ms._query(
     " WHERE project_id='attr-test' GROUP BY label")
 check("each file has at least one attempt row", all(r["n"] >= 1 for r in per_file))
 
+# ── per-agent timeouts (Day 25) ──────────────────────────────────────────────
+# Regression guard, not a style check. Planning's only recorded success took
+# 84.5s; at the old uniform 90s ceiling it timed out on nearly every attempt and
+# the pipeline could not get past planning at all. If these shrink back toward
+# the default, the large-output agents silently become unrunnable again.
+from app.llm_router import AGENT_TIMEOUT_SECONDS, DEFAULT_TIMEOUT_SECONDS  # noqa: E402
+
+check("planning clears its observed 84.5s runtime with headroom",
+      AGENT_TIMEOUT_SECONDS.get("planning", DEFAULT_TIMEOUT_SECONDS) >= 180)
+check("qa clears its observed 354s runtime",
+      AGENT_TIMEOUT_SECONDS.get("qa", DEFAULT_TIMEOUT_SECONDS) >= 360)
+check("small-output agents still use the default",
+      AGENT_TIMEOUT_SECONDS.get("research", DEFAULT_TIMEOUT_SECONDS) == DEFAULT_TIMEOUT_SECONDS)
+
 print(f"\n{passed} passed, {failed} failed")
 sys.exit(1 if failed else 0)

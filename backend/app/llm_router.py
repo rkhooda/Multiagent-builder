@@ -74,6 +74,26 @@ else:
 
 
 DEFAULT_TIMEOUT_SECONDS = 90
+
+# Per-agent timeout, in seconds. Absent = DEFAULT_TIMEOUT_SECONDS.
+#
+# WHY (Day 25): a single uniform timeout is wrong because completion size is not
+# uniform. Measured from metrics.db, average completion tokens per agent:
+# requirements 4.5k, research 4.1k, architecture 10.6k, planning 21.5k, qa 17.1k.
+# Planning emits ~5x what requirements does and cannot be shortened without
+# splitting the plan across calls, which risks incoherent plans.
+#
+# The consequence was not a slow path but a BLOCKED one. The only planning call
+# that ever succeeded took 84.5s against the 90s ceiling — 94% of budget — and
+# every other attempt across two days timed out at exactly 90s. Planning sat on
+# a coin flip, and it gets worse with complexity because more files means more
+# plan tokens, so the harder the project the likelier it never plans at all.
+#
+# These numbers are measured headroom over observed successes, not guesses.
+AGENT_TIMEOUT_SECONDS = {
+    "planning": 240,  # observed success 84.5s at 21.5k tokens; complex briefs run longer
+    "qa":       360,  # observed success 354s — batched review over many files
+}
 # Wait before the single same-model retry on a 429, per tier: primary, fallback, ollama.
 RATE_LIMIT_WAITS = [2, 10, 5]
 
@@ -257,7 +277,7 @@ def call_llm(messages: list, agent_type: str, max_tokens=4000, timeout=None,
     ollama = get_ollama_model()
     if ollama:
         chain.append(ollama)
-    timeout = timeout or DEFAULT_TIMEOUT_SECONDS
+    timeout = timeout or AGENT_TIMEOUT_SECONDS.get(agent_type, DEFAULT_TIMEOUT_SECONDS)
 
     auth_failures = 0
     last_error = None
