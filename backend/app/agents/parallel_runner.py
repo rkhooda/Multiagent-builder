@@ -67,6 +67,18 @@ class PhaseResult:
                 "blocked": len(self.blocked), "total": self.total}
 
 
+def comment_safe(text: str, limit: int = 160) -> str:
+    """Flatten `text` to ONE line so it can be embedded in a `#`/`//` comment.
+
+    Provider errors are multi-line JSON. Truncating without flattening prefixes
+    only the first line with the comment marker and emits the rest as bare code,
+    so every failure placeholder was itself a syntax error — defeating the whole
+    point of a stub that "imports cleanly" and corrupting the syntax metrics with
+    defects the model never produced.
+    """
+    return " ".join((text or "").split())[:limit]
+
+
 def _dep_edges(tasks: list, implicit_deps) -> tuple:
     """Build (by_id, edges) where edges[id] is the set of in-set dependency ids.
 

@@ -295,8 +295,35 @@ def test_real_cycle_message_names_only_the_cycle():
     raise AssertionError("expected a ValueError on a real cycle")
 
 
+def test_failure_stub_is_syntactically_valid():
+    """A failure placeholder must parse — Day 25.
+
+    Provider errors are multi-line JSON. Embedding one in a comment without
+    flattening prefixed only its first line, emitting the rest as bare code, so
+    every failed file became a syntax error. On the Day 25 simple run that was
+    17 of 96 files: defects the model never produced, charged to its score, and
+    eligible to consume the Day 22 repair budget.
+    """
+    import ast
+    from app.agents.backend_coder_agent import _failure_stub as backend_stub
+    from app.agents.frontend_coder_agent import _failure_stub as frontend_stub
+
+    multiline_error = 'rate-limited: {\n  "error": {\n    "code": 429\n  }\n}'
+
+    py = backend_stub("backend/app/schemas/user.py", multiline_error)
+    ast.parse(py)  # raises if the stub is malformed
+    assert all(line.startswith("#") or not line.strip() or line == "pass"
+               for line in py.splitlines()), py
+
+    jsx = frontend_stub("frontend/src/x.jsx", multiline_error)
+    for line in jsx.splitlines():
+        if "429" in line or "error" in line:
+            assert line.startswith("//"), f"error text escaped the comment: {line}"
+
+
 TESTS = [
     ("diamond ordering + content injection", test_diamond_ordering_and_content_injection),
+    ("failure stub is syntactically valid", test_failure_stub_is_syntactically_valid),
     ("implicit dep yields to explicit (no false cycle)", test_implicit_dep_never_contradicts_explicit),
     ("cycle message names only the cycle", test_real_cycle_message_names_only_the_cycle),
     ("no lost updates (20 @ 3)", test_no_lost_updates),

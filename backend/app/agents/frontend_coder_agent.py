@@ -18,7 +18,7 @@ from app.exceptions import LLMError
 from app.utils.file_writer import process_generated_file
 from app.validation import call_validated, syntax_of
 from .context_builder import build_file_context
-from .parallel_runner import run_phase
+from .parallel_runner import comment_safe, run_phase
 from .utils import get_tasks_for_phase
 
 SYSTEM_PROMPT = (Path(__file__).resolve().parents[3] / "prompts" / "frontend_coder_agent.md").read_text(encoding="utf-8")
@@ -33,7 +33,7 @@ def _failure_stub(filepath: str, error: str) -> str:
     failure is visible in the Gate 4 file browser and fixable there via Request
     AI Fix (which reads from disk). Keeps dependent imports from breaking
     outright: JSX files export a null component, others an empty object."""
-    note = (f"// Generation failed for {filepath}: {error[:160]}\n"
+    note = (f"// Generation failed for {filepath}: {comment_safe(error)}\n"
             f"// Placeholder — regenerate with \"Request AI Fix\" at the review gate.\n\n")
     if filepath.lower().endswith((".jsx", ".tsx")):
         return note + "export default function GenerationFailedPlaceholder() {\n  return null;\n}\n"

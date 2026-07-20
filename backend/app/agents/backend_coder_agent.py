@@ -26,7 +26,7 @@ from app.utils.backend_infra import (
 )
 from app.validation import call_validated, syntax_of
 from .context_builder import build_file_context, backend_file_kind, _resource_of, _same_resource
-from .parallel_runner import run_phase
+from .parallel_runner import comment_safe, run_phase
 from .utils import get_tasks_for_phase, assert_single_owner
 
 SYSTEM_PROMPT = (Path(__file__).resolve().parents[3] / "prompts" / "backend_coder_agent.md").read_text(encoding="utf-8")
@@ -51,7 +51,7 @@ def _failure_stub(filepath: str, error: str) -> str:
     the Gate 4 file browser and fixable there via Request AI Fix (reads disk).
     A bare module that imports cleanly — it defines no `router`, so main.py
     (which registers only successful routers) never imports a broken one."""
-    return (f"# Generation failed for {filepath}: {error[:160]}\n"
+    return (f"# Generation failed for {filepath}: {comment_safe(error)}\n"
             f"# Placeholder — regenerate with \"Request AI Fix\" at the review gate.\n\n"
             f"pass\n")
 
