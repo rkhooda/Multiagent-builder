@@ -42,7 +42,8 @@ export default function Layout({ children }) {
       const res = await fetch('http://localhost:8000/api/projects')
       if (res.ok) {
         const data = await res.json()
-        setProjects(data)
+        // The list endpoint returns {projects, total} as of Day 24.
+        setProjects(data.projects || [])
       }
     } catch (err) {
       console.error('Error fetching projects for sidebar:', err)

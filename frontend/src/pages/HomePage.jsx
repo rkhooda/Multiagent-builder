@@ -1,90 +1,100 @@
-import React, { useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
+import { RestartDialog, DeleteDialog } from '../components/LifecycleDialogs'
+import { STATUS, statusMeta, stageLabel, formatDate, formatRelative } from '../lib/status'
+
+const API = 'http://localhost:8000/api/projects'
+
+// Filter options mirror the canonical backend vocabulary; `interrupted` is
+// derived per row rather than stored, so it is not a server-side filter.
+const FILTERS = [
+  ['', 'All'],
+  ['awaiting_approval', 'Awaiting approval'],
+  ['running', 'Running'],
+  ['completed', 'Complete'],
+  ['error_paused', 'Error'],
+  ['cancelled', 'Cancelled'],
+]
+
+const SORTS = [
+  ['created_at', 'Newest first'],
+  ['updated_at', 'Recently active'],
+  ['name', 'Name (A–Z)'],
+  ['status', 'Status'],
+]
+
+function StatusBadge({ status, interrupted }) {
+  const meta = statusMeta(status, interrupted)
+  return (
+    <span className={`inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border px-2 py-0.5 text-[11px] font-semibold ${meta.badge}`}>
+      <span className={`h-1.5 w-1.5 rounded-full ${meta.dot}`} />
+      {meta.label}
+    </span>
+  )
+}
+
+/**
+ * Status-appropriate row actions. The primary action is what the user most
+ * likely wants next for a project in that state — Resume for a paused gate,
+ * Open for a finished one, Retry for a failure — so the list is operable
+ * without opening every project first.
+ */
+function primaryAction(project) {
+  if (project.interrupted) return { label: 'Resume', to: `/projects/${project.id}`, className: 'bg-purple-600 hover:bg-purple-700' }
+  switch (project.status) {
+    case 'awaiting_approval':
+      return { label: 'Review', to: `/projects/${project.id}`, className: 'bg-orange-600 hover:bg-orange-700' }
+    case 'error_paused':
+    case 'rate_limited':
+      return { label: 'Retry', to: `/projects/${project.id}`, className: 'bg-red-600 hover:bg-red-700' }
+    case 'running':
+      return { label: 'Watch', to: `/projects/${project.id}`, className: 'bg-blue-600 hover:bg-blue-700' }
+    default:
+      return { label: 'Open', to: `/projects/${project.id}`, className: 'bg-gray-700 hover:bg-gray-800' }
+  }
+}
 
 export default function HomePage() {
   const navigate = useNavigate()
   const [projects, setProjects] = useState([])
+  const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [filter, setFilter] = useState('')
+  const [sort, setSort] = useState('created_at')
+  const [restarting, setRestarting] = useState(null)
+  const [deleting, setDeleting] = useState(null)
 
-  const fetchProjects = async () => {
+  const fetchProjects = useCallback(async () => {
     try {
       setLoading(true)
-      const res = await fetch('http://localhost:8000/api/projects')
-      if (!res.ok) {
-        throw new Error('Failed to retrieve projects list')
-      }
+      const params = new URLSearchParams({ sort })
+      if (filter) params.set('status', filter)
+      const res = await fetch(`${API}?${params}`)
+      if (!res.ok) throw new Error('Failed to retrieve projects list')
       const data = await res.json()
-      setProjects(data)
+      setProjects(data.projects || [])
+      setTotal(data.total || 0)
+      setError('')
     } catch (err) {
       console.error(err)
       setError('Could not connect to the backend. Is it running?')
     } finally {
       setLoading(false)
     }
-  }
+  }, [filter, sort])
 
-  useEffect(() => {
-    fetchProjects()
-  }, [])
-
-  const formatDate = (isoString) => {
-    if (!isoString) return ''
-    try {
-      const date = new Date(isoString)
-      return date.toLocaleDateString('en-US', {
-        month: 'short',
-        day: 'numeric',
-        year: 'numeric'
-      })
-    } catch (e) {
-      return isoString
-    }
-  }
-
-  const getStatusBadgeStyle = (status) => {
-    switch (status) {
-      case 'completed':
-      case 'complete':
-        return 'bg-green-100 text-green-800 border-green-200'
-      case 'awaiting_approval':
-        return 'bg-orange-100 text-orange-800 border-orange-200'
-      case 'running':
-        return 'bg-blue-100 text-blue-800 border-blue-200'
-      case 'error':
-      case 'error_paused':
-      case 'failed':
-        return 'bg-red-100 text-red-800 border-red-200'
-      case 'rate_limited':
-        return 'bg-amber-100 text-amber-800 border-amber-200'
-      default:
-        return 'bg-gray-100 text-gray-800 border-gray-200'
-    }
-  }
-
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center min-h-[calc(100vh-64px)] p-6 bg-[#f9fafb]">
-        <div className="flex items-center space-x-3 text-gray-500 animate-pulse">
-          <svg className="animate-spin h-6 w-6 text-blue-600" fill="none" viewBox="0 0 24 24">
-            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-          </svg>
-          <span className="font-medium">Loading projects...</span>
-        </div>
-      </div>
-    )
-  }
+  useEffect(() => { fetchProjects() }, [fetchProjects])
 
   if (error) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-[calc(100vh-64px)] p-6 bg-[#f9fafb] text-center space-y-4">
-        <div className="text-red-500 text-4xl">⚠️</div>
+      <div className="flex min-h-[calc(100vh-64px)] flex-col items-center justify-center space-y-4 bg-[#f9fafb] p-6 text-center">
+        <div className="text-4xl">⚠️</div>
         <h2 className="text-lg font-bold text-gray-900">Backend Connection Error</h2>
         <p className="text-sm text-gray-600">{error}</p>
         <button
           onClick={fetchProjects}
-          className="bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-4 rounded text-sm transition-colors cursor-pointer"
+          className="cursor-pointer rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
         >
           Try Again
         </button>
@@ -93,74 +103,167 @@ export default function HomePage() {
   }
 
   return (
-    <div className="p-6 bg-[#f9fafb] min-h-[calc(100vh-64px)]">
-      <div className="max-w-7xl mx-auto space-y-6">
-        <div className="flex justify-between items-center border-b border-gray-200 pb-4">
+    <div className="min-h-[calc(100vh-64px)] bg-[#f9fafb] p-6">
+      <div className="mx-auto max-w-7xl space-y-5">
+        <div className="flex items-center justify-between border-b border-gray-200 pb-4">
           <div>
             <h1 className="text-2xl font-bold text-gray-900">Your Projects</h1>
-            <p className="text-sm text-gray-500 mt-1">
-              Autonomously build web applications with agent pipelines.
+            <p className="mt-1 text-sm text-gray-500">
+              {loading ? 'Loading…' : `${total} project${total === 1 ? '' : 's'}${filter ? ` · filtered by ${statusMeta(filter).label.toLowerCase()}` : ''}`}
             </p>
           </div>
           <button
             onClick={() => navigate('/new')}
-            className="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-4 rounded text-sm transition-colors cursor-pointer"
+            className="cursor-pointer rounded bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
           >
             Start a New Project
           </button>
         </div>
 
-        {projects.length === 0 ? (
-          <div className="bg-white rounded-lg border border-gray-200 shadow-sm p-12 text-center flex flex-col items-center max-w-xl mx-auto mt-12">
-            <div className="text-5xl mb-4">🚀</div>
-            <h3 className="text-lg font-bold text-gray-900 mb-2">No projects yet</h3>
-            <p className="text-sm text-gray-600 mb-6 max-w-sm leading-relaxed">
-              Submit your idea and let the pipeline of autonomous agents build it for you.
+        <div className="flex flex-wrap items-center gap-2">
+          {FILTERS.map(([value, label]) => (
+            <button
+              key={value || 'all'}
+              onClick={() => setFilter(value)}
+              className={`rounded-full border px-3 py-1 text-xs font-semibold transition-colors ${
+                filter === value
+                  ? 'border-blue-300 bg-blue-50 text-blue-700'
+                  : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50'
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+          <select
+            value={sort}
+            onChange={(e) => setSort(e.target.value)}
+            aria-label="Sort projects"
+            className="ml-auto rounded border border-gray-200 bg-white px-2 py-1 text-xs font-semibold text-gray-600"
+          >
+            {SORTS.map(([value, label]) => (
+              <option key={value} value={value}>{label}</option>
+            ))}
+          </select>
+        </div>
+
+        {!loading && projects.length === 0 ? (
+          <div className="mx-auto mt-12 flex max-w-xl flex-col items-center rounded-lg border border-gray-200 bg-white p-12 text-center shadow-sm">
+            <div className="mb-4 text-5xl">{filter ? '🔍' : '🚀'}</div>
+            <h3 className="mb-2 text-lg font-bold text-gray-900">
+              {filter ? 'No projects with this status' : 'No projects yet'}
+            </h3>
+            <p className="mb-6 max-w-sm text-sm leading-relaxed text-gray-600">
+              {filter
+                ? 'Try a different filter, or start something new.'
+                : 'Submit your idea and let the pipeline of autonomous agents build it for you.'}
             </p>
             <button
-              onClick={() => navigate('/new')}
-              className="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2.5 px-5 rounded text-sm transition-colors cursor-pointer"
+              onClick={() => (filter ? setFilter('') : navigate('/new'))}
+              className="cursor-pointer rounded bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-blue-700"
             >
-              Create Your First Project &rarr;
+              {filter ? 'Clear filter' : 'Create Your First Project →'}
             </button>
           </div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {projects.map((project) => (
-              <div
-                key={project.id}
-                className="bg-white rounded-lg border border-gray-200 shadow-xs p-6 hover:shadow-sm transition-all duration-200 flex flex-col justify-between"
-              >
-                <div>
-                  <div className="flex items-start justify-between mb-3">
-                    <h3 className="text-base font-bold text-gray-900 truncate pr-2" title={project.name}>
-                      {project.name}
-                    </h3>
-                    <span className={`px-2 py-0.5 text-[10px] font-semibold rounded-full border ${getStatusBadgeStyle(project.status)}`}>
-                      {project.status.replace('_', ' ')}
-                    </span>
-                  </div>
-                  <p className="text-sm text-gray-600 line-clamp-2 leading-relaxed mb-4">
-                    {project.brief}
-                  </p>
-                </div>
-
-                <div className="border-t border-gray-100 pt-4 flex justify-between items-center mt-2">
-                  <span className="text-xs text-gray-500 font-medium">
-                    {formatDate(project.created_at)}
-                  </span>
-                  <Link
-                    to={`/projects/${project.id}`}
-                    className="text-xs font-semibold text-blue-600 hover:text-blue-700 transition-colors inline-flex items-center"
-                  >
-                    View Project &rarr;
-                  </Link>
-                </div>
-              </div>
-            ))}
+          <div className="overflow-hidden rounded-lg border border-gray-200 bg-white shadow-xs">
+            <table className="w-full text-left">
+              <thead className="border-b border-gray-200 bg-gray-50 text-[11px] uppercase tracking-wide text-gray-500">
+                <tr>
+                  <th className="px-4 py-2.5 font-semibold">Project</th>
+                  <th className="px-4 py-2.5 font-semibold">Status</th>
+                  <th className="px-4 py-2.5 font-semibold">Stage</th>
+                  <th className="px-4 py-2.5 font-semibold">Output</th>
+                  <th className="px-4 py-2.5 font-semibold">Created</th>
+                  <th className="px-4 py-2.5 text-right font-semibold">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {projects.map((project) => {
+                  const action = primaryAction(project)
+                  return (
+                    <tr key={project.id} className="hover:bg-gray-50/60">
+                      <td className="px-4 py-3">
+                        <Link to={`/projects/${project.id}`} className="text-sm font-semibold text-gray-900 hover:text-blue-600">
+                          {project.name || 'Untitled'}
+                        </Link>
+                        <p className="mt-0.5 line-clamp-1 max-w-md text-xs text-gray-500">{project.brief}</p>
+                      </td>
+                      <td className="px-4 py-3">
+                        <StatusBadge status={project.status} interrupted={project.interrupted} />
+                        {project.interrupted && (
+                          <p className="mt-1 text-[10px] text-purple-600">Server stopped mid-run</p>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-xs text-gray-600">{stageLabel(project.current_stage)}</td>
+                      <td className="px-4 py-3 text-xs text-gray-600">
+                        {project.files_generated > 0 ? `${project.files_generated} files` : '—'}
+                        {project.qa_issues_count > 0 && (
+                          <span className="ml-1 text-amber-600">· {project.qa_issues_count} QA</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-xs text-gray-500">
+                        {formatDate(project.created_at)}
+                        {project.updated_at && (
+                          <span className="block text-[10px] text-gray-400">{formatRelative(project.updated_at)}</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="flex items-center justify-end gap-1.5">
+                          <Link
+                            to={action.to}
+                            className={`rounded px-2.5 py-1 text-xs font-semibold text-white ${action.className}`}
+                          >
+                            {action.label}
+                          </Link>
+                          <button
+                            type="button"
+                            onClick={() => setRestarting(project)}
+                            disabled={project.status === 'running' && !project.interrupted}
+                            title={project.status === 'running' && !project.interrupted
+                              ? 'Cannot restart a project while it is running'
+                              : 'Re-run from a chosen stage'}
+                            className="rounded border border-gray-200 px-2.5 py-1 text-xs font-semibold text-gray-600 hover:bg-gray-100 disabled:opacity-40"
+                          >
+                            Restart
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setDeleting(project)}
+                            className="rounded border border-gray-200 px-2.5 py-1 text-xs font-semibold text-red-600 hover:bg-red-50"
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
           </div>
         )}
       </div>
+
+      {restarting && (
+        <RestartDialog
+          projectId={restarting.id}
+          projectName={restarting.name}
+          onClose={() => setRestarting(null)}
+          onDone={() => navigate(`/projects/${restarting.id}`)}
+        />
+      )}
+      {deleting && (
+        <DeleteDialog
+          projectId={deleting.id}
+          projectName={deleting.name}
+          status={deleting.status}
+          onClose={() => setDeleting(null)}
+          onDone={() => {
+            setProjects((rows) => rows.filter((r) => r.id !== deleting.id))
+            setTotal((n) => Math.max(0, n - 1))
+          }}
+        />
+      )}
     </div>
   )
 }

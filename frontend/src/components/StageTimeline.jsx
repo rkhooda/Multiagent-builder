@@ -34,7 +34,14 @@ const STAGE_DOC = {
   planning: 'implementation_plan',
 }
 
-const TRIGGER_LABEL = { initial: 'initial run', edit: 'requested changes', back: 'back-navigation', skipped: 'skipped after failure' }
+const TRIGGER_LABEL = {
+  initial: 'initial run',
+  edit: 'requested changes',
+  back: 'back-navigation',
+  skipped: 'skipped after failure',
+  restart: 'restarted from this stage',
+  partial: 'initial run (some files failed)',
+}
 const GATE_LABEL = {
   human_gate_1: 'Gate 1',
   human_gate_2: 'Gate 2',
@@ -50,10 +57,35 @@ function formatTime(iso) {
   }
 }
 
+function formatDuration(ms) {
+  if (!ms || ms < 0) return ''
+  const seconds = Math.round(ms / 1000)
+  if (seconds < 60) return `${seconds}s`
+  return `${Math.floor(seconds / 60)}m ${seconds % 60}s`
+}
+
 function attemptLine(entry) {
   const trigger = TRIGGER_LABEL[entry.trigger] || entry.trigger
   const origin = entry.gate_origin ? ` from ${GATE_LABEL[entry.gate_origin] || entry.gate_origin}` : ''
-  return `Attempt ${entry.attempt} — ${trigger}${origin}, ${formatTime(entry.timestamp)}`
+  // durationMs is derived from the preceding history entry, so it is only
+  // present once a project has more than one recorded stage.
+  const took = entry.durationMs ? ` · took ${formatDuration(entry.durationMs)}` : ''
+  return `Attempt ${entry.attempt} — ${trigger}${origin}, ${formatTime(entry.timestamp)}${took}`
+}
+
+/**
+ * stage_history records only a completion timestamp per stage, so a stage's
+ * duration is the gap since the previous entry completed. Derived here rather
+ * than persisted — it costs one pass and keeps the state contract unchanged.
+ */
+function withDurations(history) {
+  return history.map((entry, i) => {
+    if (i === 0) return entry
+    const previous = new Date(history[i - 1].timestamp).getTime()
+    const current = new Date(entry.timestamp).getTime()
+    if (!previous || !current) return entry
+    return { ...entry, durationMs: current - previous }
+  })
 }
 
 /**
@@ -64,7 +96,7 @@ function attemptLine(entry) {
 export default function StageTimeline({ projectState, status, events, regenerating, cycleInfo }) {
   const [diffStage, setDiffStage] = useState(null)
 
-  const history = projectState?.stage_history || []
+  const history = withDurations(projectState?.stage_history || [])
   const hasHistory = history.length > 0
   const byStage = {}
   history.forEach((entry) => {
