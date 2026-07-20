@@ -210,7 +210,7 @@ function FixModal({ filepath, findings, dependentCount, submitting, error, onSub
             type="button"
             onClick={() => onSubmit(instruction)}
             disabled={submitting || instruction.trim().length < 5}
-            className="flex-1 rounded bg-overlay py-2 px-3 text-sm font-semibold text-ink hover:bg-line disabled:cursor-not-allowed disabled:opacity-50"
+            className="w-full flex-1 rounded bg-overlay py-2 px-3 text-sm font-semibold text-ink hover:bg-line disabled:cursor-not-allowed disabled:opacity-50"
           >
             {submitting ? 'Fixing… this can take a minute' : 'Fix This File'}
           </button>
@@ -384,7 +384,8 @@ export default function Gate4Approval({ projectId, projectState, status, onResum
   const isPending = submitting !== null || status !== 'awaiting_approval'
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4 lg:grid lg:grid-cols-[minmax(0,1fr)_340px] lg:items-start lg:gap-5 lg:space-y-0">
+      <div className="min-w-0 space-y-4">
       <div className="flex items-center gap-2">
         <span className="h-2.5 w-2.5 animate-pulse rounded-full bg-accent" />
         <h3 className="text-base font-bold uppercase tracking-wide text-ink">
@@ -482,7 +483,8 @@ export default function Gate4Approval({ projectId, projectState, status, onResum
       )}
 
       {/* Final actions */}
-      <div className="sticky bottom-0 border-t border-line bg-raised pt-3">
+      </div>
+      <div className="sticky bottom-0 z-10 border-t border-line bg-raised pt-3 lg:top-0 lg:bottom-auto lg:rounded-lg lg:border lg:p-4">
         {confirmingCancel ? (
           <div className="space-y-2 rounded border border-err/35 bg-err/10 p-3">
             <p className="text-sm font-medium text-err">Cancel this project? This cannot be undone.</p>
@@ -511,9 +513,9 @@ export default function Gate4Approval({ projectId, projectState, status, onResum
               type="button"
               onClick={handleComplete}
               disabled={isPending || fixing}
-              className="flex-1 rounded bg-green-600 py-2 px-3 text-sm font-semibold text-ink hover:bg-green-700 disabled:opacity-60"
+              className="w-full flex-1 rounded-md border border-accent bg-accent py-2 px-3 text-sm font-semibold text-accent-ink hover:brightness-110 disabled:opacity-50"
             >
-              {submitting === 'approve' ? 'Completing…' : '✅ Mark Project Complete'}
+              {submitting === 'approve' ? 'Completing…' : 'Mark project complete'}
             </button>
             <button
               type="button"
@@ -521,7 +523,7 @@ export default function Gate4Approval({ projectId, projectState, status, onResum
               disabled={isPending || fixing}
               className="rounded border border-err/35 bg-raised py-2 px-3 text-sm font-semibold text-err hover:bg-err/10 disabled:opacity-60"
             >
-              Cancel Project
+              Cancel project
             </button>
           </div>
         )}

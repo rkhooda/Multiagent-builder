@@ -9,7 +9,7 @@ import yaml from 'react-syntax-highlighter/dist/esm/languages/prism/yaml'
 import markdown from 'react-syntax-highlighter/dist/esm/languages/prism/markdown'
 import bash from 'react-syntax-highlighter/dist/esm/languages/prism/bash'
 import docker from 'react-syntax-highlighter/dist/esm/languages/prism/docker'
-import { oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism'
+import { oneLight, oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism'
 
 SyntaxHighlighter.registerLanguage('python', python)
 SyntaxHighlighter.registerLanguage('javascript', javascript)
@@ -130,6 +130,21 @@ function TreeNode({ node, depth, selectedPath, collapsed, onToggle, onSelect, is
   )
 }
 
+/** Follows the live theme, since the user can flip it while a file is open. */
+function useIsDark() {
+  const [dark, setDark] = useState(
+    () => document.documentElement.getAttribute('data-theme') !== 'light',
+  )
+  useEffect(() => {
+    const el = document.documentElement
+    const observer = new MutationObserver(() =>
+      setDark(el.getAttribute('data-theme') !== 'light'))
+    observer.observe(el, { attributes: true, attributeFilter: ['data-theme'] })
+    return () => observer.disconnect()
+  }, [])
+  return dark
+}
+
 function PreviewShimmer() {
   return (
     <div className="animate-pulse space-y-2 p-4">
@@ -152,6 +167,7 @@ export default function FileBrowser({
   previousContent, // path -> pre-fix content, enables the View Changes toggle
   renderDiff,
 }) {
+  const isDark = useIsDark()
   const [collapsed, setCollapsed] = useState(new Set())
   const [content, setContent] = useState('')
   const [loading, setLoading] = useState(false)
@@ -278,10 +294,18 @@ export default function FileBrowser({
               ) : (
                 <SyntaxHighlighter
                   language={PRISM_LANGUAGE[selectedFile.language] || 'text'}
-                  style={oneLight}
+                  style={isDark ? oneDark : oneLight}
                   showLineNumbers
-                  customStyle={{ margin: 0, fontSize: '12px', background: 'white' }}
-                  lineNumberStyle={{ color: '#c0c4cc', minWidth: '2.5em' }}
+                  customStyle={{
+                    margin: 0,
+                    fontSize: '12px',
+                    background: 'transparent',
+                    fontFamily: 'var(--font-mono)',
+                  }}
+                  lineNumberStyle={{ color: 'var(--ink-3)', minWidth: '2.5em' }}
+                  // The prism theme paints its own slab background on the code
+                  // element too; without this it shows through as grey blocks.
+                  codeTagProps={{ style: { background: 'transparent' } }}
                 >
                   {content}
                 </SyntaxHighlighter>

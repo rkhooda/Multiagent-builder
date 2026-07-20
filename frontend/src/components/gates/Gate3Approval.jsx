@@ -596,7 +596,7 @@ export default function Gate3Approval({ projectId, projectState, status, onResum
               title="Edit description"
               className="rounded p-1 text-ink-3 hover:bg-overlay hover:text-ink"
             >
-              ✏️
+              Edit
             </button>
             <button
               type="button"
@@ -614,7 +614,8 @@ export default function Gate3Approval({ projectId, projectState, status, onResum
   }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4 lg:grid lg:grid-cols-[minmax(0,1fr)_340px] lg:items-start lg:gap-5 lg:space-y-0">
+      <div className="min-w-0 space-y-4">
       <div className="flex items-center space-x-2">
         <span className="h-2.5 w-2.5 rounded-full bg-accent animate-pulse" />
         <h3 className="text-base font-bold text-ink uppercase tracking-wide">
@@ -768,7 +769,8 @@ export default function Gate3Approval({ projectId, projectState, status, onResum
         </div>
       )}
 
-      <div className="sticky bottom-0 space-y-3 border-t border-line bg-raised pt-3">
+      </div>
+      <div className="sticky bottom-0 z-10 space-y-3 border-t border-line bg-raised pt-3 lg:top-0 lg:bottom-auto lg:rounded-lg lg:border lg:p-4">
         {confirmingCancel ? (
           <div className="rounded border border-err/35 bg-err/10 p-3 space-y-2">
             <p className="text-sm font-medium text-err">Cancel this project? This cannot be undone.</p>
@@ -792,15 +794,15 @@ export default function Gate3Approval({ projectId, projectState, status, onResum
             </div>
           </div>
         ) : (
-          <div className="flex flex-wrap gap-3">
+          <div className="flex flex-wrap gap-2 lg:flex-col">
             <button
               type="button"
               onClick={handleApprove}
               disabled={isPending || regenAction || !planValid}
               title={planValid ? '' : 'Fix the dependency conflicts first'}
-              className="flex-1 rounded bg-green-600 py-2 px-3 text-sm font-semibold text-ink hover:bg-green-700 disabled:opacity-60"
+              className="w-full flex-1 rounded-md border border-accent bg-accent py-2 px-3 text-sm font-semibold text-accent-ink hover:brightness-110 disabled:opacity-50"
             >
-              {submitting === 'approve' ? 'Saving plan...' : '✅ Approve & Start Coding'}
+              {submitting === 'approve' ? 'Saving plan…' : 'Approve & start coding'}
             </button>
             <button
               type="button"
@@ -824,7 +826,7 @@ export default function Gate3Approval({ projectId, projectState, status, onResum
                   : 'flex-1 rounded border border-line-strong bg-raised py-2 px-3 text-sm font-semibold text-ink hover:bg-overlay disabled:opacity-60'
               }
             >
-              {backCapped ? '⚠️ ' : '⬅️ '}Go Back to Architecture
+              Go back to Architecture
             </button>
             <button
               type="button"
@@ -832,7 +834,7 @@ export default function Gate3Approval({ projectId, projectState, status, onResum
               disabled={isPending || regenAction}
               className="rounded border border-err/35 bg-raised py-2 px-3 text-sm font-semibold text-err hover:bg-err/10 disabled:opacity-60"
             >
-              Cancel Project
+              Cancel project
             </button>
           </div>
         )}

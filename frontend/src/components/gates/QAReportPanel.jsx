@@ -84,7 +84,7 @@ export default function QAReportPanel({ qaReport, parsedReport, onOpenFile }) {
     // Structure not recognized at all — render the whole report as markdown.
     return (
       <div className="max-h-[34rem] overflow-auto rounded-lg border border-line bg-raised p-4">
-        <div className="prose prose-sm max-w-none">
+        <div className="markdown">
           <ReactMarkdown remarkPlugins={[remarkGfm]}>{qaReport}</ReactMarkdown>
         </div>
       </div>

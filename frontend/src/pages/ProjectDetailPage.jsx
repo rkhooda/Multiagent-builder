@@ -420,15 +420,28 @@ export default function ProjectDetailPage() {
 
 
 
+  // Skeleton rather than a spinner: it stands in for the real layout, so the
+  // page does not jump when the data lands, and it shows WHAT is coming.
   if (metadataLoading && events.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-[calc(100vh-64px)] p-6 bg-surface">
-        <div className="flex items-center space-x-3 text-ink-3 animate-pulse">
-          <svg className="animate-spin h-6 w-6 text-run" fill="none" viewBox="0 0 24 24">
-            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-          </svg>
-          <span className="font-medium">Loading project info...</span>
+      <div className="flex h-full flex-col bg-surface">
+        <div className="flex shrink-0 items-center justify-between border-b border-line bg-raised px-4 py-3 sm:px-6">
+          <div>
+            <Skeleton className="h-5 w-48" />
+            <Skeleton className="mt-2 h-3 w-72" />
+          </div>
+          <Skeleton className="h-8 w-56" />
+        </div>
+        <div className="flex gap-3 border-b border-line px-4 py-3 sm:px-6">
+          {Array.from({ length: 6 }, (_, i) => <Skeleton key={i} className="h-4 w-20" />)}
+        </div>
+        <div className="flex-1 space-y-3 overflow-hidden p-4 sm:p-5">
+          {Array.from({ length: 4 }, (_, i) => (
+            <Card key={i}>
+              <Skeleton className="h-3.5 w-32" />
+              <SkeletonText lines={2} className="mt-3" />
+            </Card>
+          ))}
         </div>
       </div>
     )
