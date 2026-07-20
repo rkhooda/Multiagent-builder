@@ -93,11 +93,26 @@ export default function MetricsPanel({ projectId, compact = false }) {
     p95_ms: latency[r.agent]?.p95_ms,
   }))
   const missingUsage = rows.reduce((a, r) => a + (r.missing_usage || 0), 0)
+  const cache = data.cache || {}
+  // Cache hits are recorded as attempts with ~0 latency, so they would show up
+  // as a phantom "cache" stage worth 0% of the time. Excluded from the breakdown.
+  const timeRows = (data.latency_by_agent || []).filter((r) => r.total_ms > 0).slice(0, 8)
+  const providers = (data.providers || []).filter((p) => p.tracked)
 
   return (
     <div className="rounded-lg border border-gray-200 bg-white p-4">
       <div className="flex items-baseline justify-between">
-        <h3 className="text-sm font-semibold text-gray-700">Run Metrics</h3>
+        <h3 className="flex items-center gap-2 text-sm font-semibold text-gray-700">
+          Run Metrics
+          {data.fast_mode && (
+            <span
+              className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-800"
+              title="Generated in Fast Mode: lighter budgets, and defects were reported rather than repaired."
+            >
+              Fast Mode
+            </span>
+          )}
+        </h3>
         <span className="text-[10px] text-gray-400">
           {data.attempts} attempt{data.attempts === 1 ? '' : 's'}
           {data.failed_attempts > 0 && ` · ${data.failed_attempts} failed`}
@@ -109,8 +124,92 @@ export default function MetricsPanel({ projectId, compact = false }) {
         <Stat label="Input Tokens" value={fmt(data.prompt_tokens)} sub="prompt" />
         <Stat label="Output Tokens" value={fmt(data.completion_tokens)} sub="completion" />
         <Stat label="LLM Wall-Clock" value={ms(data.total_latency_ms)} sub="summed" />
-        <Stat label="Cost" value="$0.00" sub="free tiers" />
+        <Stat
+          label="Cache Hits"
+          value={cache.total ? `${Math.round((cache.hit_rate || 0) * 100)}%` : '—'}
+          sub={cache.total ? `${cache.hits}/${cache.total}` : 'no data'}
+          accent={cache.hits > 0 ? 'text-emerald-700' : undefined}
+        />
       </div>
+
+      {/* Where the minutes went. Ordered by TOTAL time, not per-call latency:
+          an agent called 43 times at 16s costs more than one called twice at
+          84s, and only the total answers "what should I optimise next". */}
+      {timeRows.length > 0 && (
+        <div className="mt-4">
+          <div className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">
+            Time Breakdown
+          </div>
+          <div className="mt-1.5 space-y-1">
+            {timeRows.map((r) => (
+              <div key={r.agent} className="flex items-center gap-2">
+                <div className="w-28 flex-shrink-0 font-mono text-[11px] text-gray-600">
+                  {r.agent}
+                </div>
+                <div className="h-3 flex-1 overflow-hidden rounded-sm bg-gray-100">
+                  <div
+                    className="h-full rounded-sm bg-indigo-400"
+                    style={{ width: `${Math.max(r.pct_of_total, 1)}%` }}
+                  />
+                </div>
+                <div className="w-24 flex-shrink-0 text-right text-[11px] tabular-nums text-gray-600">
+                  {ms(r.total_ms)}
+                  <span className="ml-1 text-gray-400">{r.pct_of_total}%</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Free-tier daily allowances. Process-wide, not per project: quota is
+          shared across every run, and exhausting it is what actually stops the
+          pipeline (Day 26 hit Groq's 100k tokens/day ceiling). */}
+      {providers.length > 0 && (
+        <div className="mt-4">
+          <div className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">
+            Provider Daily Budget
+          </div>
+          <div className="mt-1.5 grid grid-cols-1 gap-1.5 sm:grid-cols-2">
+            {providers.map((p) => {
+              const pct = Math.min(p.pct_used ?? 0, 100)
+              const danger = (p.pct_used ?? 0) >= 90
+              return (
+                <div key={p.provider} className="flex items-center gap-2">
+                  <div className="w-24 flex-shrink-0 font-mono text-[11px] text-gray-600">
+                    {p.provider}
+                  </div>
+                  <div className="h-3 flex-1 overflow-hidden rounded-sm bg-gray-100">
+                    <div
+                      className={`h-full rounded-sm ${danger ? 'bg-red-500' : 'bg-emerald-500'}`}
+                      style={{ width: `${Math.max(pct, 1)}%` }}
+                    />
+                  </div>
+                  <div
+                    className={`w-28 flex-shrink-0 text-right text-[11px] tabular-nums ${
+                      danger ? 'font-semibold text-red-700' : 'text-gray-600'
+                    }`}
+                  >
+                    {fmt(p.remaining)} left
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
+
+      {(data.truncations || []).length > 0 && (
+        <p className="mt-3 rounded border-l-4 border-amber-400 bg-amber-50 px-3 py-2 text-[11px] text-amber-800">
+          <span className="font-semibold">
+            {data.truncations.length} output{data.truncations.length === 1 ? '' : 's'} hit the
+            token ceiling
+          </span>{' '}
+          and {data.truncations.length === 1 ? 'was' : 'were'} cut off mid-content
+          ({[...new Set(data.truncations.map((t) => t.agent))].join(', ')}). Raise that
+          agent&rsquo;s max_tokens — the file or document is incomplete.
+        </p>
+      )}
 
       {missingUsage > 0 && (
         <p className="mt-2 text-[11px] text-amber-700">
