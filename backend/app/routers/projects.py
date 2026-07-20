@@ -3,6 +3,7 @@ import asyncio
 import io
 import json
 import re
+import shutil
 import zipfile
 from pathlib import Path
 from fastapi import APIRouter, HTTPException
@@ -11,7 +12,10 @@ from pydantic import BaseModel, Field
 from typing import List, Dict, Optional
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
-from app.graph.pipeline import graph, GATE_ROUTES, STAGE_ORDER, SKIPPABLE_AGENTS, invalidate_downstream
+from app.graph.pipeline import (
+    graph, GATE_ROUTES, STAGE_ORDER, STAGE_ARTIFACTS, SNAPSHOT_FIELDS,
+    SKIPPABLE_AGENTS, invalidate_downstream,
+)
 from app.graph.state import ProjectState
 from app.core.connection_manager import manager
 from app.core.database import (
@@ -622,6 +626,203 @@ async def resume_project(project_id: str, request: ProjectResumeRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ── Restart from a chosen stage ──────────────────────────────────────────────
+# Ponytail #2: restart and gate 'back'/'edit' are the SAME operation with
+# different triggers, so this reuses both proven mechanisms instead of inventing
+# state surgery. invalidate_downstream() snapshots and clears everything after
+# the target; re-entry is done by writing the checkpoint as though the user had
+# pressed a specific decision at a specific gate (as_node), which lets the
+# existing GATE_ROUTES conditional edges do all the routing. No new graph wiring.
+#
+# thread_id is REUSED, not forked: forking would mean a second project row, a
+# second outputs dir and split metrics for what the user thinks of as one
+# project. Continuity is preserved instead by previous_versions (docs) and the
+# on-disk archive (files), and the restart is recorded honestly in stage_history.
+
+# Public stage name -> (stage key in STAGE_ORDER, gate to re-enter through, decision).
+RESTART_ENTRY = {
+    "research":        ("research",     "human_gate_1", "back"),
+    "requirements":    ("requirements", "human_gate_1", "edit"),
+    "architecture":    ("architecture", "human_gate_2", "edit"),
+    "planning":        ("planning",     "human_gate_3", "edit"),
+    "code_generation": ("code",         "human_gate_3", "approve"),
+}
+
+# The stage whose output must already exist for a restart target to be runnable.
+RESTART_REQUIRES = {
+    "requirements": "research_report",
+    "architecture": "requirements_doc",
+    "planning": "architecture_doc",
+    "code_generation": "implementation_plan",
+}
+
+# Agents that re-run for each restart target, for the cost estimate.
+AGENTS_FROM_STAGE = {
+    "research": ["research", "requirements", "architecture", "planning",
+                 "frontend_code", "backend_code", "database", "qa", "devops"],
+    "requirements": ["requirements", "architecture", "planning",
+                     "frontend_code", "backend_code", "database", "qa", "devops"],
+    "architecture": ["architecture", "planning",
+                     "frontend_code", "backend_code", "database", "qa", "devops"],
+    "planning": ["planning", "frontend_code", "backend_code", "database", "qa", "devops"],
+    "code_generation": ["frontend_code", "backend_code", "database", "qa", "devops"],
+}
+
+ARCHIVE_DIRNAME = ".archived"
+
+
+class RestartRequest(BaseModel):
+    from_stage: str = Field(..., description=f"One of {sorted(RESTART_ENTRY)}")
+
+
+def restart_cost_estimate(project_id: str, from_stage: str) -> dict:
+    """Rough re-run cost from this project's own metrics history.
+
+    The honest estimate for "what will re-running these agents cost" is what
+    those same agents already spent on this project. Agents with no history
+    (never reached, or pre-Day-23) are reported as unknown rather than zero.
+    """
+    agents = set(AGENTS_FROM_STAGE.get(from_stage, []))
+    rows = [r for r in metrics_store.avg_tokens_by_agent(project_id) if r.get("agent") in agents]
+    known = {r["agent"] for r in rows}
+    return {
+        "agents": sorted(agents),
+        "agents_with_history": sorted(known),
+        "agents_without_history": sorted(agents - known),
+        "estimated_tokens": sum(
+            (r.get("total_prompt_tokens") or 0) + (r.get("total_completion_tokens") or 0)
+            for r in rows
+        ),
+        "estimated_calls": sum((r.get("calls") or 0) for r in rows),
+    }
+
+
+def archive_generated_files(project_id: str) -> dict:
+    """Move the current generated tree aside instead of deleting it.
+
+    Ponytail #2: one run's worth of disk is cheap insurance against a restart the
+    user regrets, and archiving inside outputs/{project_id}/ means the delete
+    cascade reclaims it for free with the same rmtree. The cost is that every
+    walker of that directory must skip ARCHIVE_DIRNAME — see list_project_files
+    and download_project_zip.
+    """
+    directory = (Path(OUTPUTS_ROOT) / project_id)
+    if not directory.is_dir():
+        return {"archived": 0, "path": None}
+
+    movable = [p for p in directory.iterdir() if p.name != ARCHIVE_DIRNAME]
+    if not movable:
+        return {"archived": 0, "path": None}
+
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    target = directory / ARCHIVE_DIRNAME / stamp
+    target.mkdir(parents=True, exist_ok=True)
+    for path in movable:
+        shutil.move(str(path), str(target / path.name))
+    print(f"[Restart] {project_id}: archived {len(movable)} entries to {target}", flush=True)
+    return {"archived": len(movable), "path": f"{ARCHIVE_DIRNAME}/{stamp}"}
+
+
+@router.get("/{project_id}/restart-preview")
+def restart_preview(project_id: str, from_stage: str):
+    """What a restart would discard and roughly cost — drives the confirm dialog."""
+    if from_stage not in RESTART_ENTRY:
+        raise HTTPException(status_code=400, detail=f"from_stage must be one of {sorted(RESTART_ENTRY)}")
+    state_snapshot = graph.get_state({"configurable": {"thread_id": project_id}})
+    if not state_snapshot.values:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    stage_key = RESTART_ENTRY[from_stage][0]
+    discarded = STAGE_ORDER[STAGE_ORDER.index(stage_key):]
+    kept = STAGE_ORDER[:STAGE_ORDER.index(stage_key)]
+    return {
+        "from_stage": from_stage,
+        "discards": discarded,
+        "keeps": kept,
+        "files_to_archive": len(state_snapshot.values.get("generated_files") or {}) if "code" in discarded else 0,
+        "cost_estimate": restart_cost_estimate(project_id, from_stage),
+    }
+
+
+@router.post("/{project_id}/restart")
+async def restart_project(project_id: str, request: RestartRequest):
+    if request.from_stage not in RESTART_ENTRY:
+        raise HTTPException(status_code=400, detail=f"from_stage must be one of {sorted(RESTART_ENTRY)}")
+
+    config = {"configurable": {"thread_id": project_id}}
+    state_snapshot = graph.get_state(config)
+    values = state_snapshot.values
+    if not values:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    if project_id in _live_runs:
+        raise HTTPException(status_code=409, detail="Project is currently running — cancel or wait before restarting")
+
+    # Guard: never restart into a stage whose inputs were never produced.
+    required_field = RESTART_REQUIRES.get(request.from_stage)
+    if required_field and not values.get(required_field):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot restart from '{request.from_stage}': its input ({required_field}) has not been generated yet.",
+        )
+
+    stage_key, gate, decision = RESTART_ENTRY[request.from_stage]
+
+    # Same invalidation the Day 16 back-navigation uses — snapshot docs into
+    # previous_versions and clear everything downstream of the target.
+    update = dict(invalidate_downstream(values, stage_key))
+    # The target stage's own artifacts are stale too on a restart (unlike an
+    # 'edit', which feeds the old output back in as context), so clear them.
+    for field, empty in STAGE_ARTIFACTS[stage_key].items():
+        current = values.get(field)
+        if current and field in SNAPSHOT_FIELDS:
+            update.setdefault("previous_versions", {})[field] = current
+        update[field] = empty
+
+    archive = archive_generated_files(project_id) if "code" in STAGE_ORDER[STAGE_ORDER.index(stage_key):] else {"archived": 0, "path": None}
+
+    history = list(values.get("stage_history") or [])
+    history.append({
+        "stage": stage_key,
+        "attempt": 1 + sum(1 for e in history if e.get("stage") == stage_key),
+        "trigger": "restart",
+        "from_stage": request.from_stage,
+        "gate_origin": gate,
+        "archived_to": archive["path"],
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    })
+    retry_counts = dict(values.get("retry_counts") or {})
+    retry_counts[stage_key] = retry_counts.get(stage_key, 0) + 1
+
+    update.update({
+        "human_decision": decision,
+        "human_feedback": "",
+        "regen_cycle": {"trigger": "restart", "gate": gate},
+        "stage_history": history,
+        "retry_counts": retry_counts,
+        "failed_agent": "",
+        "failure_context": None,
+        "log": list(values.get("log") or []) + [
+            f"restart: re-running from {request.from_stage}"
+            + (f" (archived {archive['archived']} files to {archive['path']})" if archive["archived"] else "")
+        ],
+    })
+
+    # as_node makes the checkpoint read as though the user had just pressed
+    # `decision` at `gate` — the existing conditional edge then routes execution
+    # to the target stage. Restart adds no graph wiring of its own.
+    graph.update_state(config, update, as_node=gate)
+    update_project_status(project_id, "running", stage_key)
+    asyncio.create_task(run_graph_background(project_id, config))
+
+    return {
+        "status": "restarted",
+        "from_stage": request.from_stage,
+        "discarded": STAGE_ORDER[STAGE_ORDER.index(stage_key):],
+        "archived": archive,
+    }
+
+
 class RecoverRequest(BaseModel):
     action: str = Field(..., description="retry, skip, or cancel")
 
@@ -891,6 +1092,19 @@ def _project_output_dir(project_id: str) -> Path:
     return directory
 
 
+def walk_generated_files(directory: Path):
+    """Every current generated file, skipping the restart archive.
+
+    Single walker shared by the file list, the ZIP and the PDF export — archived
+    files live under outputs/{id}/.archived/ so the delete cascade reclaims them
+    for free, which means every reader of this directory must skip them or a
+    restart would silently re-introduce discarded files into the download.
+    """
+    for path in sorted(directory.rglob("*")):
+        if path.is_file() and ARCHIVE_DIRNAME not in path.relative_to(directory).parts:
+            yield path
+
+
 @router.get("/{project_id}/metrics")
 def get_project_metrics(project_id: str):
     """Per-run token/latency rollup for the metrics panel.
@@ -907,9 +1121,7 @@ def list_project_files(project_id: str):
     """Flat list of generated files with per-file metadata (tree is built client-side)."""
     directory = _project_output_dir(project_id)
     files = []
-    for path in sorted(directory.rglob("*")):
-        if not path.is_file():
-            continue
+    for path in walk_generated_files(directory):
         rel = path.relative_to(directory).as_posix()
         try:
             line_count = len(path.read_text(encoding="utf-8").splitlines())
@@ -958,9 +1170,7 @@ def download_project_zip(project_id: str):
     total_bytes = 0
     skipped = []
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
-        for path in sorted(directory.rglob("*")):
-            if not path.is_file():
-                continue
+        for path in walk_generated_files(directory):
             rel = path.relative_to(directory).as_posix()
             data = path.read_bytes()
             try:
