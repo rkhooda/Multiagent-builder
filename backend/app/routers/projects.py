@@ -122,6 +122,7 @@ _live_runs: Dict[str, asyncio.Task] = {}
 async def run_graph_background(project_id: str, config: dict, initial_state=None):
     loop = asyncio.get_running_loop()
     current_agent = "unknown"
+    nodes_ran = 0
     _live_runs[project_id] = asyncio.current_task()
     try:
         stream_iterator = await loop.run_in_executor(
@@ -139,6 +140,7 @@ async def run_graph_background(project_id: str, config: dict, initial_state=None
                     continue
                 
                 current_agent = node_name
+                nodes_ran += 1
                 if "gate" in node_name:
                     continue
                 
@@ -197,6 +199,25 @@ async def run_graph_background(project_id: str, config: dict, initial_state=None
                 "type": "gate_reached",
                 "gate": gate_name,
                 "status": "awaiting_approval"
+            })
+        elif nodes_ran == 0 and state_snapshot.values.get("failed_agent"):
+            # The checkpoint had nothing left to run AND the project is carrying a
+            # recorded failure: this resume could not re-enter the graph, so the
+            # run did NOT complete. Claiming completion here would report a failed
+            # project — no architecture, no plan, no code — as finished, which is
+            # the worst possible lie this function can tell. Leave it error_paused.
+            failed = state_snapshot.values["failed_agent"]
+            print(f"[Resume] {project_id}: nothing to re-enter (failed at {failed}); "
+                  f"staying error_paused rather than reporting completion", flush=True)
+            update_project_status(project_id, "error_paused", failed)
+            await manager.broadcast(project_id, {
+                "type": "agent_error",
+                "agent": failed,
+                "error_type": "unresumable",
+                "message": ("This run could not be resumed from its last checkpoint. "
+                            "Restart from an earlier stage to continue."),
+                "recoverable": False,
+                "skippable": False,
             })
         else:
             final_decision = state_snapshot.values.get("human_decision", "")
