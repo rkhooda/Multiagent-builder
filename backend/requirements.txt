@@ -1,12 +1,30 @@
-fastapi
-uvicorn
-python-dotenv
-langgraph
-litellm
-langchain-google-genai
-langchain-groq
-langsmith
-pydantic
-langgraph-checkpoint-sqlite
-duckduckgo-search
+# Pinned to the versions this project is actually tested against (Day 19's
+# KNOWN_GOOD_VERSIONS discipline). An unpinned container resolves whatever is
+# newest at build time, which is a different program than the one that passed
+# the regression suites.
+
+# --- Web layer -------------------------------------------------------------
+fastapi==0.128.8
+# [standard] pulls in the `websockets` implementation uvicorn needs to serve
+# /ws/projects/{id}. Plain `uvicorn` starts fine and then refuses every
+# WebSocket upgrade, which presents as "the live feed is dead" rather than as
+# a missing dependency.
+uvicorn[standard]==0.39.0
+pydantic==2.12.5
+python-dotenv==1.0.1
+
+# --- Agent pipeline --------------------------------------------------------
+langgraph==0.6.11
+langgraph-checkpoint-sqlite==2.0.11
+litellm==1.83.9
+langchain-google-genai==2.1.12
+langchain-groq==0.3.8
+langsmith==0.4.37
+
+# --- Agent tooling ---------------------------------------------------------
+duckduckgo-search==8.1.1
+# Day 22 YAML syntax validation (app/validation/syntax.py). Was absent from
+# this file entirely — it only ever worked because it arrived transitively.
+PyYAML==6.0.3
+# Day 24 PDF summary export (app/utils/summary_pdf.py).
 reportlab==5.0.0

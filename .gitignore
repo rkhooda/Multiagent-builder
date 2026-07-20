@@ -10,3 +10,4 @@ projects.db*
 server.log
 .playwright-mcp/
 metrics.db*
+cache.db*
