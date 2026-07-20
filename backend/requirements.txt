@@ -9,3 +9,4 @@ langsmith
 pydantic
 langgraph-checkpoint-sqlite
 duckduckgo-search
+reportlab==5.0.0

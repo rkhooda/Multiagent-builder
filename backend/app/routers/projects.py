@@ -1245,6 +1245,46 @@ def get_project_file_content(project_id: str, path: str):
         raise HTTPException(status_code=400, detail=f"File is not valid UTF-8: {path}")
 
 
+@router.get("/{project_id}/summary.pdf")
+def export_summary_pdf(project_id: str):
+    """One-to-two page handover summary. Works on partial projects: a cancelled
+    run with no files, no QA and no metrics still exports a sensible page."""
+    state_snapshot = graph.get_state({"configurable": {"thread_id": project_id}})
+    if not state_snapshot.values:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    state = serialize_project_state(state_snapshot, project_id)
+
+    # Files are optional — a project that never generated any has no directory.
+    files = []
+    directory = Path(OUTPUTS_ROOT) / project_id
+    if directory.is_dir():
+        for path in walk_generated_files(directory.resolve()):
+            rel = path.relative_to(directory.resolve()).as_posix()
+            try:
+                line_count = len(path.read_text(encoding="utf-8").splitlines())
+            except (UnicodeDecodeError, OSError):
+                line_count = None
+            files.append({"path": rel, "size_bytes": path.stat().st_size, "line_count": line_count})
+
+    try:
+        metrics = metrics_store.run_summary(project_id)
+    except Exception as e:                                    # noqa: BLE001
+        print(f"[PDF] metrics unavailable for {project_id}: {e}", flush=True)
+        metrics = {}
+
+    from app.utils.summary_pdf import build_summary_pdf
+    buffer = build_summary_pdf(state, files, metrics, project_id)
+
+    raw_name = state.get("project_name") or project_id
+    safe_name = re.sub(r"[^A-Za-z0-9._-]+", "-", raw_name).strip("-.") or project_id
+    return StreamingResponse(
+        buffer,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{safe_name}-summary.pdf"'},
+    )
+
+
 @router.get("/{project_id}/download")
 def download_project_zip(project_id: str):
     """ZIP of everything under outputs/{project_id}/, skipping non-UTF-8 files with a warning."""
