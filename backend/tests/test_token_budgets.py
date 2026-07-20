@@ -49,8 +49,17 @@ def test_junk_env_is_ignored_not_fatal():
         del os.environ["LLM_MAX_TOKENS_RESEARCH"]
 
 
-def test_fast_mode_halves_the_budget():
-    assert resolve_max_tokens("architecture", 12000, fast_mode=True) == 6000
+def test_fast_mode_scales_agents_with_measured_headroom():
+    assert resolve_max_tokens("qa", 3000, fast_mode=True) == 1500
+    assert resolve_max_tokens("database", 2500, fast_mode=True) == 1250
+
+
+def test_fast_mode_never_scales_an_agent_measured_at_its_ceiling():
+    """architecture ran 11,996/12,000 and requirements 4,496/4,500 on both
+    calls. Halving those does not shorten the document, it cuts it off."""
+    for agent, budget in (("architecture", 12000), ("requirements", 4500),
+                          ("research", 4500), ("planning", 9000)):
+        assert resolve_max_tokens(agent, budget, fast_mode=True) == budget, agent
 
 
 def test_fast_mode_respects_the_floor():

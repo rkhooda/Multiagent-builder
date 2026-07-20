@@ -173,6 +173,7 @@ def qa_agent(state: dict) -> dict:
     generated_files = state.get("generated_files", {})
     project_name = state.get("project_name", "Unknown Project")
     project_id = state.get("project_id", "")
+    fast_mode = bool(state.get("fast_mode"))
     log = state.get("log", [])
     errors = state.get("errors", [])
 
@@ -221,7 +222,7 @@ def qa_agent(state: dict) -> dict:
             ]
 
             raw_output = call_llm(messages, "qa", max_tokens=3000,
-                                  project_id=project_id)
+                                  project_id=project_id, fast_mode=fast_mode)
             batch_issues = _parse_issues(raw_output, batch_files)
             all_issues.extend(batch_issues)
 
@@ -271,7 +272,8 @@ def qa_agent(state: dict) -> dict:
                 )}
             ]
             fixed_content = call_llm(fix_messages, "qa", max_tokens=3000,
-                                      project_id=project_id, label=filepath)
+                                      project_id=project_id, label=filepath,
+                                      fast_mode=fast_mode)
 
             if len(fixed_content.strip()) < 20:
                 continue

@@ -22,6 +22,7 @@ def database_agent(state: dict) -> dict:
     architecture_doc = state.get("architecture_doc", "")
     tech_stack_str = state.get("tech_stack", "")
     project_id = state.get("project_id", "")
+    fast_mode = bool(state.get("fast_mode"))
     project_name = state.get("project_name", "Unknown Project")
     generated_files = state.get("generated_files", {})
     log = state.get("log", [])
@@ -108,7 +109,8 @@ Generate the complete file content now. Output ONLY the raw file code — no exp
 
         try:
             code = call_llm(messages, "database", max_tokens=2500,
-                            project_id=project_id, label=filepath)
+                            project_id=project_id, label=filepath,
+                            fast_mode=fast_mode)
 
             if len(code.strip()) < 30:
                 # Retry once with stronger instruction
@@ -118,7 +120,8 @@ Generate the complete file content now. Output ONLY the raw file code — no exp
                     "content": "Your response was too short or empty. Generate the complete, full file content now."
                 })
                 code = call_llm(messages, "database", max_tokens=2500,
-                            project_id=project_id, label=filepath)
+                            project_id=project_id, label=filepath,
+                            fast_mode=fast_mode)
 
             # Write to disk immediately
             result = write_project_file(project_id, filepath, code)

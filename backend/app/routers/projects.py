@@ -38,6 +38,7 @@ class ProjectCreateRequest(BaseModel):
     brief: str
     project_name: str
     optional_sections: Optional[OptionalSections] = None
+    fast_mode: bool = False
 
 class ProjectResumeRequest(BaseModel):
     decision: str = Field(..., description="Decision: approve, edit, back, or reject")
@@ -509,6 +510,7 @@ async def create_project(request: ProjectCreateRequest):
         brief=request.brief,
         project_name=request.project_name,
         optional_sections=json.dumps(optional_sections_dict),
+        fast_mode=request.fast_mode,
         research_report="",
         requirements_doc="",
         tech_stack="",

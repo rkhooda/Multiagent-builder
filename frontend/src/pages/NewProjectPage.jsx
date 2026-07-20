@@ -26,6 +26,7 @@ export default function NewProjectPage() {
   const [projectBrief, setProjectBrief] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [fastMode, setFastMode] = useState(false)
   const [optionalSections, setOptionalSections] = useState({
     existing_solutions: false,
     target_users: false,
@@ -58,6 +59,7 @@ export default function NewProjectPage() {
         body: JSON.stringify({
           project_name: projectName,
           brief: projectBrief,
+          fast_mode: fastMode,
           optional_sections: {
             existing_solutions: optionalSections.existing_solutions,
             target_users: optionalSections.target_users,
@@ -158,6 +160,31 @@ export default function NewProjectPage() {
                   </div>
                 </label>
               ))}
+            </div>
+          </div>
+
+          {/* Fast Mode */}
+          <div>
+            <p className="text-sm font-semibold text-gray-700 mb-1">Generation Mode</p>
+            <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+              <label className="flex items-start gap-3 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={fastMode}
+                  onChange={() => setFastMode((v) => !v)}
+                  disabled={loading}
+                  className="mt-0.5 h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer flex-shrink-0"
+                />
+                <div>
+                  <span className="block text-sm font-medium text-gray-800">Fast Mode</span>
+                  <span className="block text-xs text-gray-500 mt-0.5">
+                    Faster, lighter outputs &mdash; good for quick iteration and testing,
+                    not final builds. Generated files are still checked for syntax and
+                    import errors, but problems are reported rather than automatically
+                    repaired.
+                  </span>
+                </div>
+              </label>
             </div>
           </div>
 

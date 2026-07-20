@@ -242,9 +242,24 @@ def validation_pass(state: dict) -> dict:
     repaired, repair_failed = [], []
     budget_exhausted = False
 
+    # Fast mode skips the REPAIRS, not the checks. The checks above are static
+    # and free, so the report still says exactly what is broken; only the LLM
+    # calls that would fix it are withheld. That is the honest shape of the
+    # trade — a quick scaffold you can inspect, with the defects named rather
+    # than silently unexamined.
+    fast_mode = bool(state.get("fast_mode"))
+    if fast_mode and issues_by_file:
+        log.append(f"validation_pass: fast mode — {len(issues_by_file)} file(s) "
+                   "reported but not repaired")
+        print(f"[Validation] fast mode: skipping repair of {len(issues_by_file)} file(s)",
+              flush=True)
+
     for path in sorted(issues_by_file):
         fixable = [i for i in issues_by_file[path] if i.kind in REPAIRABLE_KINDS]
         if not fixable:
+            continue
+        if fast_mode:
+            repair_failed.append(path)
             continue
         allowed, reason = vreport.may_repair(retry_counts, path)
         if not allowed:

@@ -95,13 +95,32 @@ else:
 FAST_MODE_SCALE = 0.5
 FAST_MODE_FLOOR = 800          # below this even a small file stops mid-function
 
+# Agents whose budget fast mode is allowed to scale.
+#
+# WHY a whitelist and not "all of them". max_tokens is a guillotine, not an
+# instruction to be brief: a model asked for half the ceiling does not write a
+# more concise document, it writes the same document and stops mid-sentence.
+# Day 26 measured which agents have headroom and which are already at the wall:
+#
+#   architecture  11,996 / 12,000   at the wall — halving truncates the doc
+#   requirements   4,496 / 4,500    at the wall, on BOTH recorded calls
+#   research       4,368 / 4,500    97% of budget
+#   planning       sized per file count and validated for MIN_TASKS=8 — a short
+#                  plan is not a faster plan, it is invalid JSON
+#
+# Those four are excluded: scaling them trades a broken artifact for no gain.
+# What is left has real headroom (coder files average 356 tokens against 1,500),
+# which is also why fast mode's budget lever is honestly a minor one — the
+# measured wall-clock savings come from skipping the review stages below.
+FAST_MODE_SCALABLE = {"frontend_code", "backend_code", "database", "devops", "qa"}
+
 
 def resolve_max_tokens(agent_type: str, requested: int, fast_mode: bool = False) -> int:
     """Effective output budget: env override > fast-mode scaling > call site."""
     env = os.getenv(f"LLM_MAX_TOKENS_{(agent_type or '').upper()}")
     if env and env.strip().isdigit():
         return max(1, int(env.strip()))
-    if fast_mode:
+    if fast_mode and agent_type in FAST_MODE_SCALABLE:
         return max(FAST_MODE_FLOOR, int(requested * FAST_MODE_SCALE))
     return requested
 

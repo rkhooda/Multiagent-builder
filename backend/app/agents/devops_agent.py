@@ -54,6 +54,7 @@ def devops_agent(state: dict) -> dict:
     project_name = state.get("project_name", "Unknown Project")
     architecture_doc = state.get("architecture_doc", "")
     project_id = state.get("project_id", "")
+    fast_mode = bool(state.get("fast_mode"))
     generated_files = state.get("generated_files", {})
     devops_files = state.get("devops_files", {})
     log = state.get("log", [])
@@ -117,7 +118,8 @@ Generate the complete file content now. Output ONLY the raw file content — no 
 
         try:
             content = call_llm(messages, "devops", max_tokens=2000,
-                               project_id=project_id, label=filepath)
+                               project_id=project_id, label=filepath,
+                               fast_mode=fast_mode)
 
             if len(content.strip()) < 20:
                 messages.append({"role": "assistant", "content": content})
@@ -126,7 +128,8 @@ Generate the complete file content now. Output ONLY the raw file content — no 
                     "content": "Your response was too short. Generate the complete file content now."
                 })
                 content = call_llm(messages, "devops", max_tokens=2000,
-                               project_id=project_id, label=filepath)
+                               project_id=project_id, label=filepath,
+                               fast_mode=fast_mode)
 
             result = write_project_file(project_id, filepath, content)
 
