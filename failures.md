@@ -1334,3 +1334,63 @@ Caveats: LangSmith attribution was unavailable (`LANGCHAIN_TRACING_V2=false`, ke
 is a placeholder), so Task 4 used local metrics and offline state instead of
 traces. Runs were driven over the REST API the UI calls, not through the browser.
 QA never ran, so QA-issue and repair-spend columns are empty rather than zero.
+
+## Day 26 observations
+
+Optimisation day. Full ledger in `docs/OPTIMISATION_TARGETS.md`; this is the
+summary and the corrections.
+
+**The day's plan was wrong on three counts, and the data said so before any
+code changed.** Recording this because the pattern — plan assumes a cause,
+metrics name a different one — has now repeated across several days.
+
+- **QA was not slow from a bloated input.** The plan assumed a ~20k-token
+  context needing batch summarisation. Measured QA input is **1,840 tokens**,
+  among the leanest in the pipeline. QA was slow because its primary model, an
+  OpenRouter reasoning model, **ignored `max_tokens=3000` and returned 32,768
+  tokens in 354 seconds**. The Gemini fallback reviewed the same batch in **7.9
+  seconds with 1,452 tokens**. A 45× latency tax on output that was discarded.
+  Trimming QA's context would have removed real signal to fix a non-problem.
+- **Token budgets already existed and were binding, not absent.** Every call
+  site passes a tuned `max_tokens`. Measured: architecture stopped at
+  11,996/12,000 twice, requirements at 4,496/4,500 on *both* recorded calls,
+  research at 97%, two coder files at 1,49x/1,500. The PDF's suggested defaults
+  (research 3000, requirements 2500, architecture 4000) are *below* current
+  output — adopting them would have truncated every document the pipeline
+  produces. The deliverable became truncation *detection*, not budget reduction.
+- **RPM was never the limit that bit.** The refusal that halted work was Groq's
+  **tokens-per-day: 95,966 of 100,000**, retry in 45 minutes. Provider errors
+  also name a *model*, not a provider, so the planned per-provider bucket would
+  have been a less accurate grain than the per-model pacer Day 25 already
+  shipped. Built daily-budget tracking instead of a second rate limiter.
+
+**Severity: high, and pre-existing.** Truncation is silent — a cut-off
+architecture document returns exactly like a complete one and gets written to
+disk. It had been happening since at least Day 23 with nothing to detect it.
+Now read from `finish_reason` and surfaced in the metrics panel.
+
+**Aggregate view changed the optimisation target.** Per-call latency says QA is
+slowest; *total* time says `frontend_code` is **53.6% of the run** (43 calls ×
+16s) against planning's 17.6%. Ranking by p50 points at the wrong agent. The
+metrics panel now ranks by total time for this reason. Likewise by total tokens:
+`frontend_code` consumes **110,619 input tokens per run**, alone exceeding Groq's
+entire daily allowance — which explains the exhaustion completely.
+
+**One real bug found and fixed while building:** the cache read closed its
+connection inside the `with conn:` block, so every miss threw and took the
+exception path. Tests passed anyway because the handler returned `None`, which
+happened to be the correct value — a reminder that a green test can hide a
+broken path when the failure mode and the success value coincide.
+
+**Not validated, and honestly so.** Fast mode's "~50% faster / ~80% quality"
+claim could not be tested: Groq's daily allowance was exhausted *before* the
+day's work began, so no live A/B was possible. What is established is that the
+mechanism the claim assumes cannot deliver it — `max_tokens` is a guillotine,
+not an instruction to be brief, so halving it either changes nothing (coder
+files use 356 of 1,500) or truncates (the four agents already at their ceiling).
+Fast mode therefore skips the LLM repair pass, keeping the free static checks,
+and scales budgets only where headroom was measured.
+
+Quality baseline held: offline re-score of `2901fb46` returns **21.9% usable**,
+identical to Day 25. All 12 offline suites green. Live-API agent tests could not
+run — exhausted quota, not regression.

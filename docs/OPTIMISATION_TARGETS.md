@@ -165,15 +165,74 @@ and is gated by rate limits (T4), not by model speed.
 
 ## 4. Results ledger
 
-Filled in as each change lands and is measured.
-
 | # | Change | Before | After | Quality delta | Verdict |
 |---|---|---|---|---|---|
-| T1 | QA primary model | — | — | — | pending |
-| T2 | truncation detection | — | — | — | pending |
-| T3 | daily token tracking | — | — | — | pending |
-| T5 | planning context trim | — | — | — | pending |
-| — | response cache | — | — | — | pending |
-| — | fast mode profile | — | — | — | pending |
+| T1 | QA primary model demoted | 354.4 s / 32,768 out | 7.9 s / 1,452 out (measured fallback) | none — same batch, same reviewer output | **kept** |
+| T2 | truncation detection via `finish_reason` | invisible | recorded + warned per attempt | detection only | **kept** |
+| T2b | budget *reduction* | — | — | would truncate 4 agents | **rejected** |
+| T3 | daily token budget skip | doomed round trip per tier | 0 ms skip, fails over | none | **kept** |
+| T4 | adaptive interval widening on 429 | fixed interval | ×1.5 per 429, capped ×8 | none | **kept** |
+| — | response cache | restart re-spends every call | 0 calls across 4 upstream agents | none (bypass verified) | **kept** |
+| T5 | coder folder map grouped | 1,882 chars | 1,103 chars (−42%) | none — provably lossless | **kept** |
+| T5b | planning context trim | 10,484 in | — | not attempted | **deferred** |
+| T5c | architecture block trim (51% of ctx) | — | — | endpoint-hallucination risk | **rejected** |
+| — | fast mode | — | budget whitelist + repair skip | unmeasured (no quota) | **kept, unvalidated** |
+
+Frontend coder input: **87.5k → 77.5k tokens per run** (−11.4%), ~10% of Groq's
+daily allowance recovered per run.
+
+### Quality baseline: unchanged
+
+Offline re-score (`score_project.py`, 0 API calls) against Day 25's persisted runs:
+
+| Project | Day 25 baseline | Day 26 re-score |
+|---|---|---|
+| `2901fb46` TodoSimple | 21.9% usable (21/96) | **21.9% usable (21/96)** |
+| `341b1dc2` NotesTags | — | 20.3% usable (12/59) |
+
+No optimisation regressed the baseline. This is by construction for changes that
+do not alter generation (cache, budgets, limiter); for the folder-map change it
+is supported by the losslessness assertion rather than by a regenerated run,
+which quota did not permit.
+
+---
+
+## 5. What could not be measured today, and why
+
+Honesty about the gaps matters more than a full-looking table.
+
+- **Fast mode's speed/quality tradeoff is unvalidated.** The PDF claims ~50%
+  faster at ~80% quality. Validating that needs two live runs of the same brief;
+  Groq's daily allowance was already exhausted before the day's work began. The
+  claim is neither confirmed nor refuted here. What *is* established by
+  measurement is that the mechanism the claim assumes — halving `max_tokens` —
+  cannot deliver it, because a lower ceiling truncates rather than condenses.
+- **The folder-map trim is proven lossless, not proven neutral on output.** No
+  path is lost, so the model receives the same information in a denser form. A
+  regenerated run would be needed to confirm the model reads the grouped form as
+  well as the flat one.
+- **Sample sizes are small.** Most per-agent averages rest on n=2–4 successful
+  calls, since 75% of attempts were rate-limited. Directionally the signals are
+  large (a 45× latency gap, a 4-token-from-the-cap truncation) but the precise
+  figures should not be treated as stable.
+
+---
+
+## 6. Ponytail decisions
+
+Three mandated design reviews; all three rejected the planned approach on
+measured evidence.
+
+1. **Rate limiter.** Planned: new per-provider RPM token bucket. Shipped: kept
+   the existing per-model pacer, added daily budget tracking. Provider refusals
+   name a model, so per-provider is the *less* accurate grain, and RPM was never
+   the limit that bit — tokens-per-day was.
+2. **Cache key.** Planned: `hash(model + messages + max_tokens + temperature)`.
+   Shipped: `hash(agent_type + messages + max_tokens)`. Model excluded because
+   the fallback chain varies it, which would defeat restart-from-stage;
+   temperature excluded as a hardcoded constant.
+3. **Fast mode.** Planned: halve all per-agent budgets. Shipped: scale only
+   agents with measured headroom, and skip the LLM repair pass. Blanket halving
+   either does nothing or truncates.
 </content>
 </invoke>
