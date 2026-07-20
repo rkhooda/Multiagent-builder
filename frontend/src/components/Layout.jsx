@@ -4,7 +4,7 @@ import { statusMeta } from '../lib/status'
 import { applyTheme, storedTheme } from '../lib/theme'
 import { Button, Dot, Eyebrow, cx } from './ui'
 
-const API = 'http://localhost:8000'
+const API = ''
 
 const TITLES = { '/': 'Projects', '/new': 'New project' }
 

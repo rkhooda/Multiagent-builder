@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 
-const API = 'http://localhost:8000/api/projects'
+const API = '/api/projects'
 
 function formatBytes(n) {
   if (!n) return '0 B'

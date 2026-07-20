@@ -143,7 +143,7 @@ export default function Gate1Approval({ projectId, projectState, status, onResum
 
   const saveEditing = async () => {
     try {
-      await fetch(`http://localhost:8000/api/projects/${projectId}/state`, {
+      await fetch(`/api/projects/${projectId}/state`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ field: 'requirements_doc', content: draftText }),

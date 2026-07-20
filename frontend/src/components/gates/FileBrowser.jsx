@@ -192,7 +192,7 @@ export default function FileBrowser({
     setLoading(true)
     setLoadError('')
     fetch(
-      `http://localhost:8000/api/projects/${projectId}/files/content?path=${encodeURIComponent(selectedPath)}`
+      `/api/projects/${projectId}/files/content?path=${encodeURIComponent(selectedPath)}`
     )
       .then(async (res) => {
         if (!res.ok) throw new Error((await res.json())?.detail || `HTTP ${res.status}`)

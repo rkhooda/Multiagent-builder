@@ -357,7 +357,7 @@ export default function Gate3Approval({ projectId, projectState, status, onResum
   // Persist the edited plan to the paused graph. Returns true on success.
   const patchPlan = async () => {
     const excludedPayload = [...tasks.filter((t) => excluded.has(t.id)), ...removed]
-    const res = await fetch(`http://localhost:8000/api/projects/${projectId}/state`, {
+    const res = await fetch(`/api/projects/${projectId}/state`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({

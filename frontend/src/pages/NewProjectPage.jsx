@@ -51,7 +51,7 @@ export default function NewProjectPage() {
     setError('')
 
     try {
-      const res = await fetch('http://localhost:8000/api/projects', {
+      const res = await fetch('/api/projects', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

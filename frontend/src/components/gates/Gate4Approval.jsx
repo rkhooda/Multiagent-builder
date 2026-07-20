@@ -5,7 +5,7 @@ import QAReportPanel, { parseQAReport } from './QAReportPanel'
 import DiffView from './DiffView'
 import MetricsPanel from '../MetricsPanel'
 
-const API = 'http://localhost:8000/api/projects'
+const API = '/api/projects'
 const MAX_FIXES_PER_FILE = 3
 
 function formatDuration(seconds) {

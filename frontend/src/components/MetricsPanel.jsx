@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { DesktopOnly } from './ui'
 
-const API = 'http://localhost:8000/api/projects'
+const API = '/api/projects'
 
 /**
  * Day 23 per-run observability panel.

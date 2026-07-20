@@ -1,0 +1,13 @@
+# node_modules is reinstalled from the lockfile inside the image; copying the
+# host's would both bloat the context and risk carrying host-arch binaries.
+node_modules/
+dist/
+
+.env
+.env.*
+.DS_Store
+.git/
+
+# The builder's own Docker files are not inputs to the SPA build.
+Dockerfile
+.dockerignore

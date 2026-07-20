@@ -27,7 +27,13 @@ export function useProjectStream(projectId) {
         closeSocket(ws.current)
       }
 
-      ws.current = new WebSocket(`ws://localhost:8000/ws/projects/${projectId}`)
+      // Derived from the serving origin, never hardcoded. Every other call in
+      // this app uses a relative URL, but `new WebSocket()` rejects those, so
+      // this is the one place the origin has to be reconstructed: Vite's proxy
+      // in dev, nginx in the container. The regex also turns https into wss,
+      // so putting this behind TLS later needs no change here.
+      const wsUrl = `${location.origin.replace(/^http/, 'ws')}/ws/projects/${projectId}`
+      ws.current = new WebSocket(wsUrl)
       
       ws.current.onopen = () => {
         if (!isMounted) return
@@ -87,7 +93,7 @@ export function useProjectStream(projectId) {
 
   const resumePipeline = async (decision, feedback = '') => {
     try {
-      const res = await fetch(`http://localhost:8000/api/projects/${projectId}/resume`, {
+      const res = await fetch(`/api/projects/${projectId}/resume`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ decision, feedback })

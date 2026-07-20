@@ -202,7 +202,7 @@ export default function ProjectDetailPage() {
   const fetchMetadata = async () => {
     try {
       setMetadataLoading(true)
-      const res = await fetch(`http://localhost:8000/api/projects/${projectId}`)
+      const res = await fetch(`/api/projects/${projectId}`)
       if (!res.ok) {
         throw new Error('Project not found')
       }
@@ -383,7 +383,7 @@ export default function ProjectDetailPage() {
   const handleResumeInterrupted = async () => {
     setResuming(true)
     try {
-      const res = await fetch(`http://localhost:8000/api/projects/${projectId}/resume`, {
+      const res = await fetch(`/api/projects/${projectId}/resume`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ decision: 'approve', feedback: '' }),
@@ -401,7 +401,7 @@ export default function ProjectDetailPage() {
   }
 
   const handleRecover = async (action) => {
-    const res = await fetch(`http://localhost:8000/api/projects/${projectId}/recover`, {
+    const res = await fetch(`/api/projects/${projectId}/recover`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ action }),

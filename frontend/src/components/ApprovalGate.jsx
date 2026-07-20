@@ -29,7 +29,7 @@ export default function ApprovalGate({ status, gateEvent, currentStage, eventsCo
 
   useEffect(() => {
     if (projectId) {
-      fetch(`http://localhost:8000/api/projects/${projectId}`)
+      fetch(`/api/projects/${projectId}`)
         .then((r) => r.json())
         .then((state) => {
           setProjectState(state)
@@ -243,7 +243,7 @@ export default function ApprovalGate({ status, gateEvent, currentStage, eventsCo
         </p>
         <div className="pt-2">
           <a
-            href={`http://localhost:8000/api/projects/${projectId}/download`}
+            href={`/api/projects/${projectId}/download`}
             className="block w-full rounded border border-run/35 bg-overlay py-2.5 px-4 text-center text-sm font-semibold text-ink hover:bg-line"
           >
             ⬇ Download Project ZIP

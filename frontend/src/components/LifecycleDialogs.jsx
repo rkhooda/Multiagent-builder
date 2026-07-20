@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { RESTART_STAGES, stageLabel } from '../lib/status'
 
-const API = 'http://localhost:8000/api/projects'
+const API = '/api/projects'
 
 function Modal({ title, children, onClose }) {
   useEffect(() => {

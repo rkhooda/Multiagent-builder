@@ -4,7 +4,7 @@ import { RestartDialog, DeleteDialog } from '../components/LifecycleDialogs'
 import { statusMeta, stageLabel, formatDate, formatRelative } from '../lib/status'
 import { Badge, Button, Card, Dot, Skeleton, cx } from '../components/ui'
 
-const API = 'http://localhost:8000/api/projects'
+const API = '/api/projects'
 
 // Filter options mirror the canonical backend vocabulary; `interrupted` is
 // derived per row rather than stored, so it is not a server-side filter.
