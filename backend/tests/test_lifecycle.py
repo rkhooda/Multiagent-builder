@@ -96,6 +96,33 @@ for public, (stage_key, gate, decision) in RESTART_ENTRY.items():
           GATE_ROUTES[gate].get(decision) is not None)
     check(f"restart '{public}' targets a known stage", stage_key in STAGE_ORDER)
 
+# The routing claim is the whole basis of ponytail #2 ("restart is a gate press"),
+# so assert it against the real compiled graph rather than trusting the map: after
+# writing the checkpoint as_node=<gate> with the decision, `next` must be the
+# node the user asked to restart from.
+EXPECTED_NEXT = {
+    "research": "research",
+    "requirements": "requirements",
+    "architecture": "architecture",
+    "planning": "planning",
+    "code_generation": "frontend_code",
+}
+RPID = "test-day24-restart"
+rconf = {"configurable": {"thread_id": RPID}}
+for public, (stage_key, gate, decision) in RESTART_ENTRY.items():
+    graph.update_state(rconf, {
+        "project_id": RPID,
+        "research_report": "r", "requirements_doc": "q", "architecture_doc": "a",
+        "implementation_plan": "[]",
+        "human_decision": decision,
+        "skip_gate_1": False, "replan_after_architecture": False,
+    }, as_node=gate)
+    actual = graph.get_state(rconf).next
+    check(f"restart '{public}' re-enters the graph at {EXPECTED_NEXT[public]}",
+          actual and actual[0] == EXPECTED_NEXT[public], f"got {actual}")
+
+graph.checkpointer.delete_thread(RPID)
+
 
 # ── delete cascade: all four stores clean (ponytail #3 proof) ────────────────
 PID = "test-day24-delete"
@@ -143,6 +170,33 @@ check("ORPHAN CHECK: checkpoint rows gone", after["checkpoints"] == 0, str(after
 check("ORPHAN CHECK: checkpoint writes gone", after["writes"] == 0, str(after))
 check("ORPHAN CHECK: metrics rows gone", after["metrics"] == 0, str(after))
 check("ORPHAN CHECK: output dir gone (archive included)", after["files"] is False, str(after))
+
+# deleting a RUNNING project must tear the task down first, so no node can write
+# a checkpoint back after its data was removed
+LIVE_PID = "test-day24-live"
+insert_project(LIVE_PID, "Live", "brief", status_vocab.RUNNING, "research")
+graph.update_state({"configurable": {"thread_id": LIVE_PID}}, {"project_id": LIVE_PID})
+
+
+async def _live_delete():
+    async def never_finishes():
+        await asyncio.sleep(3600)
+
+    task = asyncio.ensure_future(never_finishes())
+    _live_runs[LIVE_PID] = task
+    await asyncio.sleep(0)                      # let it start
+    result = await delete_project(LIVE_PID)
+    return result, task
+
+
+live_result, live_task = asyncio.get_event_loop().run_until_complete(_live_delete())
+check("deleting a running project reports the run was cancelled", live_result["cancelled_run"] is True)
+check("the run's task is actually cancelled", live_task.cancelled() or live_task.done())
+check("the live-run registry no longer holds it", LIVE_PID not in _live_runs)
+_conn = get_db_connection()
+_remaining = _conn.execute("SELECT COUNT(*) n FROM projects WHERE id = ?", (LIVE_PID,)).fetchone()["n"]
+_conn.close()
+check("running project's row is gone", _remaining == 0)
 
 # idempotent retry: a half-failed cascade must be finishable by deleting again
 try:
