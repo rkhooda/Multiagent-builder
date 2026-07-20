@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { DesktopOnly } from '../ui'
 import FileBrowser, { formatBytes } from './FileBrowser'
 import QAReportPanel, { parseQAReport } from './QAReportPanel'
 import DiffView from './DiffView'
@@ -176,7 +177,7 @@ function FixModal({ filepath, findings, dependentCount, submitting, error, onSub
           rows={4}
           autoFocus
           placeholder="Describe the fix, or click a QA finding below to include it…"
-          className="w-full rounded border border-line-strong px-3 py-2 text-sm text-ink placeholder-gray-400 focus:outline-none focus:ring-1 focus:ring-purple-500"
+          className="w-full rounded border border-line-strong px-3 py-2 text-sm text-ink placeholder-ink-3 focus:outline-none focus:ring-1 focus:ring-accent"
         />
 
         {findings.length > 0 && (
@@ -210,7 +211,7 @@ function FixModal({ filepath, findings, dependentCount, submitting, error, onSub
             type="button"
             onClick={() => onSubmit(instruction)}
             disabled={submitting || instruction.trim().length < 5}
-            className="w-full flex-1 rounded bg-overlay py-2 px-3 text-sm font-semibold text-ink hover:bg-line disabled:cursor-not-allowed disabled:opacity-50"
+            className="w-full rounded bg-overlay py-2 px-3 text-sm font-semibold text-ink hover:bg-line disabled:cursor-not-allowed disabled:opacity-50"
           >
             {submitting ? 'Fixing… this can take a minute' : 'Fix This File'}
           </button>
@@ -449,7 +450,7 @@ export default function Gate4Approval({ projectId, projectState, status, onResum
             onClick={() => setActiveTab(tab.key)}
             className={`rounded-t border-b-2 px-4 py-2 text-sm font-semibold ${
               activeTab === tab.key
-                ? 'border-blue-600 text-run'
+                ? 'border-accent text-run'
                 : 'border-transparent text-ink-3 hover:text-ink'
             }`}
           >
@@ -462,6 +463,7 @@ export default function Gate4Approval({ projectId, projectState, status, onResum
         filesError ? (
           <p className="text-sm text-err">Failed to load files: {filesError}</p>
         ) : (
+          <DesktopOnly label="The file browser">
           <FileBrowser
             projectId={projectId}
             filesData={filesData}
@@ -477,6 +479,7 @@ export default function Gate4Approval({ projectId, projectState, status, onResum
             previousContent={previousContent}
             renderDiff={(oldText, newText) => <DiffView oldText={oldText} newText={newText} />}
           />
+          </DesktopOnly>
         )
       ) : (
         <QAReportPanel qaReport={qaReport} parsedReport={parsedReport} onOpenFile={handleOpenFile} />
@@ -513,7 +516,7 @@ export default function Gate4Approval({ projectId, projectState, status, onResum
               type="button"
               onClick={handleComplete}
               disabled={isPending || fixing}
-              className="w-full flex-1 rounded-md border border-accent bg-accent py-2 px-3 text-sm font-semibold text-accent-ink hover:brightness-110 disabled:opacity-50"
+              className="w-full rounded-md border border-accent bg-accent py-2 px-3 text-sm font-semibold text-accent-ink hover:brightness-110 disabled:opacity-50"
             >
               {submitting === 'approve' ? 'Completing…' : 'Mark project complete'}
             </button>

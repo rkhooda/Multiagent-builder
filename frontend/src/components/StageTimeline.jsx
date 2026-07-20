@@ -160,7 +160,7 @@ export default function StageTimeline({ projectState, status, events, regenerati
                   onClick={() => handleClick(key)}
                   className={`flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold transition-colors ${
                     state === 'done'
-                      ? `text-ink-2 ${hasDiff ? 'hover:bg-blue-50 cursor-pointer' : 'cursor-default'}`
+                      ? `text-ink-2 ${hasDiff ? 'hover:bg-overlay cursor-pointer' : 'cursor-default'}`
                       : state === 'pending'
                         ? 'cursor-default text-gray-300'
                         : state === 'error'
@@ -168,7 +168,7 @@ export default function StageTimeline({ projectState, status, events, regenerati
                           : state === 'skipped'
                             ? 'cursor-default text-ink-3'
                             : 'bg-run/10 text-run'
-                  } ${diffStage === key ? 'ring-1 ring-blue-400' : ''}`}
+                  } ${diffStage === key ? 'ring-1 ring-accent' : ''}`}
                 >
                   {state === 'done' && <span className="text-ok">✓</span>}
                   {state === 'error' && <span className="h-2 w-2 rounded-full bg-err" />}

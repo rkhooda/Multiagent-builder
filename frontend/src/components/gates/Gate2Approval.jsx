@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import MermaidDiagram from '../MermaidDiagram'
+import { DesktopOnly } from '../ui'
 import FeedbackInput from './FeedbackInput'
 import RegeneratingOverlay from './RegeneratingOverlay'
 import DiffView from './DiffView'
@@ -265,7 +266,9 @@ export default function Gate2Approval({ projectId, projectState, status, onResum
                   <p className="text-xs text-ink-3">No Mermaid ER diagram found.</p>
                 ) : (
                   dbDiagrams.map((code, i) => (
-                    <MermaidDiagram key={i} code={code} title={`Diagram ${i + 1}`} />
+                    <DesktopOnly key={i} label="Architecture diagrams">
+                      <MermaidDiagram code={code} title={`Diagram ${i + 1}`} />
+                    </DesktopOnly>
                   ))
                 )}
                 {sqlBlocks.length > 0 && (
@@ -323,12 +326,12 @@ export default function Gate2Approval({ projectId, projectState, status, onResum
             </div>
           </div>
         ) : (
-          <div className="flex flex-wrap gap-2 lg:flex-col">
+          <div className="grid grid-cols-2 gap-2 lg:grid-cols-1">
             <button
               type="button"
               onClick={handleApprove}
               disabled={isPending || regenAction}
-              className="w-full flex-1 rounded-md border border-accent bg-accent py-2 px-3 text-sm font-semibold text-accent-ink hover:brightness-110 disabled:opacity-50"
+              className="w-full rounded-md border border-accent bg-accent py-2 px-3 text-sm font-semibold text-accent-ink hover:brightness-110 disabled:opacity-50"
             >
               {submitting === 'approve' ? 'Approving…' : 'Approve & continue'}
             </button>

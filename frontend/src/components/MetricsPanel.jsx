@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { DesktopOnly } from './ui'
 
 const API = 'http://localhost:8000/api/projects'
 
@@ -219,6 +220,7 @@ export default function MetricsPanel({ projectId, compact = false }) {
       )}
 
       {!compact && rows.length > 0 && (
+        <DesktopOnly label="The per-agent breakdown">
         <div className="mt-3 overflow-x-auto">
           <table className="w-full min-w-[560px] text-left text-xs">
             <thead>
@@ -257,6 +259,7 @@ export default function MetricsPanel({ projectId, compact = false }) {
             </tbody>
           </table>
         </div>
+        </DesktopOnly>
       )}
     </div>
   )

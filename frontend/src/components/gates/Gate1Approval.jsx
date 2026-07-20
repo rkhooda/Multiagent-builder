@@ -36,7 +36,7 @@ function TechStackCard({ techStackStr }) {
   ].filter(([, v]) => v)
 
   return (
-    <dl className="mb-4 grid grid-cols-2 gap-x-4 gap-y-2 rounded border border-blue-100 bg-run/10 p-3 text-xs">
+    <dl className="mb-4 grid grid-cols-2 gap-x-4 gap-y-2 rounded border border-run/25 bg-run/10 p-3 text-xs">
       {rows.map(([label, value]) => (
         <div key={label} className="col-span-2 sm:col-span-1">
           <dt className="font-semibold uppercase tracking-wide text-run">{label}</dt>
@@ -240,7 +240,7 @@ export default function Gate1Approval({ projectId, projectState, status, onResum
                   value={draftText}
                   onChange={(e) => setDraftText(e.target.value)}
                   rows={18}
-                  className="w-full rounded border border-line-strong p-2 font-mono text-xs text-ink focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  className="w-full rounded border border-line-strong p-2 font-mono text-xs text-ink focus:outline-none focus:ring-1 focus:ring-accent"
                 />
                 <div className="flex gap-2">
                   <button
@@ -297,12 +297,12 @@ export default function Gate1Approval({ projectId, projectState, status, onResum
             </div>
           </div>
         ) : (
-          <div className="flex flex-wrap gap-2 lg:flex-col">
+          <div className="grid grid-cols-2 gap-2 lg:grid-cols-1">
             <button
               type="button"
               onClick={handleApprove}
               disabled={isPending || regenAction}
-              className="w-full flex-1 rounded-md border border-accent bg-accent py-2 px-3 text-sm font-semibold text-accent-ink hover:brightness-110 disabled:opacity-50"
+              className="w-full rounded-md border border-accent bg-accent py-2 px-3 text-sm font-semibold text-accent-ink hover:brightness-110 disabled:opacity-50"
             >
               {submitting === 'approve' ? 'Approving…' : 'Approve & continue'}
             </button>

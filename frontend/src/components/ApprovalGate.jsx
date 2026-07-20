@@ -450,15 +450,15 @@ export default function ApprovalGate({ status, gateEvent, currentStage, eventsCo
                   onChange={(e) => setFeedbackText(e.target.value)}
                   placeholder="Tell the agents what to change or refine..."
                   rows={4}
-                  className="w-full px-3 py-2 border border-line-strong rounded text-sm text-ink focus:ring-1 focus:ring-blue-500 focus:outline-none placeholder-gray-400"
+                  className="w-full px-3 py-2 border border-line-strong rounded text-sm text-ink focus:ring-1 focus:ring-accent focus:outline-none placeholder-ink-3"
                 />
                 <button
                   onClick={handleSubmitChanges}
                   disabled={isPending || !feedbackText.trim()}
                   className={`w-full py-2 px-4 rounded text-ink font-semibold text-sm transition-colors cursor-pointer text-center ${
                     !feedbackText.trim()
-                      ? 'bg-blue-300 cursor-not-allowed'
-                      : 'bg-overlay hover:bg-line'
+                      ? 'bg-overlay text-ink-3 cursor-not-allowed'
+                      : 'border border-accent bg-accent text-accent-ink hover:brightness-110'
                   }`}
                 >
                   {submitting === 'edit' ? 'Sending...' : 'Submit Changes'}

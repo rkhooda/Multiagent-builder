@@ -148,13 +148,13 @@ function AddTaskForm({ phase, allTasks, onAdd, onCancel }) {
           value={form.filename}
           onChange={(e) => setForm({ ...form, filename: e.target.value })}
           placeholder="Filename (e.g. Footer.jsx)"
-          className="rounded border border-line-strong px-2 py-1.5 text-xs font-mono focus:outline-none focus:ring-1 focus:ring-blue-500"
+          className="rounded border border-line-strong px-2 py-1.5 text-xs font-mono focus:outline-none focus:ring-1 focus:ring-accent"
         />
         <input
           value={form.filepath}
           onChange={(e) => setForm({ ...form, filepath: e.target.value })}
           placeholder="Filepath (e.g. frontend/src/components/Footer.jsx)"
-          className="rounded border border-line-strong px-2 py-1.5 text-xs font-mono focus:outline-none focus:ring-1 focus:ring-blue-500"
+          className="rounded border border-line-strong px-2 py-1.5 text-xs font-mono focus:outline-none focus:ring-1 focus:ring-accent"
         />
       </div>
       <textarea
@@ -162,7 +162,7 @@ function AddTaskForm({ phase, allTasks, onAdd, onCancel }) {
         onChange={(e) => setForm({ ...form, description: e.target.value })}
         placeholder="What must this file contain? Be specific — min 50 characters."
         rows={3}
-        className="w-full rounded border border-line-strong px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
+        className="w-full rounded border border-line-strong px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-accent"
       />
       <div className="flex flex-wrap items-center gap-3">
         <label className="flex items-center gap-1.5 text-xs text-ink-2">
@@ -470,7 +470,7 @@ export default function Gate3Approval({ projectId, projectState, status, onResum
         id={`task-${task.id}`}
         className={`rounded border p-3 transition-all ${
           highlightId === task.id
-            ? 'border-blue-400 ring-2 ring-blue-300'
+            ? 'border-accent ring-2 ring-accent/40'
             : isBrokenDependent
               ? 'border-red-300 bg-err/10'
               : isExcluded
@@ -507,7 +507,7 @@ export default function Gate3Approval({ projectId, projectState, status, onResum
                   onChange={(e) => setEditingText(e.target.value)}
                   rows={3}
                   autoFocus
-                  className="w-full rounded border border-run/45 px-2 py-1.5 text-xs text-ink focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  className="w-full rounded border border-run/45 px-2 py-1.5 text-xs text-ink focus:outline-none focus:ring-1 focus:ring-accent"
                 />
                 <div className="flex gap-2">
                   <button type="button" onClick={() => saveDescription(task.id)} className="rounded bg-overlay px-2.5 py-1 text-xs font-semibold text-ink hover:bg-line">
@@ -637,7 +637,7 @@ export default function Gate3Approval({ projectId, projectState, status, onResum
               <button
                 type="button"
                 onClick={() => setShowArchDiff((v) => !v)}
-                className="rounded border border-run/45 bg-raised px-2.5 py-1 text-xs font-semibold text-run hover:bg-blue-100"
+                className="rounded border border-run/45 bg-raised px-2.5 py-1 text-xs font-semibold text-run hover:bg-overlay"
               >
                 {showArchDiff ? 'Hide changes' : 'Review changes'}
               </button>
@@ -794,13 +794,13 @@ export default function Gate3Approval({ projectId, projectState, status, onResum
             </div>
           </div>
         ) : (
-          <div className="flex flex-wrap gap-2 lg:flex-col">
+          <div className="grid grid-cols-2 gap-2 lg:grid-cols-1">
             <button
               type="button"
               onClick={handleApprove}
               disabled={isPending || regenAction || !planValid}
               title={planValid ? '' : 'Fix the dependency conflicts first'}
-              className="w-full flex-1 rounded-md border border-accent bg-accent py-2 px-3 text-sm font-semibold text-accent-ink hover:brightness-110 disabled:opacity-50"
+              className="w-full rounded-md border border-accent bg-accent py-2 px-3 text-sm font-semibold text-accent-ink hover:brightness-110 disabled:opacity-50"
             >
               {submitting === 'approve' ? 'Saving plan…' : 'Approve & start coding'}
             </button>

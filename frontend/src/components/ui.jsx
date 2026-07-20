@@ -146,6 +146,34 @@ export function Skeleton({ className, ...rest }) {
   )
 }
 
+/**
+ * Content that genuinely does not work on a phone.
+ *
+ * The responsive scope here is deliberately narrow: the on-the-go job is to see
+ * which project needs you, read enough to judge, and approve or send it back.
+ * That path is fully mobile. A directory tree beside a syntax-highlighted code
+ * pane, a per-agent metrics table and a side-by-side diff are not that job, and
+ * shrinking them to 375px produces something worse than not showing them —
+ * it looks broken, and it invites decisions on evidence you cannot actually read.
+ *
+ * So those surfaces say so plainly instead. This is a stated boundary, not a
+ * gap: naming the constraint is the honest version of "not supported yet".
+ */
+export function DesktopOnly({ label = 'This view', children }) {
+  return (
+    <>
+      <div className="hidden lg:block">{children}</div>
+      <div className="rounded-lg border border-dashed border-line-strong bg-raised p-6 text-center lg:hidden">
+        <p className="text-[13px] font-medium text-ink">{label} needs a wider screen</p>
+        <p className="mx-auto mt-1 max-w-xs text-[12px] leading-relaxed text-ink-3">
+          Open this project on a desktop to read it properly. You can still
+          approve or request changes from here.
+        </p>
+      </div>
+    </>
+  )
+}
+
 /** Several skeleton lines with a ragged last line, as prose actually wraps. */
 export function SkeletonText({ lines = 3, className }) {
   return (

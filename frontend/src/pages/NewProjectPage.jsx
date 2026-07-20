@@ -107,7 +107,7 @@ export default function NewProjectPage() {
                 setError('')
               }}
               placeholder="e.g. TaskForge, SlackClone, DevDocs"
-              className="w-full px-4 py-2 border border-line-strong rounded focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-ink placeholder-gray-400 text-sm transition-colors"
+              className="w-full px-4 py-2 border border-line-strong rounded focus:ring-1 focus:ring-accent focus:border-accent outline-none text-ink placeholder-ink-3 text-sm transition-colors"
               disabled={loading}
             />
           </div>
@@ -125,7 +125,7 @@ export default function NewProjectPage() {
                 setError('')
               }}
               placeholder="Describe what you're building, who it's for, the key features (max 8), any technical constraints, and what to leave out. The more specific you are, the better the agents perform."
-              className="w-full px-4 py-2 border border-line-strong rounded focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-ink placeholder-gray-400 text-sm transition-colors font-sans"
+              className="w-full px-4 py-2 border border-line-strong rounded focus:ring-1 focus:ring-accent focus:border-accent outline-none text-ink placeholder-ink-3 text-sm transition-colors font-sans"
               disabled={loading}
             />
             <p className="mt-2 text-xs text-ink-3 leading-relaxed">
@@ -152,7 +152,7 @@ export default function NewProjectPage() {
                     checked={optionalSections[key]}
                     onChange={() => toggleSection(key)}
                     disabled={loading}
-                    className="mt-0.5 h-4 w-4 rounded border-line-strong text-run focus:ring-blue-500 cursor-pointer flex-shrink-0"
+                    className="mt-0.5 h-4 w-4 rounded border-line-strong accent-accent focus:ring-accent cursor-pointer flex-shrink-0"
                   />
                   <div>
                     <span className="block text-sm font-medium text-ink">{label}</span>
@@ -173,7 +173,7 @@ export default function NewProjectPage() {
                   checked={fastMode}
                   onChange={() => setFastMode((v) => !v)}
                   disabled={loading}
-                  className="mt-0.5 h-4 w-4 rounded border-line-strong text-run focus:ring-blue-500 cursor-pointer flex-shrink-0"
+                  className="mt-0.5 h-4 w-4 rounded border-line-strong accent-accent focus:ring-accent cursor-pointer flex-shrink-0"
                 />
                 <div>
                   <span className="block text-sm font-medium text-ink">Fast Mode</span>
