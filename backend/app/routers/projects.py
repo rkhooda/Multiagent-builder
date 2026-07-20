@@ -114,13 +114,15 @@ def get_next_event(iterator):
 # forever. That is the zombie. Liveness is only ever true inside the process
 # that owns the task, so it is deliberately in-memory: a restart empties this
 # set, which is exactly the correct answer after a restart.
-_live_runs: set = set()
+# Maps project_id -> the running Task, so a delete can tear the run down before
+# removing its data rather than deleting out from under a live run.
+_live_runs: Dict[str, asyncio.Task] = {}
 
 
 async def run_graph_background(project_id: str, config: dict, initial_state=None):
     loop = asyncio.get_running_loop()
     current_agent = "unknown"
-    _live_runs.add(project_id)
+    _live_runs[project_id] = asyncio.current_task()
     try:
         stream_iterator = await loop.run_in_executor(
             executor, 
@@ -222,7 +224,7 @@ async def run_graph_background(project_id: str, config: dict, initial_state=None
             print(f"[Failure] handler itself failed for {project_id}: {handler_err}", flush=True)
             update_project_status(project_id, "error_paused", current_agent)
     finally:
-        _live_runs.discard(project_id)
+        _live_runs.pop(project_id, None)
 
 
 # ── Failure handling & recovery ──────────────────────────────────────────────
@@ -531,6 +533,93 @@ def get_project(project_id: str):
         raise HTTPException(status_code=404, detail="Project not found")
         
     return serialize_project_state(state_snapshot, project_id)
+
+# ── Cascade delete ───────────────────────────────────────────────────────────
+# Ponytail #3: four stores, and the order is chosen by which half-failure is
+# survivable. "Row gone, files left" is unreachable garbage nobody can find or
+# reclaim; "files gone, row left" is a visible broken project the user can simply
+# delete again. So the DISCOVERABLE POINTER — the projects row — goes LAST, and
+# every step is idempotent so a retry finishes the job. That makes mark-then-
+# sweep unnecessary: a retry already is the sweep.
+#
+# Hard delete, not soft: a soft delete needs an archived flag, a filter on every
+# query, a "show archived" toggle AND a purge action that performs this same hard
+# delete anyway. The irreplaceability concern is real but already answered by the
+# Day 15 ZIP, so the confirm dialog nudges the download instead. Deleted means
+# deleted, which is also the honest UX.
+
+PROJECT_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
+
+
+def project_output_path(project_id: str) -> Path:
+    """Resolve outputs/{project_id}/ with two independent traversal guards.
+
+    project_id reaches the filesystem as a path segment, so this is the worst
+    possible bug in the codebase: a crafted id like '../..' would hand rmtree a
+    directory outside outputs/. Belt and braces — the id must match a strict
+    charset (no dots, no separators), AND the resolved path's parent must be
+    exactly OUTPUTS_ROOT.
+    """
+    if not PROJECT_ID_RE.match(project_id):
+        raise HTTPException(status_code=400, detail="Invalid project id")
+    root = Path(OUTPUTS_ROOT).resolve()
+    target = (root / project_id).resolve()
+    if target.parent != root or target == root:
+        raise HTTPException(status_code=400, detail="Invalid project id")
+    return target
+
+
+@router.delete("/{project_id}")
+async def delete_project(project_id: str):
+    """Delete a project from all four stores. Idempotent; safe to retry."""
+    target_dir = project_output_path(project_id)   # validates before anything is touched
+
+    # Never delete out from under a live run: cancel the task and wait for it to
+    # unwind, so no node writes a checkpoint back after we have deleted it.
+    cancelled_run = False
+    cancel_auto_retry(project_id)
+    task = _live_runs.get(project_id)
+    if task:
+        cancelled_run = True
+        task.cancel()
+        try:
+            await task
+        except (asyncio.CancelledError, Exception):
+            pass
+        _live_runs.pop(project_id, None)
+
+    result = {"project_id": project_id, "cancelled_run": cancelled_run}
+
+    # 1. metrics (independent store, no references into it)
+    result["metrics_rows_deleted"] = metrics_store.delete_project_metrics(project_id)
+
+    # 2. checkpointer thread — the SDK owns its schema, so use its own deletion
+    #    rather than hand-rolled DELETEs against checkpoints/writes.
+    try:
+        graph.checkpointer.delete_thread(project_id)
+        result["checkpoint_deleted"] = True
+    except Exception as e:                                    # noqa: BLE001
+        print(f"[Delete] checkpoint delete failed for {project_id}: {e}", flush=True)
+        result["checkpoint_deleted"] = False
+
+    # 3. generated files (including any restart archive under .archived/)
+    if target_dir.is_dir():
+        shutil.rmtree(target_dir)
+        result["files_deleted"] = True
+    else:
+        result["files_deleted"] = False
+
+    # 4. the pointer, last — until this row is gone the project stays visible
+    #    and a partial failure above can be finished by deleting again.
+    result["row_deleted"] = delete_project_row(project_id) > 0
+
+    if not result["row_deleted"] and not result["files_deleted"]:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    await manager.broadcast(project_id, {"type": "project_deleted", "project_id": project_id})
+    print(f"[Delete] {project_id}: {result}", flush=True)
+    return result
+
 
 @router.patch("/{project_id}/state")
 def edit_project_state(project_id: str, request: ProjectStateEditRequest):
