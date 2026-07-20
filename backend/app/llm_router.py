@@ -174,14 +174,17 @@ def _provider_of(model: str) -> str:
 
 
 def min_interval_for(model: str) -> float:
+    """Configured interval for this model, widened by anything it has learned
+    from 429s it received despite being paced."""
     provider = _provider_of(model)
+    base = _PACE_DEFAULTS.get(provider, 0.0)
     env = os.getenv(f"LLM_MIN_INTERVAL_{provider.upper()}")
     if env:
         try:
-            return max(0.0, float(env))
+            base = max(0.0, float(env))
         except ValueError:
             pass
-    return _PACE_DEFAULTS.get(provider, 0.0)
+    return base * _backoff_factor.get(model, 1.0)
 
 
 def _pace(model: str):
@@ -204,14 +207,124 @@ def _pace(model: str):
         time.sleep(delay)
 
 
+# Per-model multiplier grown by _penalise when a 429 lands despite pacing.
+_backoff_factor: dict = {}
+
+
 def _penalise(model: str):
-    """After a 429, push this model's next slot out by a full extra interval."""
+    """After a 429, push this model's next slot out AND widen its interval.
+
+    Pushing the slot alone only re-spaces the next request; it assumes the
+    configured interval was right and this 429 was bad luck. A 429 that arrives
+    despite pacing is evidence the configured interval is too optimistic — the
+    real limit is tighter than the guess — so the interval itself is widened for
+    the rest of the process. This is the limiter learning the actual limit
+    instead of repeating the same mistake at the same cadence.
+
+    Growth is capped so a burst of 429s cannot stall a model indefinitely, and
+    the factor is per-model because that is the grain providers enforce at.
+    """
+    with _pace_lock:
+        _backoff_factor[model] = min(_MAX_BACKOFF_FACTOR,
+                                     _backoff_factor.get(model, 1.0) * 1.5)
     interval = min_interval_for(model)
     if interval <= 0:
         return
     with _pace_lock:
         _next_allowed[model] = max(_next_allowed.get(model, 0.0),
                                    time.monotonic()) + interval
+
+
+# ── Daily token budget (Day 26) ──────────────────────────────────────────────
+# WHY this and not the planned RPM token bucket. Requests-per-minute was never
+# the limit that stopped this pipeline. What stopped it was Groq's tokens-per-DAY
+# allowance: 95,966 of 100,000 consumed, every subsequent call refused for 45
+# minutes. RPM is already handled by the pacer above.
+#
+# A daily allowance cannot be paced around — once it is gone it is gone until
+# UTC midnight. The only useful behaviour is to STOP SENDING to that provider and
+# fail over to one with budget left, which turns a guaranteed 429 into a
+# successful call on another tier. Without this the chain still burns a doomed
+# round trip per tier before finding that out.
+#
+# Counting is seeded once from metrics.db (which already records every attempt's
+# usage) and then kept in memory, so this costs one query per process rather than
+# one per call. Reseeded when the UTC day rolls over.
+_DAILY_TOKEN_LIMITS = {
+    "groq": 100_000,        # observed refusal: "tokens per day (TPD): Limit 100000"
+    "gemini": 1_000_000,    # generous free daily ceiling; tracked, rarely binding
+    "openrouter": 0,        # 0 = untracked: OpenRouter free tier limits REQUESTS
+    "ollama": 0,            # local, unmetered
+}
+_MAX_BACKOFF_FACTOR = 8.0
+_budget_lock = threading.Lock()
+_spent_today: dict = {}
+_budget_day: list = [None]
+
+
+def daily_limit_for(provider: str) -> int:
+    env = os.getenv(f"LLM_DAILY_TOKENS_{provider.upper()}")
+    if env and env.strip().isdigit():
+        return int(env.strip())
+    return _DAILY_TOKEN_LIMITS.get(provider, 0)
+
+
+def _utc_day() -> str:
+    return time.strftime("%Y-%m-%d", time.gmtime())
+
+
+def _seed_budget():
+    """Load today's spend from metrics.db once, or reset it on a new UTC day."""
+    day = _utc_day()
+    if _budget_day[0] == day:
+        return
+    _spent_today.clear()
+    try:
+        for provider, row in metrics_store.tokens_used_today().items():
+            _spent_today[provider] = row.get("tokens", 0)
+    except Exception:                           # noqa: BLE001 — never block a call
+        pass
+    _budget_day[0] = day
+
+
+def budget_exhausted(model: str) -> bool:
+    provider = _provider_of(model)
+    limit = daily_limit_for(provider)
+    if limit <= 0:
+        return False                            # 0 = untracked, never blocks
+    with _budget_lock:
+        _seed_budget()
+        return _spent_today.get(provider, 0) >= limit
+
+
+def _spend(model: str, usage: dict):
+    total = (usage.get("prompt_tokens") or 0) + (usage.get("completion_tokens") or 0)
+    if not total:
+        return
+    provider = _provider_of(model)
+    with _budget_lock:
+        _seed_budget()
+        _spent_today[provider] = _spent_today.get(provider, 0) + total
+
+
+def daily_budget_report() -> list:
+    """Per-provider remaining daily allowance, for the metrics panel."""
+    with _budget_lock:
+        _seed_budget()
+        snapshot = dict(_spent_today)
+    out = []
+    for provider in sorted(set(list(_DAILY_TOKEN_LIMITS) + list(snapshot))):
+        limit = daily_limit_for(provider)
+        used = snapshot.get(provider, 0)
+        out.append({
+            "provider": provider,
+            "used": used,
+            "limit": limit or None,
+            "remaining": max(0, limit - used) if limit > 0 else None,
+            "pct_used": round(used / limit * 100, 1) if limit > 0 else None,
+            "tracked": limit > 0,
+        })
+    return out
 
 
 # ── Ollama tier-3 detection ──────────────────────────────────────────────────
@@ -412,6 +525,20 @@ def call_llm(messages: list, agent_type: str, max_tokens=4000, timeout=None,
     last_error = None
 
     for tier, model in enumerate(chain):
+        # A provider whose daily allowance is gone will refuse every request
+        # until UTC midnight, so sending one is a guaranteed-wasted round trip.
+        # Skipping straight to the next tier converts that certain failure into
+        # a call that can actually succeed.
+        if budget_exhausted(model):
+            started = time.monotonic()
+            last_error = LLMRateLimitError(
+                f"{model} skipped: daily token budget for "
+                f"{_provider_of(model)} exhausted", agent_type, model)
+            _log_attempt(agent_type, model, 1, "budget_exhausted", started,
+                         project_id=project_id, label=label,
+                         context_chars=context_chars)
+            continue
+
         for attempt in (1, 2):
             started = time.monotonic()
             try:
@@ -447,8 +574,10 @@ def call_llm(messages: list, agent_type: str, max_tokens=4000, timeout=None,
                 # at the ceiling — exact, unlike comparing token counts to the
                 # budget, which needs a fudge factor and still misses providers
                 # that under-report usage.
+                usage = _extract_usage(resp, model)
+                _spend(model, usage)
                 _log_attempt(agent_type, model, attempt, "ok", started,
-                             usage=_extract_usage(resp, model), project_id=project_id,
+                             usage=usage, project_id=project_id,
                              label=label, context_chars=context_chars,
                              truncated=_finish_reason(resp) == "length")
                 return resp.choices[0].message.content or ""
