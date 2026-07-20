@@ -21,6 +21,7 @@ from app.core.connection_manager import manager
 from app.core.database import (
     insert_project, update_project_status, get_all_projects,
     update_project_rollups, delete_project_row,
+    record_failure, clear_failure, get_failure,
 )
 from app.models import status as status_vocab
 from app.utils.file_writer import OUTPUTS_ROOT
@@ -141,6 +142,11 @@ async def run_graph_background(project_id: str, config: dict, initial_state=None
                 
                 current_agent = node_name
                 nodes_ran += 1
+                # A node completed, so whatever failure this project was
+                # carrying is resolved. Clearing here (rather than in the graph
+                # state) keeps the failure record and the checkpoint decoupled.
+                if nodes_ran == 1:
+                    clear_failure(project_id)
                 if "gate" in node_name:
                     continue
                 
@@ -200,13 +206,14 @@ async def run_graph_background(project_id: str, config: dict, initial_state=None
                 "gate": gate_name,
                 "status": "awaiting_approval"
             })
-        elif nodes_ran == 0 and state_snapshot.values.get("failed_agent"):
+        elif nodes_ran == 0 and (get_failure(project_id)[0]
+                                 or state_snapshot.values.get("failed_agent")):
             # The checkpoint had nothing left to run AND the project is carrying a
             # recorded failure: this resume could not re-enter the graph, so the
             # run did NOT complete. Claiming completion here would report a failed
             # project — no architecture, no plan, no code — as finished, which is
             # the worst possible lie this function can tell. Leave it error_paused.
-            failed = state_snapshot.values["failed_agent"]
+            failed = get_failure(project_id)[0] or state_snapshot.values["failed_agent"]
             print(f"[Resume] {project_id}: nothing to re-enter (failed at {failed}); "
                   f"staying error_paused rather than reporting completion", flush=True)
             update_project_status(project_id, "error_paused", failed)
@@ -272,13 +279,13 @@ async def handle_pipeline_failure(project_id: str, config: dict, current_agent: 
     message = str(exc)
 
     state_snapshot = graph.get_state(config)
-    values = state_snapshot.values or {}
     # The failed node is what the checkpoint will re-run; prefer the typed
     # exception's agent, then the interrupted node, then the last-seen agent.
     agent = getattr(exc, "agent_type", "") or (
         state_snapshot.next[0] if state_snapshot.next else current_agent)
 
-    cycles = (values.get("failure_context") or {}).get("auto_retry_cycles", 0)
+    _, previous_failure = get_failure(project_id)
+    cycles = (previous_failure or {}).get("auto_retry_cycles", 0)
     rate_limited = error_type == "rate_limit" and cycles < MAX_AUTO_RETRY_CYCLES
     status = "rate_limited" if rate_limited else "error_paused"
 
@@ -288,24 +295,16 @@ async def handle_pipeline_failure(project_id: str, config: dict, current_agent: 
         "model": getattr(exc, "model", ""),
         "auto_retry_cycles": cycles + 1 if rate_limited else cycles,
         "recoverable": recoverable,
-    }
-    error_entry = {
-        "agent": agent,
-        "error_type": error_type,
-        "message": message[:2000],
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "attempt": cycles + 1,
     }
-    try:
-        if values:
-            graph.update_state(config, {
-                "errors": list(values.get("errors") or []) + [error_entry],
-                "failed_agent": agent,
-                "failure_context": failure_context,
-            })
-    except Exception as db_err:
-        print(f"[Failure] could not persist failure state for {project_id}: {db_err}", flush=True)
 
+    # CRITICAL: this handler must NOT call graph.update_state(). After a node
+    # raises, the checkpoint's `next` is (failed_node,) and its task carries the
+    # error — exactly what a retry needs. A write here re-derives `next` to ()
+    # and the run becomes permanently unresumable (proven in test_lifecycle.py).
+    # The failure is recorded on the project row instead.
+    record_failure(project_id, agent, failure_context)
     update_project_status(project_id, status, agent)
     print(f"[Failure] {project_id} agent={agent} type={error_type} -> {status}: {message[:300]}", flush=True)
 
@@ -426,8 +425,9 @@ def serialize_project_state(state_snapshot, project_id: str) -> dict:
         print(f"[DB ERROR] Failed to fetch project status: {db_err}")
 
     next_gate = state_snapshot.next[0] if (state_snapshot.next and state_snapshot.next[0].startswith("human_gate_")) else None
+    failed_agent, failure_context = get_failure(project_id)
 
-    
+
     return {
         "project_id": values.get("project_id", project_id),
         "brief": values.get("brief", ""),
@@ -453,8 +453,11 @@ def serialize_project_state(state_snapshot, project_id: str) -> dict:
         "human_decision": values.get("human_decision", ""),
         "log": values.get("log", []),
         "errors": values.get("errors", []),
-        "failed_agent": values.get("failed_agent", ""),
-        "failure_context": values.get("failure_context"),
+        # Failure info comes from the project row. Projects that failed before
+        # Day 24 still carry it in their checkpoint, so fall back to state for
+        # them rather than losing their error card.
+        "failed_agent": failed_agent or values.get("failed_agent", ""),
+        "failure_context": failure_context or values.get("failure_context"),
         "status": status,
         "next_gate": next_gate,
         "position": derive_position(state_snapshot, project_id, status),
@@ -961,25 +964,32 @@ async def recover_project(project_id: str, request: RecoverRequest):
         raise HTTPException(status_code=409, detail=f"Project is '{status}', not in a recoverable error state")
 
     values = state_snapshot.values
-    failed_agent = values.get("failed_agent") or (state_snapshot.next[0] if state_snapshot.next else "")
+    row_failed_agent, row_failure = get_failure(project_id)
+    failed_agent = (row_failed_agent or values.get("failed_agent")
+                    or (state_snapshot.next[0] if state_snapshot.next else ""))
     cancel_auto_retry(project_id)
 
     if request.action == "cancel":
+        clear_failure(project_id)
         update_project_status(project_id, "cancelled", "cancelled")
         await manager.broadcast(project_id, {"type": "project_cancelled", "project_id": project_id})
         return {"status": "cancelled"}
 
     if request.action == "retry":
-        retry_counts = dict(values.get("retry_counts") or {})
-        retry_counts[failed_agent] = retry_counts.get(failed_agent, 0) + 1
-        graph.update_state(config, {"retry_counts": retry_counts})
+        # No graph write here either — the pending task IS the retry. Counting
+        # the attempt on the project row instead of in retry_counts keeps the
+        # checkpoint untouched, which is the whole reason a retry can re-enter
+        # at all. The row's counter is cleared once a node actually completes.
+        context = dict(row_failure or {})
+        context["manual_retries"] = context.get("manual_retries", 0) + 1
+        record_failure(project_id, failed_agent, context)
         update_project_status(project_id, "running", failed_agent)
         asyncio.create_task(run_graph_background(project_id, config))
         return {
             "status": "retrying",
             "agent": failed_agent,
-            "retry_count": retry_counts[failed_agent],
-            "retry_cap_warning": retry_counts[failed_agent] >= 3,
+            "retry_count": context["manual_retries"],
+            "retry_cap_warning": context["manual_retries"] >= 3,
         }
 
     if request.action == "skip":
@@ -988,7 +998,7 @@ async def recover_project(project_id: str, request: RecoverRequest):
                 status_code=400,
                 detail=f"'{failed_agent}' cannot be skipped — every downstream stage needs its output. Retry or cancel instead.",
             )
-        reason = (values.get("failure_context") or {}).get("message", "unknown failure")[:200]
+        reason = (row_failure or values.get("failure_context") or {}).get("message", "unknown failure")[:200]
         update = SKIPPABLE_AGENTS[failed_agent](reason)
         history = list(values.get("stage_history") or [])
         history.append({
@@ -1004,6 +1014,7 @@ async def recover_project(project_id: str, request: RecoverRequest):
         ]
         update["failed_agent"] = ""
         update["failure_context"] = None
+        clear_failure(project_id)
         # as_node: the checkpoint records this as the failed node's own output,
         # so `next` advances past it and streaming resumes with the next stage.
         node = state_snapshot.next[0] if state_snapshot.next else failed_agent

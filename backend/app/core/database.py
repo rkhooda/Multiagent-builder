@@ -1,3 +1,4 @@
+import json
 import sqlite3
 import os
 from datetime import datetime
@@ -36,6 +37,11 @@ def init_db():
         for column, default in (("files_generated", 0), ("qa_issues_count", 0)):
             if column not in existing:
                 conn.execute(f"ALTER TABLE projects ADD COLUMN {column} INTEGER DEFAULT {default}")
+        # Failure info lives HERE and not in the LangGraph checkpoint — see
+        # record_failure() for why.
+        for column in ("failed_agent", "failure_context"):
+            if column not in existing:
+                conn.execute(f"ALTER TABLE projects ADD COLUMN {column} TEXT")
         migrated = status.migrate_legacy_rows(conn)
         if migrated:
             print(f"[DB] migrated {migrated} legacy status rows to the canonical vocabulary", flush=True)
@@ -89,6 +95,50 @@ def update_project_rollups(project_id: str, files_generated=None, qa_issues_coun
     with conn:
         conn.execute(f"UPDATE projects SET {', '.join(sets)} WHERE id = ?", params)
     conn.close()
+
+
+# ── Failure info (deliberately NOT in the LangGraph checkpoint) ──────────────
+# Writing to the checkpoint destroys the pending task: after a node raises,
+# `next` is (failed_node,) and a plain graph.update_state() re-derives it to (),
+# after which resuming streams nothing and the run can never be retried. Proven
+# against the compiled graph in test_lifecycle.py. Failure data has no business
+# in the workflow state anyway — it describes the RUN, not the project — so it
+# lives on the project row where recording it cannot corrupt graph position.
+
+def record_failure(project_id: str, agent: str, context: dict):
+    conn = get_db_connection()
+    with conn:
+        conn.execute(
+            "UPDATE projects SET failed_agent = ?, failure_context = ?, updated_at = ? WHERE id = ?",
+            (agent, json.dumps(context), datetime.now().isoformat(), project_id),
+        )
+    conn.close()
+
+
+def clear_failure(project_id: str):
+    conn = get_db_connection()
+    with conn:
+        conn.execute(
+            "UPDATE projects SET failed_agent = NULL, failure_context = NULL WHERE id = ?",
+            (project_id,),
+        )
+    conn.close()
+
+
+def get_failure(project_id: str) -> tuple:
+    """(failed_agent, failure_context) for a project; ('', None) if healthy."""
+    conn = get_db_connection()
+    row = conn.execute(
+        "SELECT failed_agent, failure_context FROM projects WHERE id = ?", (project_id,)
+    ).fetchone()
+    conn.close()
+    if not row or not row["failed_agent"]:
+        return "", None
+    try:
+        context = json.loads(row["failure_context"]) if row["failure_context"] else None
+    except (json.JSONDecodeError, TypeError):
+        context = None
+    return row["failed_agent"], context
 
 
 SORT_COLUMNS = {"created_at": "created_at", "updated_at": "updated_at", "name": "name", "status": "status"}

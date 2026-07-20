@@ -19,7 +19,9 @@ from app.observability import metrics_store
 from app.routers.projects import (
     delete_project, derive_position, project_output_path, _live_runs,
     RESTART_ENTRY, restart_cost_estimate, walk_generated_files, ARCHIVE_DIRNAME,
+    handle_pipeline_failure, cancel_auto_retry, _db_status as _db_status_for,
 )
+from app.core.database import record_failure, clear_failure, get_failure
 from app.utils.file_writer import OUTPUTS_ROOT
 from fastapi import HTTPException
 from pathlib import Path
@@ -122,6 +124,137 @@ for public, (stage_key, gate, decision) in RESTART_ENTRY.items():
           actual and actual[0] == EXPECTED_NEXT[public], f"got {actual}")
 
 graph.checkpointer.delete_thread(RPID)
+
+
+# ── recovery position must survive a failure ─────────────────────────────────
+# The regression this guards: writing failure info into the LangGraph checkpoint
+# re-derives `next` from (failed_node,) to (), after which the run streams zero
+# events forever and can never be retried. Asserted against the REAL compiled
+# graph, driven through the same restart entry a user would use.
+FPID = "test-day24-failure"
+fconf = {"configurable": {"thread_id": FPID}}
+insert_project(FPID, "Failure", "brief", status_vocab.RUNNING, "architecture")
+graph.update_state(fconf, {
+    "project_id": FPID, "research_report": "r", "requirements_doc": "q",
+    "human_decision": "edit", "skip_gate_1": False, "replan_after_architecture": False,
+}, as_node="human_gate_2")
+
+pending_before = graph.get_state(fconf).next
+check("failure fixture is pending at architecture",
+      pending_before == ("architecture",), f"got {pending_before}")
+
+
+class FakeLLMError(Exception):
+    error_type = "rate_limit"
+    recoverable = True
+    agent_type = "architecture"
+    model = "groq/llama"
+
+
+asyncio.get_event_loop().run_until_complete(
+    handle_pipeline_failure(FPID, fconf, "architecture", FakeLLMError("provider exploded")))
+
+check("POSITION SURVIVES: pending task intact after a failure",
+      graph.get_state(fconf).next == ("architecture",),
+      f"got {graph.get_state(fconf).next} — the run is now unresumable")
+
+agent, ctx = get_failure(FPID)
+check("failure recorded on the project row", agent == "architecture")
+check("failure context carries the error type", (ctx or {}).get("error_type") == "rate_limit")
+check("failure is NOT written into the checkpoint",
+      not graph.get_state(fconf).values.get("failed_agent"))
+check("status reflects the rate limit", _db_status_for(FPID) == status_vocab.RATE_LIMITED)
+
+# a second failure must keep counting cycles without touching position
+asyncio.get_event_loop().run_until_complete(
+    handle_pipeline_failure(FPID, fconf, "architecture", FakeLLMError("again")))
+check("auto-retry cycles accumulate across failures",
+      (get_failure(FPID)[1] or {}).get("auto_retry_cycles") == 2)
+check("POSITION SURVIVES a second failure",
+      graph.get_state(fconf).next == ("architecture",))
+
+clear_failure(FPID)
+check("clearing the failure leaves the position alone",
+      graph.get_state(fconf).next == ("architecture",))
+check("cleared failure reads as healthy", get_failure(FPID) == ("", None))
+
+cancel_auto_retry(FPID)
+graph.checkpointer.delete_thread(FPID)
+_c = get_db_connection()
+with _c:
+    _c.execute("DELETE FROM projects WHERE id = ?", (FPID,))
+_c.close()
+
+
+# ── END-TO-END: a failed run must actually be retryable ──────────────────────
+# The assertions above prove the position survives. This proves the whole loop
+# works on the REAL pipeline: stream -> node raises -> failure handler ->
+# /recover retry -> the node re-runs and the pipeline advances to its gate.
+# No API calls: the architecture agent's one LLM seam is patched to fail once.
+import app.agents.architecture_agent as arch_module
+from app.routers.projects import run_graph_background, recover_project, RecoverRequest
+
+E2E = "test-day24-retry-e2e"
+econf = {"configurable": {"thread_id": E2E}}
+ARCH_DOC = "# Architecture\n\n## Components\nA real enough document for the test.\n"
+calls = {"n": 0}
+real_call_validated = arch_module.call_validated
+
+
+def flaky_call_validated(messages, agent_type, state, **kwargs):
+    calls["n"] += 1
+    if calls["n"] == 1:
+        from app.exceptions import LLMError
+        raise LLMError("provider exploded", agent_type="architecture")
+    return ARCH_DOC
+
+
+arch_module.call_validated = flaky_call_validated
+insert_project(E2E, "Retry E2E", "brief", status_vocab.RUNNING, "architecture")
+graph.update_state(econf, {
+    "project_id": E2E, "project_name": "Retry E2E", "brief": "a brief",
+    "research_report": "# Research\nfindings", "requirements_doc": "# Requirements\nreqs",
+    "tech_stack": '{"frontend": ["React"], "backend": "FastAPI"}',
+    "architecture_doc": "", "implementation_plan": "", "log": [], "errors": [],
+    "retry_counts": {}, "stage_history": [], "previous_versions": {},
+    "human_decision": "edit", "skip_gate_1": False, "replan_after_architecture": False,
+}, as_node="human_gate_2")
+
+try:
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(run_graph_background(E2E, econf))
+
+    check("E2E: first run fails at architecture", calls["n"] == 1)
+    check("E2E: project is error_paused after the failure",
+          _db_status_for(E2E) == status_vocab.ERROR_PAUSED, _db_status_for(E2E))
+    check("E2E: architecture is still the pending task",
+          graph.get_state(econf).next == ("architecture",),
+          f"got {graph.get_state(econf).next}")
+    check("E2E: failure recorded on the row", get_failure(E2E)[0] == "architecture")
+
+    loop.run_until_complete(recover_project(E2E, RecoverRequest(action="retry")))
+    # recover_project schedules the run as a task; drain it.
+    pending = [t for t in asyncio.all_tasks(loop) if not t.done()]
+    if pending:
+        loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+
+    check("E2E: RETRY ACTUALLY RE-RAN the failed node", calls["n"] == 2, f"calls={calls['n']}")
+    values = graph.get_state(econf).values
+    check("E2E: the retry produced the document", values.get("architecture_doc") == ARCH_DOC)
+    check("E2E: pipeline advanced to gate 2",
+          graph.get_state(econf).next == ("human_gate_2",),
+          f"got {graph.get_state(econf).next}")
+    check("E2E: project is awaiting approval again",
+          _db_status_for(E2E) == status_vocab.AWAITING_APPROVAL, _db_status_for(E2E))
+    check("E2E: the failure record was cleared", get_failure(E2E) == ("", None))
+finally:
+    arch_module.call_validated = real_call_validated
+    cancel_auto_retry(E2E)
+    graph.checkpointer.delete_thread(E2E)
+    _ec = get_db_connection()
+    with _ec:
+        _ec.execute("DELETE FROM projects WHERE id = ?", (E2E,))
+    _ec.close()
 
 
 # ── delete cascade: all four stores clean (ponytail #3 proof) ────────────────

@@ -29,8 +29,14 @@ class ProjectState(TypedDict):
     retry_counts: Dict[str, int]   # stage / "file_fix:{path}" / "repair:{path}" -> regeneration & repair count
     stage_history: List[dict]      # {stage, attempt, trigger, gate_origin, timestamp} per agent completion
     regen_cycle: Optional[dict]    # {"trigger": "edit"|"back", "gate": gate_name} during a feedback cycle
-    failed_agent: str              # stage whose node raised; cleared when it succeeds
-    failure_context: Optional[dict]  # {error_type, message, model, auto_retry_cycles, recoverable}
+    # LEGACY (Day 24): failure info now lives on the projects row, because
+    # writing it here re-derived the checkpoint's pending task and made a failed
+    # run permanently unresumable. These fields are still read as a fallback for
+    # projects that failed before the move — nothing writes them any more except
+    # stage_node's clear-on-success, which keeps those legacy rows from showing a
+    # stale error card. See core/database.py record_failure().
+    failed_agent: str
+    failure_context: Optional[dict]
     current_stage: str
     human_feedback: str            # injected at approval gates
     human_decision: str            # 'approve', 'edit', 'reject'
