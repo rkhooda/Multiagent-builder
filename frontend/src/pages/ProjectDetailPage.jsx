@@ -133,9 +133,10 @@ export default function ProjectDetailPage() {
       // tell a genuinely-running project from one the server died under — the
       // row says `running` in both cases. Without this the zombie renders as a
       // spinner that never resolves.
-      if (data.position?.phase === 'interrupted') {
-        setStatus('interrupted')
-      } else if (data.status === 'completed') {
+      // NB: interruption is NOT pushed into `status` — that variable is owned by
+      // the WebSocket connection lifecycle, which fires 'connected' after this
+      // and would clobber it. It is derived from position.phase at render time.
+      if (data.status === 'completed') {
         setStatus('done')
       } else if (data.status === 'awaiting_approval') {
         setStatus('awaiting_approval')
@@ -395,7 +396,13 @@ export default function ProjectDetailPage() {
   }
 
   const name = projectMetadata ? projectMetadata.project_name : 'Project Pipeline'
-  const displayStatus = status === 'connecting' || status === 'reconnecting' ? 'running' : status === 'done' ? 'completed' : status
+  // position.phase is the authority on whether this project is actually being
+  // driven; the WebSocket `status` only describes THIS browser's connection, and
+  // a connected socket to a dead run still means the run is dead.
+  const isInterrupted = projectMetadata?.position?.phase === 'interrupted' && !resuming
+  const displayStatus = isInterrupted
+    ? 'interrupted'
+    : status === 'connecting' || status === 'reconnecting' ? 'running' : status === 'done' ? 'completed' : status
 
   // While a feedback re-run is in flight, next_gate goes null in refetches —
   // fall back to the gate we were on so its card stays mounted.

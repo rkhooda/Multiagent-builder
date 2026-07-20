@@ -205,7 +205,22 @@ export default function ApprovalGate({ status, gateEvent, currentStage, eventsCo
     }
   }
 
-  // Render based on state
+  // Render based on state.
+  // `interrupted` must be handled before the fallthrough: the default branch
+  // claims "Agents working…", which would sit directly under the banner saying
+  // the run stopped — the exact dishonest spinner this state exists to prevent.
+  if (status === 'interrupted') {
+    return (
+      <div className="space-y-2 rounded-lg border border-purple-200 bg-white p-6 text-center">
+        <div className="text-3xl">⏸</div>
+        <h3 className="text-sm font-bold text-gray-900">Run interrupted</h3>
+        <p className="text-xs text-gray-600">
+          No agents are running. Use Resume above to continue from the last checkpoint.
+        </p>
+      </div>
+    )
+  }
+
   if (status === 'cancelled') {
     return (
       <div className="bg-white rounded-lg border border-gray-200 shadow-sm p-6 text-center space-y-3">

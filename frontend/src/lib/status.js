@@ -20,7 +20,11 @@ export const STATUS = {
 const FALLBACK = { label: 'Unknown', badge: 'bg-gray-100 text-gray-800 border-gray-200', dot: 'bg-gray-400' }
 
 // Transient WebSocket-only states map onto the persisted vocabulary.
-const ALIASES = { done: 'completed', complete: 'completed', error: 'error_paused', connecting: 'running', reconnecting: 'running' }
+const ALIASES = {
+  done: 'completed', complete: 'completed', error: 'error_paused',
+  // WebSocket connection lifecycle values that reach the badge as-is.
+  connecting: 'running', reconnecting: 'running', connected: 'running',
+}
 
 export function statusKey(status, interrupted = false) {
   if (interrupted) return 'interrupted'
