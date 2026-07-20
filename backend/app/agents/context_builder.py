@@ -244,12 +244,28 @@ def _tech_stack_block(tech_stack_str: str) -> str:
 
 
 def _folder_map(file_list: list, phase_prefix: str = "frontend/src") -> str:
-    """A compact list of the phase's files so the model computes relative
-    import paths correctly. Only paths under phase_prefix are shown."""
+    """The phase's files, grouped by directory, so the model computes relative
+    import paths correctly. Only paths under phase_prefix are shown.
+
+    Grouped rather than one-full-path-per-line because Day 26 measured this
+    block at 32% of every coder context — the second largest section, sent
+    unchanged to all ~50 files of a phase. Repeating
+    "frontend/src/components/notes/" on each of its members is pure redundancy:
+    the directory is stated once and its files listed under it.
+
+    This is a lossless rewrite, not a trim. Every path in equals every path out,
+    so it cannot cost import accuracy — which matters because wrong imports are
+    the exact defect this whole builder exists to prevent.
+    """
     paths = sorted(p for p in (file_list or []) if p.startswith(phase_prefix))
     if not paths:
         return ""
-    return "\n".join(f"  {p}" for p in paths)
+    by_dir: dict = {}
+    for p in paths:
+        folder, _, name = p.rpartition("/")
+        by_dir.setdefault(folder or ".", []).append(name)
+    return "\n".join(f"  {folder}/\n    " + ", ".join(names)
+                     for folder, names in by_dir.items())
 
 
 def _is_consumer(filepath: str) -> bool:
