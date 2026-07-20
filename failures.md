@@ -1290,3 +1290,47 @@ payloads are rejected. Exercised through the UI as well as over HTTP.
   plain reportlab platypus was used instead of that skill's guidance.
 - 51 legacy projects are still in the list; 3 rows with status `error` were
   migrated to `error_paused` on init.
+
+## Day 25 observations
+
+Full write-up: **`docs/INTEGRATION_RESULTS.md`** (rubric, provider ceiling,
+before/after per fix, known limits). Pointer only — not duplicated here.
+
+The day set out to produce a three-tier degradation curve and did not. One
+simple project ran, partially, halting at `backend_code`; medium and complex
+never started. **That curve does not exist in this data** and was not inferred.
+
+What ran into instead, in order, each blocking the pipeline outright:
+
+1. **Planning could not complete at all.** A uniform 90s timeout against
+   planning's ~21.5k-token output; its only success ever recorded took 84.5s.
+   After the fix it completed at 109.2s — past the old ceiling by 21%. `877407d`
+2. **All 47 frontend tasks were unschedulable** on a correct, acyclic plan. Our
+   own implicit layering closed a 2-cycle against an explicit dependency
+   (`api.js` requires `config.js`; layering made `config.js` wait on
+   `api.js`). `7081d39`
+3. **34 of 47 files lost to 429s** — 59 rate-limits against 13 successes.
+   Pacing per model doubled delivery to 26 ok. `26a0e1f`
+4. **17 of 96 files were syntax errors we wrote ourselves** — the failure
+   placeholder embedded multi-line JSON in a single-line comment. `ac3ba89`
+
+Measured provider ceiling, the day's most consequential number: **Gemini free
+tier is 20 requests/day/model** (exhausted after 15 successes), and **Groq's 12k
+TPM cannot serve planning's ~26.9k-token call at any pacing**. Consequence: the
+pipeline cannot complete one simple project per day on free tiers, and with
+Gemini exhausted nothing gets past planning. Inherent — documented, not chased.
+Day 29's Ollama moves from convenience to prerequisite.
+
+Two corrections worth carrying forward:
+
+- **My first diagnosis of the halt was wrong.** The status said `rate_limited`;
+  the operative failure was a Gemini *timeout*, and the status reported the last
+  error rather than the one that mattered.
+- **The rubric flattered the system.** Once stubs parsed, JSX placeholders
+  cleared the size floor and scored as real files — 43.8% usable where the honest
+  figure is 21.9%. Corrected in `1e2df35`.
+
+Caveats: LangSmith attribution was unavailable (`LANGCHAIN_TRACING_V2=false`, key
+is a placeholder), so Task 4 used local metrics and offline state instead of
+traces. Runs were driven over the REST API the UI calls, not through the browser.
+QA never ran, so QA-issue and repair-spend columns are empty rather than zero.

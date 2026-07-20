@@ -82,6 +82,31 @@ or documented, and are **not** in scope for prompt tuning.
 | `qwen3-coder:free` per-model 429 on every attempt | 18, 19, 20 | Every coder call falls through to the groq fallback |
 | Cohere free model returns empty responses | 17, 18 | Routed away from |
 | Groq per-minute token cap mid-batch | 12 | Produced D13's phantom import as a knock-on |
+| Gemini free tier is 20 requests/**day**/model | 25 | Inherent; documented in `docs/INTEGRATION_RESULTS.md`, not fixable |
+| Groq 12k TPM cannot serve planning's ~26.9k-token call at all | 25 | Inherent per-provider; planning has a hard single-provider dependency |
+| QA primary `nemotron:free` returns an upstream error | 25 | Same delisting mode as rows 1–3; QA cannot run when Gemini is also exhausted |
+
+### D14 — tool-generated defects misattributed to the model (Day 25)
+
+**New class, and the only one Day 25 added.** It belongs here rather than in the
+table above because it is not environmental — it is our code manufacturing
+defects and filing them under the coder's name.
+
+The failure placeholder written for a failed file embedded a multi-line provider
+error in a single-line comment, so every failed file was syntactically invalid.
+On the Day 25 simple run that was **17 of 96 files** presenting as coder syntax
+defects when the coder had never been reached. Fixed in `ac3ba89`.
+
+**Why it matters to this document specifically:** the attribution procedure in
+§1 starts from observed defects in generated files. This class corrupts that
+input — it would have supported a confident, well-evidenced, entirely wrong
+conclusion that the coder emits broken syntax under load, and the fix would have
+gone into a prompt. Before attributing any syntax-class defect, confirm the file
+was actually generated rather than stubbed.
+
+No new *coder-level* defect classes emerged on Day 25. That is not evidence the
+taxonomy is complete: provider exhaustion meant the coders produced only 26
+files, far too few to surface new classes.
 
 ---
 

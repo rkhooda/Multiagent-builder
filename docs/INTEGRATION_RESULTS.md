@@ -74,6 +74,23 @@ Across all three: ~9 Gemini, ~3 OpenRouter, ~100–130 Groq. Within daily limits
 the risk is a TPM burst mid-coding, which the Day 17 backoff chain turns into a
 pause rather than a failure.
 
+**How this estimate was wrong (recorded, not quietly amended).** The single
+simple project issued **233 attempts**, roughly 8× the ~29 estimated. Two causes,
+both worth carrying into Day 26's budgeting:
+
+- The estimate counted *files*, not *attempts*. Every failure burns up to four
+  attempts (two per model across two tiers), so a rate-limited run costs
+  multiples of its nominal size — the burn rate rises exactly when quota is
+  scarcest.
+- It assumed Gemini had generous daily headroom. Its free tier is 20
+  requests/day/model, which no per-run estimate could have absorbed.
+
+Correcting the OpenRouter premise was right and necessary, but it replaced one
+unverified assumption with another: Gemini's daily limit was never checked
+against the live API the way OpenRouter's was. The lesson is narrower than
+"budget better" — **verify the limit of every provider on the critical path, not
+just the one the plan happens to name.**
+
 ### Execution order: simple → medium → complex
 
 Fail fast and learn cheap. The simple run is the quality **ceiling** — if a todo
@@ -102,12 +119,24 @@ that stops after planning is an acceptable outcome, not a failed one.
 
 | Project | Complexity | Planned | Generated | Missing | % usable | QA issues | Repair calls | Total tokens | Wall-clock | Top defect classes |
 |---|---|---|---|---|---|---|---|---|---|---|
-| _pending_ | simple | | | | | | | | | |
-| _pending_ | medium | | | | | | | | | |
-| _pending_ | complex | | | | | | | | | |
+| `2901fb46` TodoSimple | simple | 95 | 77 | 19 | **21.9%** (21/96) | n/a — never reached QA | 0 | 229,156 | 39.9 min | never generated (19), syntax (17), stub (9), unresolvable import (8) |
+| _not run_ | medium | — | — | — | — | — | — | — | — | blocked: provider quota exhausted |
+| _not run_ | complex | — | — | — | — | — | — | — | — | blocked: provider quota exhausted |
 
-Rows are filled immediately after each run (or at its pause point), never
-batched to the end — a rate-limit pause must not strand uncaptured data.
+**The simple run is a partial.** It halted at `backend_code` with 0 of 26 backend
+files delivered. It never reached database completion, QA, devops or Gate 4,
+which is why QA issues and repair spend are empty rather than zero-as-measured.
+
+**The 21.9% is not a measure of model quality.** It is a measure of output under
+provider starvation: 233 LLM attempts produced 45 successes and 188 failures,
+and essentially every failure was a 429. Three of the four top defect classes —
+never-generated, stub, and (before it was fixed) syntax — are all the same
+underlying event: the request never reached a model. Reading this as "the coder
+writes bad code" would be precisely the misattribution ponytail #2 warns about.
+
+An earlier version of this row read 43.8%. That number was wrong: the rubric
+counted JSX failure placeholders as real files. Corrected in `1e2df35`; the
+honest figure is 21.9%.
 
 ### Reference point (pre-Day-18 baseline)
 
@@ -119,23 +148,109 @@ today's comparison:
 | `113cf67c` NotesTags (Day 15 era) | 77 | 12 | 66 | 14.1% |
 
 The dominant defect class there is `missing` — 66 planned files never generated.
-A missing file is worse than a broken one, and only the plan reveals it; this is
-why `planned` is a column rather than a footnote.
+A missing file is worse than a broken one, and only the plan reveals them; this
+is why `planned` is a column rather than a footnote.
 
 ---
 
-## Degradation analysis
+## What actually happened: the day did not measure what it set out to measure
 
-_Pending runs._
+The plan was a degradation curve across three complexity tiers. **That curve does
+not exist in this data**, and presenting one would be inventing it. One project
+ran, partially. The binding constraint was never model capability at complexity —
+it was that the pipeline could not obtain enough provider calls to finish a
+single *simple* project.
 
-## Known limits (free-model capability ceiling)
+What the day produced instead is more actionable: **four systemic defects, each
+of which blocked the pipeline outright**, found only by running a real brief end
+to end. Three would have blocked the medium and complex runs identically, so no
+amount of extra quota would have yielded a complexity comparison first.
 
-_Pending runs. Recorded honestly — a documented limit is a deliverable; a
-chased-and-unfixed ceiling is wasted quota._
+The degradation question is deferred, not answered. It is Day 26 AM work.
+
+## Provider ceiling (measured, inherent — do not chase)
+
+The single most important number found today:
+
+| Provider | Limit that binds | Observed today |
+|---|---|---|
+| Gemini 2.5 Flash | **20 requests/day/model** (`GenerateRequestsPerDayPerProjectPerModel-FreeTier`) | 15 ok / 77 rate-limited, then exhausted for the day |
+| Groq llama-3.3-70b | **12,000 tokens/minute** | 32 ok / 109 rate-limited |
+| OpenRouter | ~50/day | ~unused; QA primary `nemotron` returns an upstream error |
+
+Two structural consequences, both verified rather than inferred:
+
+1. **The pipeline cannot complete one simple project per day on free tiers.** A
+   single simple project planned ~95 files and issued 233 attempts. The Gemini
+   daily allowance is 20.
+2. **Planning is structurally unservable by Groq.** It emits ~26,900 completion
+   tokens in one call; Groq's ceiling is 12,000 tokens *per minute*, so the
+   request can never fit regardless of pacing or retries. With Gemini exhausted,
+   nothing gets past planning — the pipeline's largest call has a hard
+   single-provider dependency.
+
+This is the **inherent** side of the ponytail #2 split. No prompt, context or
+validation change moves it. Documented, and left alone.
+
+The tell separating inherent from systemic was clean today: for every defect
+below, the model either never received the request or received one our own code
+had corrupted. Nothing failed because a model saw a well-formed problem and
+answered it badly. That is why all four fixes are systemic, and why "the free
+models aren't good enough" would have been the wrong conclusion to draw from a
+21.9% score.
 
 ## Fixes applied (before / after)
 
-_Pending analysis._
+All four were found by running a real brief; none was visible in unit tests.
+Each was committed separately with a regression test and re-verified offline.
+
+| # | Defect | Impact | Evidence after fix | Commit |
+|---|---|---|---|---|
+| 1 | Uniform 90s timeout vs non-uniform output size | Planning could not reliably complete **at all**; its only recorded success ever took 84.5s against a 90s ceiling | Same project's planning call succeeded at **109.2s / 26,894 tokens** — 21% past the old ceiling | `877407d` |
+| 2 | Implicit layering forged a dependency cycle | **47/47 frontend tasks unschedulable** on a plan that was correct and acyclic | All 47 schedule; ordering still correct (config → api client → consumers) | `7081d39` |
+| 3 | No request pacing; 429 treated as fatal | 59 rate-limits vs 13 successes; **34 of 47 files lost** | Same phase: **26 ok (2×)**, 8 failed (was 11), 13 blocked (was 23) — and the run cleared the 50% halt gate instead of aborting | `26a0e1f` |
+| 4 | Failure placeholders were syntactically invalid | **17 of 96 files** counted as syntax defects the model never produced | Stubs parse; defect reclassified from "syntax error" to "generation failed" | `ac3ba89` |
+
+Fix 4 deliberately does **not** raise `% usable` — it moves 17 files from a false
+defect class into their true one. That reclassification *is* the value: it stops
+a phantom "the coder emits broken syntax" investigation that the raw numbers
+would otherwise have justified.
+
+A fifth commit (`1e2df35`) corrects the rubric rather than the pipeline: once
+stubs parsed, the JSX placeholder cleared the size floor and scored as a real
+file, inflating the run from a true 21.9% to a flattering 43.8%.
+
+## Known limits
+
+- **Free-tier throughput (inherent).** Quantified above. The pipeline needs
+  roughly an order of magnitude more daily calls than free tiers allow. Day 29's
+  local Ollama is the structural answer; nothing before it is.
+- **Planning's single-call size (systemic, deferred).** ~26,900 tokens in one
+  request is what makes it unservable by any TPM-limited provider. Splitting the
+  plan across calls risks incoherence — a real design change, not a tuning knob,
+  and deliberately not attempted under a ceiling where it could not be A/B'd.
+- **QA primary model is dead.** `openrouter/nvidia/nemotron-3-nano-omni-...:free`
+  returns an upstream error on every call; its fallback is Gemini, which is
+  exhausted, so QA cannot run at all. This is the Day 23 delisting failure mode
+  recurring — `failures.md` already warns these free slugs vanish without notice.
+- **Gate 3 plan validation accepts cyclic `requires`.** Defect 2 was fixed in the
+  scheduler, which is the right place for robustness, but validation still does
+  not reject cycles — the old error message even asserted that it should. Low
+  priority now the scheduler is cycle-proof.
+- **Planning over-decomposes.** A todo app produced a **96-task, 95-file** plan.
+  Whether that hurts quality is unmeasured, but it multiplies cost directly
+  against the binding constraint.
+
+## Roadmap signals
+
+- **Day 26 (optimisation):** the pacing layer landed here early out of necessity.
+  What remains is load distribution — OpenRouter's allowance sat unused while
+  Gemini and Groq were hammered, because routing pins each agent to a fixed pair.
+- **Day 29 (Ollama):** promoted from convenience to prerequisite. It is the only
+  path to a repeatable full-pipeline run, and therefore to the degradation curve
+  this day could not produce.
+- **Day 30 (roadmap):** planning's output size and the 96-task decomposition are
+  the two candidates with the clearest cost/quality leverage.
 
 ---
 
