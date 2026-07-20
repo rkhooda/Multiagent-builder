@@ -1207,12 +1207,38 @@ generated code would appear in the list as finished.
 Fixed the misreport: if no node ran and the project carries a `failed_agent`,
 stay `error_paused` and tell the user to restart from an earlier stage.
 
-**OPEN — the underlying position loss is NOT fixed.** `/recover retry` on such a
-project still cannot re-enter the graph; it now fails honestly instead of lying.
-The clean fix is for the failure handler to stop clobbering the pending task, but
-that is a change to the Day 17 recovery path and the providers were rate-limited
-(Groq) / 503 (Gemini) at the time, so it could not be tested end to end. Do not
-assume retry-after-crash works for mid-node failures until this is closed.
+**CLOSED — the underlying position loss is fixed too.** Isolating the
+mechanics against a compiled graph showed the diagnosis above was incomplete:
+`update_state` does not always empty `next`. When a node raises, LangGraph
+leaves `next=(failed_node,)` with the error on the pending task — precisely what
+a retry needs — and *any* write re-derives that pending task from current state.
+Where it lands depends on graph shape: `()` for a node reached through a gate's
+conditional edge, `('research',)` for another path. Measured:
+
+| in the failure handler | `next` | retry re-runs? | failure recorded? |
+|---|---|---|---|
+| no `update_state` | preserved | yes | no |
+| plain `update_state` | destroyed | **no** | yes |
+| `update_state(as_node=predecessor)` | preserved | yes | yes |
+
+The `as_node=predecessor` form works but needs a hand-maintained map of graph
+structure that would drift silently, and it is ambiguous for nodes with several
+predecessors (`architecture` has three gates). So failure info moved out of the
+checkpoint entirely and onto the projects row — it describes the RUN, not the
+project, and recording it there cannot corrupt graph position. The `/recover
+retry` path stopped writing to the graph for the same reason and counts attempts
+on the row. Failures recorded before the move are still read from their
+checkpoint as a fallback, so their error cards still render.
+
+`test_lifecycle.py` now drives the whole loop on the real pipeline with zero API
+calls (the architecture agent's one LLM seam is patched to fail once): node
+raises -> error_paused -> retry -> node re-runs -> document produced -> pipeline
+advances to gate 2 -> failure cleared. Reintroducing the write fails 8 of those
+assertions, so the test genuinely guards the regression.
+
+Projects already corrupted by the old behaviour (`972e7066`) stay unresumable by
+retry — their pending task is long gone — but Restart recovers them, since it
+re-enters via `as_node=<gate>` rather than relying on `next`.
 
 **2. The interrupted banner never rendered.** `setStatus('interrupted')` was
 writing into the variable `useProjectStream` owns for its connection lifecycle;
