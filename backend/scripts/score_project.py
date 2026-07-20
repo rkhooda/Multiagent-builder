@@ -136,6 +136,14 @@ def is_stub(content: str, filepath: str) -> bool:
     if not stripped:
         return True
 
+    # The generator's own failure placeholder. Checked FIRST and explicitly:
+    # the JSX form ("export default function GenerationFailedPlaceholder")
+    # parses cleanly and clears the size floor, so without this it would score
+    # as a real file and inflate "% usable" with files that were never
+    # generated at all. A rubric that flatters the system is worthless.
+    if "Placeholder — regenerate" in stripped or "GenerationFailedPlaceholder" in stripped:
+        return True
+
     ext = Path(filepath).suffix.lower()
     if ext == ".py":
         try:

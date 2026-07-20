@@ -49,6 +49,16 @@ check("empty __init__.py is exempt, not a stub",
       not sp.is_stub("import os\n", "backend/__init__.py"))
 check("syntactically broken python is not called a stub (caught one rung down)",
       not sp.is_stub("def broken(:\n", "backend/thing.py"))
+# The generator's own failure placeholder must never score as a real file. The
+# JSX form parses and clears the size floor, so only an explicit check catches
+# it — otherwise "% usable" counts files that were never generated.
+check("the JSX failure placeholder is a stub",
+      sp.is_stub('// Placeholder — regenerate with "Request AI Fix" at the review gate.\n\n'
+                 'export default function GenerationFailedPlaceholder() {\n  return null;\n}\n',
+                 "frontend/src/x.jsx"))
+check("the python failure placeholder is a stub",
+      sp.is_stub('# Placeholder — regenerate with "Request AI Fix" at the review gate.\n\npass\n',
+                 "backend/x.py"))
 check("a placeholder non-python file is a stub",
       sp.is_stub("// TODO: implement\n", "frontend/src/App.jsx"))
 # The tolerant direction matters: a small-but-real component must NOT be called
