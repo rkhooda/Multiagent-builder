@@ -30,7 +30,14 @@ MODELS = {
     "frontend_code":("groq/llama-3.3-70b-versatile", "gemini/gemini-2.5-flash"),
     "backend_code": ("groq/llama-3.3-70b-versatile", "gemini/gemini-2.5-flash"),
     "database":     ("groq/llama-3.3-70b-versatile", "gemini/gemini-2.5-flash"),
-    "qa":           ("openrouter/nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free", "gemini/gemini-2.5-flash"),
+    # Day 26: the nemotron reasoning model was demoted OFF this slot. It does not
+    # honour max_tokens: asked for 3,000 it returned 32,768 (its own ceiling) and
+    # took 354s. The gemini fallback then reviewed the same batch in 7.9s using
+    # 1,452 completion tokens. That is a 45x latency tax and a 22x token tax for
+    # output that was discarded anyway, and it made QA the slowest stage in the
+    # pipeline by a factor of four. Reasoning tokens are not free here, and the
+    # budget mechanism cannot cap a provider that ignores the parameter.
+    "qa":           ("gemini/gemini-2.5-flash", "groq/llama-3.3-70b-versatile"),
     "devops":       ("groq/llama-3.3-70b-versatile", "gemini/gemini-2.5-flash"),
 }
 
@@ -72,6 +79,38 @@ else:
     print("[Observability] LangSmith tracing disabled "
           "(set LANGCHAIN_TRACING_V2=true and a real LANGCHAIN_API_KEY to enable) "
           "— local metrics still recorded", flush=True)
+
+
+# ── Output token budgets (Day 26) ────────────────────────────────────────────
+# WHY these are a resolver and not a table of numbers. Every call site already
+# passes a tuned max_tokens (architecture 12000, requirements 4500, coder files
+# 1500, planning scaled by file count). Day 26 measured those budgets to be
+# BINDING, not slack: architecture stopped at 11,996/12,000 twice, requirements
+# at 4,496/4,500 on both recorded calls, two coder files at 1,49x/1,500.
+#
+# So replacing them with a central table of flat defaults would truncate output
+# that is already at its ceiling. Instead the call site's value stays the
+# baseline and this resolves the two things it cannot know: an operator override
+# and the run's speed profile. One choke point, no call-site edits.
+FAST_MODE_SCALE = 0.5
+FAST_MODE_FLOOR = 800          # below this even a small file stops mid-function
+
+
+def resolve_max_tokens(agent_type: str, requested: int, fast_mode: bool = False) -> int:
+    """Effective output budget: env override > fast-mode scaling > call site."""
+    env = os.getenv(f"LLM_MAX_TOKENS_{(agent_type or '').upper()}")
+    if env and env.strip().isdigit():
+        return max(1, int(env.strip()))
+    if fast_mode:
+        return max(FAST_MODE_FLOOR, int(requested * FAST_MODE_SCALE))
+    return requested
+
+
+def _finish_reason(resp) -> str:
+    try:
+        return getattr(resp.choices[0], "finish_reason", "") or ""
+    except Exception:                           # noqa: BLE001 — never fail a call
+        return ""
 
 
 DEFAULT_TIMEOUT_SECONDS = 90
@@ -296,7 +335,7 @@ def _extract_usage(resp, model: str) -> dict:
 
 def _log_attempt(agent_type: str, model: str, attempt: int, outcome: str, started: float,
                  usage: dict = None, project_id: str = None, label: str = None,
-                 context_chars: int = None):
+                 context_chars: int = None, truncated: bool = None, cache: str = None):
     """Structured per-attempt record — the single observability choke point.
 
     Every attempt on every outcome path (ok/timeout/rate_limit/auth/error)
@@ -322,18 +361,30 @@ def _log_attempt(agent_type: str, model: str, attempt: int, outcome: str, starte
         entry["label"] = label
     if context_chars is not None:
         entry["context_chars"] = context_chars
+    if truncated:
+        entry["truncated"] = True
+    if cache:
+        entry["cache"] = cache
     entry.update(usage or {"prompt_tokens": None, "completion_tokens": None,
                            "total_tokens": None})
     print(f"[LLM] {json.dumps(entry)}", flush=True)
+    if truncated:
+        # Loud, because the call SUCCEEDED — nothing downstream can tell that the
+        # document or source file it just received stops mid-sentence.
+        print(f"[LLM] WARNING: {agent_type} output TRUNCATED at the token ceiling"
+              f" ({entry.get('completion_tokens')} tokens, model={model}"
+              f"{', ' + label if label else ''}) — raise its max_tokens",
+              flush=True)
     metrics_store.record_agent_run(
         agent=agent_type, model=model, attempt=attempt, outcome=outcome,
         project_id=project_id, label=label, context_chars=context_chars,
-        latency_ms=entry["latency_ms"], **(usage or {}))
+        latency_ms=entry["latency_ms"], truncated=truncated, cache=cache,
+        **(usage or {}))
     return entry
 
 
 def call_llm(messages: list, agent_type: str, max_tokens=4000, timeout=None,
-             project_id: str = None, label: str = None) -> str:
+             project_id: str = None, label: str = None, fast_mode: bool = False) -> str:
     """LLM call with a classified-error retry policy over the provider chain.
 
     Per model: one same-model retry on 429 (after a per-tier wait) or timeout;
@@ -355,6 +406,7 @@ def call_llm(messages: list, agent_type: str, max_tokens=4000, timeout=None,
     if ollama:
         chain.append(ollama)
     timeout = timeout or AGENT_TIMEOUT_SECONDS.get(agent_type, DEFAULT_TIMEOUT_SECONDS)
+    max_tokens = resolve_max_tokens(agent_type, max_tokens, fast_mode)
 
     auth_failures = 0
     last_error = None
@@ -391,9 +443,14 @@ def call_llm(messages: list, agent_type: str, max_tokens=4000, timeout=None,
                                      "label": label, "context_chars": context_chars},
                     }} if _traced_completion is not _plain_completion else {}),
                 )
+                # finish_reason is the provider's own statement that it stopped
+                # at the ceiling — exact, unlike comparing token counts to the
+                # budget, which needs a fudge factor and still misses providers
+                # that under-report usage.
                 _log_attempt(agent_type, model, attempt, "ok", started,
                              usage=_extract_usage(resp, model), project_id=project_id,
-                             label=label, context_chars=context_chars)
+                             label=label, context_chars=context_chars,
+                             truncated=_finish_reason(resp) == "length")
                 return resp.choices[0].message.content or ""
             except llm_exc.Timeout:
                 last_error = LLMTimeoutError(

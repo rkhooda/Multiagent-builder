@@ -229,8 +229,11 @@ def call_validated(messages: list, agent_type: str, state: dict, max_tokens=4000
     project_id comes off `state`, which every caller already threads through.
     """
     project_id = state.get("project_id") if isinstance(state, dict) else None
+    # Read off state rather than added to every agent's signature: fast mode is a
+    # property of the RUN, and state is the one thing every agent already threads.
+    fast_mode = bool(state.get("fast_mode")) if isinstance(state, dict) else False
     response = call_llm(messages, agent_type, max_tokens=max_tokens,
-                        project_id=project_id, label=label)
+                        project_id=project_id, label=label, fast_mode=fast_mode)
     problems = run_validators(agent_type, response, state, extra_validators)
     if not problems:
         return response
@@ -254,7 +257,7 @@ def call_validated(messages: list, agent_type: str, state: dict, max_tokens=4000
     # across the original and its repair. Repairs are already counted separately
     # by the Day 22 repair_tally / retry_counts.
     response = call_llm(repair_messages, agent_type, max_tokens=max_tokens,
-                        project_id=project_id, label=label)
+                        project_id=project_id, label=label, fast_mode=fast_mode)
     problems = run_validators(agent_type, response, state, extra_validators)
     if problems:
         raise LLMOutputError(
