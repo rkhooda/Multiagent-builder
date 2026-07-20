@@ -48,19 +48,19 @@ export default function PhaseProgress({ phase }) {
   const label = LABELS[name] || name
 
   return (
-    <div className="rounded-lg border border-gray-200 bg-white px-4 py-3 shadow-xs">
-      <div className="flex items-center justify-between mb-2">
-        <span className="text-sm font-semibold text-gray-700">
+    <div className="rounded-lg border border-line bg-raised px-4 py-3">
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <span className="text-[13px] font-medium text-ink">
           {complete ? 'Generated' : 'Generating'} {label}: {done} of {total} files
         </span>
         <div className="flex items-center gap-2 text-[11px] font-mono">
           {failed > 0 && (
-            <span className="text-red-600 bg-red-50 border border-red-200 px-1.5 py-0.5 rounded">
+            <span className="rounded border border-err/40 bg-err/10 px-1.5 py-0.5 text-err">
               {failed} failed
             </span>
           )}
           {blocked > 0 && (
-            <span className="text-gray-600 bg-gray-100 border border-gray-300 px-1.5 py-0.5 rounded">
+            <span className="rounded border border-line-strong bg-overlay px-1.5 py-0.5 text-ink-3">
               {blocked} blocked
             </span>
           )}
@@ -68,21 +68,21 @@ export default function PhaseProgress({ phase }) {
       </div>
 
       {/* Segmented bar: green done, red failed, grey blocked, over a light track. */}
-      <div className="flex h-2.5 w-full overflow-hidden rounded-full bg-gray-100">
-        <div className="bg-green-500 transition-all duration-300" style={{ width: width(done) }} />
-        <div className="bg-red-500 transition-all duration-300" style={{ width: width(failed) }} />
-        <div className="bg-gray-400 transition-all duration-300" style={{ width: width(blocked) }} />
+      <div className="flex h-1.5 w-full overflow-hidden rounded-full bg-overlay">
+        <div className="bg-ok transition-[width] duration-500 ease-out" style={{ width: width(done) }} />
+        <div className="bg-err transition-[width] duration-500 ease-out" style={{ width: width(failed) }} />
+        <div className="bg-idle transition-[width] duration-500 ease-out" style={{ width: width(blocked) }} />
       </div>
 
       {/* In-flight filenames — seeing several at once is the visible proof of
           parallelism. Shown only while the phase is still running. */}
       {!complete && inflight.length > 0 && (
-        <div className="mt-2 flex items-center gap-1.5 text-[11px] text-gray-500">
-          <svg className="h-3 w-3 animate-spin text-blue-500" fill="none" viewBox="0 0 24 24">
+        <div className="mt-2 flex items-center gap-1.5 text-[11px] text-ink-3">
+          <svg className="h-3 w-3 animate-spin text-run" fill="none" viewBox="0 0 24 24">
             <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
             <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
           </svg>
-          <span className="font-mono truncate">
+          <span className="truncate font-mono">
             {inflight.length} in flight: {inflight.join(', ')}
           </span>
         </div>
@@ -90,7 +90,7 @@ export default function PhaseProgress({ phase }) {
 
       {/* Partial-failure badge on completion. */}
       {complete && hasIssues && (
-        <div className="mt-2 text-[11px] font-medium text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1">
+        <div className="mt-2 rounded border border-warn/35 bg-warn/10 px-2 py-1 text-[11px] text-warn">
           ⚠️ {done} generated{failed ? `, ${failed} failed` : ''}{blocked ? `, ${blocked} blocked` : ''} — see the QA report at the review gate.
         </div>
       )}

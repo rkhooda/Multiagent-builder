@@ -30,10 +30,10 @@ const PRISM_LANGUAGE = {
 }
 
 const DOT_COLOR = {
-  python: 'bg-blue-500',
+  python: 'bg-run',
   javascript: 'bg-yellow-400', jsx: 'bg-yellow-400', typescript: 'bg-yellow-400', tsx: 'bg-yellow-400',
-  sql: 'bg-orange-500',
-  markdown: 'bg-gray-400',
+  sql: 'bg-accent',
+  markdown: 'bg-idle',
   json: 'bg-teal-500', yaml: 'bg-teal-500',
 }
 
@@ -80,9 +80,9 @@ function TreeNode({ node, depth, selectedPath, collapsed, onToggle, onSelect, is
           type="button"
           onClick={() => onToggle(node.path)}
           style={indent}
-          className="flex w-full items-center gap-1.5 py-1 pr-2 text-left text-xs font-semibold text-gray-700 hover:bg-gray-100"
+          className="flex w-full items-center gap-1.5 py-1 pr-2 text-left text-xs font-semibold text-ink hover:bg-overlay"
         >
-          <span className="text-gray-400">{isCollapsed ? '▸' : '▾'}</span>
+          <span className="text-ink-3">{isCollapsed ? '▸' : '▾'}</span>
           <span className="truncate">{node.name}/</span>
         </button>
         {!isCollapsed &&
@@ -109,8 +109,8 @@ function TreeNode({ node, depth, selectedPath, collapsed, onToggle, onSelect, is
       type="button"
       onClick={() => onSelect(node.path)}
       style={indent}
-      className={`flex w-full items-center gap-1.5 py-1 pr-2 text-left text-xs hover:bg-gray-100 ${
-        selected ? 'bg-blue-50 font-semibold text-blue-800' : 'text-gray-700'
+      className={`flex w-full items-center gap-1.5 py-1 pr-2 text-left text-xs hover:bg-overlay ${
+        selected ? 'bg-run/10 font-semibold text-run' : 'text-ink'
       }`}
     >
       <span className={`h-2 w-2 flex-shrink-0 rounded-full ${DOT_COLOR[node.file.language] || 'bg-gray-300'}`} />
@@ -118,12 +118,12 @@ function TreeNode({ node, depth, selectedPath, collapsed, onToggle, onSelect, is
       {issueCount > 0 && (
         <span
           title={`${issueCount} QA issue${issueCount > 1 ? 's' : ''}`}
-          className="ml-auto flex h-4 min-w-4 flex-shrink-0 items-center justify-center rounded-full bg-orange-100 px-1 text-[10px] font-bold text-orange-700"
+          className="ml-auto flex h-4 min-w-4 flex-shrink-0 items-center justify-center rounded-full bg-accent-soft px-1 text-[10px] font-bold text-accent"
         >
           {issueCount}
         </span>
       )}
-      <span className={`flex-shrink-0 text-[10px] text-gray-400 ${issueCount > 0 ? '' : 'ml-auto'}`}>
+      <span className={`flex-shrink-0 text-[10px] text-ink-3 ${issueCount > 0 ? '' : 'ml-auto'}`}>
         {formatBytes(node.file.size_bytes)}
       </span>
     </button>
@@ -134,7 +134,7 @@ function PreviewShimmer() {
   return (
     <div className="animate-pulse space-y-2 p-4">
       {[...Array(12)].map((_, i) => (
-        <div key={i} className="h-3 rounded bg-gray-200" style={{ width: `${45 + ((i * 37) % 50)}%` }} />
+        <div key={i} className="h-3 rounded bg-overlay" style={{ width: `${45 + ((i * 37) % 50)}%` }} />
       ))}
     </div>
   )
@@ -210,11 +210,11 @@ export default function FileBrowser({
   const oldContent = selectedPath ? previousContent?.[selectedPath] : null
 
   return (
-    <div className="flex min-h-0 rounded-lg border border-gray-200 bg-white" style={{ height: '34rem' }}>
+    <div className="flex min-h-0 rounded-lg border border-line bg-raised" style={{ height: '34rem' }}>
       {/* Tree */}
-      <div className="w-[30%] flex-shrink-0 overflow-y-auto border-r border-gray-200 py-2">
+      <div className="w-[30%] flex-shrink-0 overflow-y-auto border-r border-line py-2">
         {tree.length === 0 ? (
-          <p className="px-3 py-2 text-xs text-gray-500">No generated files found.</p>
+          <p className="px-3 py-2 text-xs text-ink-3">No generated files found.</p>
         ) : (
           tree.map((node) => (
             <TreeNode
@@ -234,17 +234,17 @@ export default function FileBrowser({
       {/* Preview */}
       <div className="flex min-w-0 flex-1 flex-col">
         {!selectedFile ? (
-          <div className="flex flex-1 items-center justify-center text-sm text-gray-400">
+          <div className="flex flex-1 items-center justify-center text-sm text-ink-3">
             Select a file to preview it
           </div>
         ) : (
           <>
-            <div className="flex flex-shrink-0 items-center gap-2 border-b border-gray-200 bg-gray-50 px-3 py-2">
-              <span className="truncate font-mono text-xs font-semibold text-gray-800">{selectedFile.path}</span>
-              <span className="rounded bg-gray-200 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-gray-600">
+            <div className="flex flex-shrink-0 items-center gap-2 border-b border-line bg-overlay px-3 py-2">
+              <span className="truncate font-mono text-xs font-semibold text-ink">{selectedFile.path}</span>
+              <span className="rounded bg-overlay px-1.5 py-0.5 text-[10px] font-semibold uppercase text-ink-2">
                 {selectedFile.language}
               </span>
-              <span className="flex-shrink-0 text-[10px] text-gray-500">
+              <span className="flex-shrink-0 text-[10px] text-ink-3">
                 {formatBytes(selectedFile.size_bytes)} · {selectedFile.line_count ?? '?'} lines
               </span>
               <div className="ml-auto flex flex-shrink-0 items-center gap-2">
@@ -252,7 +252,7 @@ export default function FileBrowser({
                   <button
                     type="button"
                     onClick={() => setShowDiff((v) => !v)}
-                    className="rounded border border-gray-300 bg-white px-2 py-1 text-[11px] font-semibold text-gray-700 hover:bg-gray-50"
+                    className="rounded border border-line-strong bg-raised px-2 py-1 text-[11px] font-semibold text-ink hover:bg-overlay"
                   >
                     {showDiff ? 'Hide Changes' : 'View Changes'}
                   </button>
@@ -262,7 +262,7 @@ export default function FileBrowser({
                   onClick={() => onRequestFix(selectedFile.path)}
                   disabled={Boolean(fixDisabledReason)}
                   title={fixDisabledReason || 'Ask an AI agent to fix this file'}
-                  className="rounded bg-purple-600 px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-purple-700 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="rounded bg-overlay px-2.5 py-1 text-[11px] font-semibold text-ink hover:bg-line disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   🛠 Request AI Fix
                 </button>
@@ -272,7 +272,7 @@ export default function FileBrowser({
               {loading ? (
                 <PreviewShimmer />
               ) : loadError ? (
-                <p className="p-4 text-xs text-red-600">Failed to load file: {loadError}</p>
+                <p className="p-4 text-xs text-err">Failed to load file: {loadError}</p>
               ) : showDiff && oldContent != null ? (
                 <div className="p-2">{renderDiff(oldContent, content)}</div>
               ) : (

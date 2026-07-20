@@ -163,6 +163,103 @@
 }
 
 @layer components {
+  /* ── Motion ────────────────────────────────────────────────────────────────
+     Every animated moment in this app is either a mount entry or a property
+     transition, and CSS does both. There is no exit animation anywhere — feed
+     events never leave, stages never unmount — which is the one thing a JS
+     animation library would actually have bought.
+
+     Mount entries run because the browser created the node, so an appended
+     feed event animates and the fifty already on screen do not: React keeps
+     existing DOM nodes on re-render, and nothing here re-animates on a parent
+     update. That is what keeps a 47-file coder burst from strobing.
+
+     Durations are short on purpose. This is a surface you watch for hours; the
+     motion is there to say "this is new", then get out of the way. */
+  .enter {
+    animation: enter 180ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+
+  .enter-up {
+    animation: enter-up 220ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+
+  /* Attention without noise: a slow breath on the accent, used only where the
+     line is genuinely stopped and waiting for a decision. */
+  .pulse-accent {
+    animation: pulse-accent 2.4s ease-in-out infinite;
+  }
+
+  @keyframes enter {
+    from { opacity: 0; transform: translateY(4px); }
+    to   { opacity: 1; transform: none; }
+  }
+
+  @keyframes enter-up {
+    from { opacity: 0; transform: translateY(10px) scale(0.995); }
+    to   { opacity: 1; transform: none; }
+  }
+
+  @keyframes pulse-accent {
+    0%, 100% { box-shadow: 0 0 0 0 var(--accent-soft); }
+    50%      { box-shadow: 0 0 0 5px transparent; }
+  }
+
+  /* Agent output is markdown. The Tailwind typography plugin is not installed —
+     the old `prose` classes here were inert — so this is the real styling, and
+     it is theme-aware where the plugin's defaults would not have been. */
+  .markdown {
+    font-size: 13px;
+    line-height: 1.65;
+    color: var(--ink-2);
+  }
+  .markdown > * + * { margin-top: 0.7em; }
+  .markdown h1, .markdown h2, .markdown h3, .markdown h4 {
+    color: var(--ink);
+    font-weight: 600;
+    line-height: 1.3;
+    letter-spacing: -0.01em;
+    margin-top: 1.4em;
+  }
+  .markdown h1 { font-size: 1.35em; }
+  .markdown h2 { font-size: 1.15em; }
+  .markdown h3 { font-size: 1em; }
+  .markdown strong { color: var(--ink); font-weight: 600; }
+  .markdown a { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
+  .markdown ul, .markdown ol { padding-left: 1.3em; }
+  .markdown ul { list-style: disc; }
+  .markdown ol { list-style: decimal; }
+  .markdown li::marker { color: var(--ink-3); }
+  .markdown code {
+    font-family: var(--font-mono);
+    font-size: 0.88em;
+    background: var(--overlay);
+    border: 1px solid var(--line);
+    border-radius: 3px;
+    padding: 0.1em 0.35em;
+  }
+  .markdown pre {
+    background: var(--overlay);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 0.8em 1em;
+    overflow-x: auto;
+  }
+  .markdown pre code { background: none; border: 0; padding: 0; }
+  .markdown blockquote {
+    border-left: 2px solid var(--line-strong);
+    padding-left: 0.9em;
+    color: var(--ink-3);
+  }
+  .markdown table { width: 100%; border-collapse: collapse; font-size: 0.92em; }
+  .markdown th, .markdown td {
+    border: 1px solid var(--line);
+    padding: 0.4em 0.6em;
+    text-align: left;
+  }
+  .markdown th { background: var(--overlay); color: var(--ink); font-weight: 600; }
+  .markdown hr { border: 0; border-top: 1px solid var(--line); margin: 1.4em 0; }
+
   /* The eyebrow: tracked-out mono in muted ink. Used for every section label
      and column header so the console's structural language is consistent. */
   .eyebrow {

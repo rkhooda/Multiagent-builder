@@ -4,13 +4,13 @@ export default function DiffView({ oldText, newText }) {
   const parts = diffLines(oldText || '', newText || '')
 
   return (
-    <div className="max-h-[32rem] overflow-auto rounded border border-gray-200 bg-white p-3 font-mono text-xs leading-relaxed">
+    <div className="max-h-[32rem] overflow-auto rounded border border-line bg-raised p-3 font-mono text-xs leading-relaxed">
       {parts.map((part, index) => {
         const bg = part.added
-          ? 'bg-green-50 text-green-800'
+          ? 'bg-ok/10 text-ok'
           : part.removed
-            ? 'bg-red-50 text-red-800 line-through decoration-red-400'
-            : 'text-gray-600'
+            ? 'bg-err/10 text-err line-through decoration-red-400'
+            : 'text-ink-2'
         const prefix = part.added ? '+ ' : part.removed ? '- ' : '  '
 
         return (

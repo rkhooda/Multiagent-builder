@@ -7,16 +7,16 @@ import RetryWarning, { RETRY_SOFT_CAP, retryCount, cappedButtonClass } from './R
 const PHASES = ['frontend', 'backend', 'database', 'devops']
 
 const PHASE_CONFIG = {
-  frontend: { label: 'Frontend', prefix: 'fe', color: 'bg-green-500', light: 'bg-green-50', border: 'border-green-200', text: 'text-green-700' },
-  backend: { label: 'Backend', prefix: 'be', color: 'bg-blue-500', light: 'bg-blue-50', border: 'border-blue-200', text: 'text-blue-700' },
-  database: { label: 'Database', prefix: 'db', color: 'bg-purple-500', light: 'bg-purple-50', border: 'border-purple-200', text: 'text-purple-700' },
-  devops: { label: 'DevOps', prefix: 'dv', color: 'bg-orange-500', light: 'bg-orange-50', border: 'border-orange-200', text: 'text-orange-700' },
+  frontend: { label: 'Frontend', prefix: 'fe', color: 'bg-ok', light: 'bg-ok/10', border: 'border-ok/35', text: 'text-ok' },
+  backend: { label: 'Backend', prefix: 'be', color: 'bg-run', light: 'bg-run/10', border: 'border-run/35', text: 'text-run' },
+  database: { label: 'Database', prefix: 'db', color: 'bg-alt', light: 'bg-alt/10', border: 'border-alt/35', text: 'text-alt' },
+  devops: { label: 'DevOps', prefix: 'dv', color: 'bg-accent', light: 'bg-accent-soft', border: 'border-accent/35', text: 'text-accent' },
 }
 
 const COMPLEXITY_CONFIG = {
-  low: { label: 'Low', badge: 'bg-green-100 text-green-700' },
-  medium: { label: 'Medium', badge: 'bg-amber-100 text-amber-700' },
-  high: { label: 'High', badge: 'bg-red-100 text-red-700' },
+  low: { label: 'Low', badge: 'bg-ok/10 text-ok' },
+  medium: { label: 'Medium', badge: 'bg-warn/10 text-warn' },
+  high: { label: 'High', badge: 'bg-err/10 text-err' },
 }
 
 // Deliberately rough 5/10/15-minute heuristic — always labeled "est." in the UI.
@@ -71,7 +71,7 @@ function FileTree({ node, depth = 0 }) {
   })
   return entries.map(([name, child]) => (
     <div key={name} style={{ paddingLeft: depth * 16 }}>
-      <span className="font-mono text-xs leading-6 text-gray-700">
+      <span className="font-mono text-xs leading-6 text-ink">
         {child === null ? '📄 ' : '📁 '}
         {name}
       </span>
@@ -90,26 +90,26 @@ function SummaryBar({ tasks, excluded, extraActions }) {
   )
 
   return (
-    <div className="sticky top-0 z-20 rounded-lg border border-gray-200 bg-white/95 px-4 py-2.5 shadow-sm backdrop-blur-sm">
+    <div className="sticky top-0 z-20 rounded-lg border border-line bg-raised/95 px-4 py-2.5  backdrop-blur-sm">
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs">
-        <span className="font-semibold text-gray-800">
+        <span className="font-semibold text-ink">
           {included.length} task{included.length === 1 ? '' : 's'}
         </span>
-        <span className="text-gray-500">
+        <span className="text-ink-3">
           {phaseCount('frontend')} frontend · {phaseCount('backend')} backend · {phaseCount('database')} database ·{' '}
           {phaseCount('devops')} devops
         </span>
         {excluded.size > 0 && (
-          <span className="font-medium text-orange-600">{excluded.size} excluded</span>
+          <span className="font-medium text-accent">{excluded.size} excluded</span>
         )}
         <span className="ml-auto flex items-center gap-3">
           <span className="flex items-center gap-1">
-            <span className="rounded bg-green-100 px-1.5 py-0.5 font-semibold text-green-700">{complexityCount('low')} low</span>
-            <span className="rounded bg-amber-100 px-1.5 py-0.5 font-semibold text-amber-700">{complexityCount('medium')} med</span>
-            <span className="rounded bg-red-100 px-1.5 py-0.5 font-semibold text-red-700">{complexityCount('high')} high</span>
+            <span className="rounded bg-ok/10 px-1.5 py-0.5 font-semibold text-ok">{complexityCount('low')} low</span>
+            <span className="rounded bg-warn/10 px-1.5 py-0.5 font-semibold text-warn">{complexityCount('medium')} med</span>
+            <span className="rounded bg-err/10 px-1.5 py-0.5 font-semibold text-err">{complexityCount('high')} high</span>
           </span>
-          <span className="font-semibold text-gray-800" title="Rough heuristic: 5/10/15 min per low/medium/high task">
-            ⏱ ~{totalMinutes} min <span className="font-normal text-gray-400">est.</span>
+          <span className="font-semibold text-ink" title="Rough heuristic: 5/10/15 min per low/medium/high task">
+            ⏱ ~{totalMinutes} min <span className="font-normal text-ink-3">est.</span>
           </span>
           {extraActions}
         </span>
@@ -142,19 +142,19 @@ function AddTaskForm({ phase, allTasks, onAdd, onCancel }) {
   }
 
   return (
-    <div className="mt-2 space-y-2 rounded border border-dashed border-gray-300 bg-white p-3">
+    <div className="mt-2 space-y-2 rounded border border-dashed border-line-strong bg-raised p-3">
       <div className="grid grid-cols-2 gap-2">
         <input
           value={form.filename}
           onChange={(e) => setForm({ ...form, filename: e.target.value })}
           placeholder="Filename (e.g. Footer.jsx)"
-          className="rounded border border-gray-300 px-2 py-1.5 text-xs font-mono focus:outline-none focus:ring-1 focus:ring-blue-500"
+          className="rounded border border-line-strong px-2 py-1.5 text-xs font-mono focus:outline-none focus:ring-1 focus:ring-blue-500"
         />
         <input
           value={form.filepath}
           onChange={(e) => setForm({ ...form, filepath: e.target.value })}
           placeholder="Filepath (e.g. frontend/src/components/Footer.jsx)"
-          className="rounded border border-gray-300 px-2 py-1.5 text-xs font-mono focus:outline-none focus:ring-1 focus:ring-blue-500"
+          className="rounded border border-line-strong px-2 py-1.5 text-xs font-mono focus:outline-none focus:ring-1 focus:ring-blue-500"
         />
       </div>
       <textarea
@@ -162,28 +162,28 @@ function AddTaskForm({ phase, allTasks, onAdd, onCancel }) {
         onChange={(e) => setForm({ ...form, description: e.target.value })}
         placeholder="What must this file contain? Be specific — min 50 characters."
         rows={3}
-        className="w-full rounded border border-gray-300 px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
+        className="w-full rounded border border-line-strong px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
       />
       <div className="flex flex-wrap items-center gap-3">
-        <label className="flex items-center gap-1.5 text-xs text-gray-600">
+        <label className="flex items-center gap-1.5 text-xs text-ink-2">
           Complexity
           <select
             value={form.complexity}
             onChange={(e) => setForm({ ...form, complexity: e.target.value })}
-            className="rounded border border-gray-300 px-1.5 py-1 text-xs"
+            className="rounded border border-line-strong px-1.5 py-1 text-xs"
           >
             <option value="low">Low</option>
             <option value="medium">Medium</option>
             <option value="high">High</option>
           </select>
         </label>
-        <label className="flex items-center gap-1.5 text-xs text-gray-600">
+        <label className="flex items-center gap-1.5 text-xs text-ink-2">
           Depends on
           <select
             multiple
             value={form.requires}
             onChange={(e) => setForm({ ...form, requires: [...e.target.selectedOptions].map((o) => o.value) })}
-            className="max-h-16 rounded border border-gray-300 px-1.5 py-1 font-mono text-xs"
+            className="max-h-16 rounded border border-line-strong px-1.5 py-1 font-mono text-xs"
           >
             {allTasks.map((t) => (
               <option key={t.id} value={t.id}>{t.id} — {t.filename}</option>
@@ -191,15 +191,15 @@ function AddTaskForm({ phase, allTasks, onAdd, onCancel }) {
           </select>
         </label>
         <div className="ml-auto flex gap-2">
-          <button type="button" onClick={submit} className="rounded bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-700">
+          <button type="button" onClick={submit} className="rounded bg-overlay px-3 py-1.5 text-xs font-semibold text-ink hover:bg-line">
             Add Task
           </button>
-          <button type="button" onClick={onCancel} className="rounded border border-gray-300 bg-white px-3 py-1.5 text-xs font-semibold text-gray-600 hover:bg-gray-50">
+          <button type="button" onClick={onCancel} className="rounded border border-line-strong bg-raised px-3 py-1.5 text-xs font-semibold text-ink-2 hover:bg-overlay">
             Cancel
           </button>
         </div>
       </div>
-      {error && <p className="text-xs text-red-600">{error}</p>}
+      {error && <p className="text-xs text-err">{error}</p>}
     </div>
   )
 }
@@ -448,7 +448,7 @@ export default function Gate3Approval({ projectId, projectState, status, onResum
 
   if (parseError) {
     return (
-      <div className="rounded border border-red-200 bg-red-50 p-4 text-sm text-red-600">
+      <div className="rounded border border-err/35 bg-err/10 p-4 text-sm text-err">
         Could not parse the implementation plan. Raw output: {planJson.slice(0, 300)}
       </div>
     )
@@ -472,10 +472,10 @@ export default function Gate3Approval({ projectId, projectState, status, onResum
           highlightId === task.id
             ? 'border-blue-400 ring-2 ring-blue-300'
             : isBrokenDependent
-              ? 'border-red-300 bg-red-50'
+              ? 'border-red-300 bg-err/10'
               : isExcluded
-                ? 'border-gray-200 bg-gray-50 opacity-60'
-                : `${cfg.border} bg-white`
+                ? 'border-line bg-overlay opacity-60'
+                : `${cfg.border} bg-raised`
         }`}
       >
         <div className="flex items-start gap-3">
@@ -490,15 +490,15 @@ export default function Gate3Approval({ projectId, projectState, status, onResum
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
               <span className={`font-mono text-xs font-bold ${cfg.text}`}>{task.id}</span>
-              <span className={`text-sm font-semibold ${isExcluded ? 'text-gray-400 line-through' : 'text-gray-800'}`}>
+              <span className={`text-sm font-semibold ${isExcluded ? 'text-ink-3 line-through' : 'text-ink'}`}>
                 {task.filename}
               </span>
               <span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${compCfg.badge}`}>{compCfg.label}</span>
               {task.custom && (
-                <span className="rounded bg-indigo-100 px-1.5 py-0.5 text-[10px] font-semibold text-indigo-700">Custom</span>
+                <span className="rounded bg-accent-soft px-1.5 py-0.5 text-[10px] font-semibold text-accent">Custom</span>
               )}
             </div>
-            <p className={`mt-0.5 font-mono text-[11px] ${isExcluded ? 'text-gray-300' : 'text-gray-400'}`}>{task.filepath}</p>
+            <p className={`mt-0.5 font-mono text-[11px] ${isExcluded ? 'text-gray-300' : 'text-ink-3'}`}>{task.filepath}</p>
 
             {isEditing ? (
               <div className="mt-2 space-y-2">
@@ -507,26 +507,26 @@ export default function Gate3Approval({ projectId, projectState, status, onResum
                   onChange={(e) => setEditingText(e.target.value)}
                   rows={3}
                   autoFocus
-                  className="w-full rounded border border-blue-300 px-2 py-1.5 text-xs text-gray-800 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  className="w-full rounded border border-run/45 px-2 py-1.5 text-xs text-ink focus:outline-none focus:ring-1 focus:ring-blue-500"
                 />
                 <div className="flex gap-2">
-                  <button type="button" onClick={() => saveDescription(task.id)} className="rounded bg-blue-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-blue-700">
+                  <button type="button" onClick={() => saveDescription(task.id)} className="rounded bg-overlay px-2.5 py-1 text-xs font-semibold text-ink hover:bg-line">
                     Save
                   </button>
-                  <button type="button" onClick={() => setEditingId(null)} className="rounded border border-gray-300 bg-white px-2.5 py-1 text-xs font-semibold text-gray-600 hover:bg-gray-50">
+                  <button type="button" onClick={() => setEditingId(null)} className="rounded border border-line-strong bg-raised px-2.5 py-1 text-xs font-semibold text-ink-2 hover:bg-overlay">
                     Discard
                   </button>
                 </div>
               </div>
             ) : (
-              <p className={`mt-1.5 text-xs leading-relaxed ${isExcluded ? 'text-gray-400 line-through' : 'text-gray-600'}`}>
+              <p className={`mt-1.5 text-xs leading-relaxed ${isExcluded ? 'text-ink-3 line-through' : 'text-ink-2'}`}>
                 {task.description}
               </p>
             )}
 
             {(task.requires || []).length > 0 && (
               <div className="mt-2 flex flex-wrap items-center gap-1.5">
-                <span className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">Requires</span>
+                <span className="text-[10px] font-semibold uppercase tracking-wide text-ink-3">Requires</span>
                 {task.requires.map((dep) => (
                   <button
                     key={dep}
@@ -534,8 +534,8 @@ export default function Gate3Approval({ projectId, projectState, status, onResum
                     onClick={() => scrollToTask(dep)}
                     className={`rounded-full border px-2 py-0.5 font-mono text-[10px] font-semibold transition-colors ${
                       includedIds.has(dep)
-                        ? 'border-gray-300 bg-gray-100 text-gray-600 hover:bg-gray-200'
-                        : 'border-red-300 bg-red-100 text-red-700 hover:bg-red-200'
+                        ? 'border-line-strong bg-overlay text-ink-2 hover:bg-gray-200'
+                        : 'border-red-300 bg-err/10 text-err hover:bg-red-200'
                     }`}
                     title={includedIds.has(dep) ? `Jump to ${dep}` : `${dep} is excluded or removed!`}
                   >
@@ -546,15 +546,15 @@ export default function Gate3Approval({ projectId, projectState, status, onResum
             )}
 
             {isExcluded && dependents.length > 0 && (
-              <div className="mt-2 flex flex-wrap items-center gap-2 rounded border border-amber-300 bg-amber-50 px-2.5 py-1.5">
-                <span className="text-xs text-amber-800">
+              <div className="mt-2 flex flex-wrap items-center gap-2 rounded border border-warn/45 bg-warn/10 px-2.5 py-1.5">
+                <span className="text-xs text-warn">
                   ⚠️ {dependents.length} included task{dependents.length === 1 ? '' : 's'} depend{dependents.length === 1 ? 's' : ''} on this:{' '}
                   {dependents.map((d) => d.id).join(', ')}
                 </span>
                 <button
                   type="button"
                   onClick={() => excludeDependentsToo(task.id)}
-                  className="rounded bg-amber-600 px-2 py-0.5 text-[11px] font-semibold text-white hover:bg-amber-700"
+                  className="rounded bg-amber-600 px-2 py-0.5 text-[11px] font-semibold text-ink hover:bg-amber-700"
                 >
                   Exclude dependents too
                 </button>
@@ -562,22 +562,22 @@ export default function Gate3Approval({ projectId, projectState, status, onResum
             )}
 
             {isPendingRemove && (
-              <div className="mt-2 flex flex-wrap items-center gap-2 rounded border border-red-300 bg-red-50 px-2.5 py-1.5">
-                <span className="text-xs text-red-800">
+              <div className="mt-2 flex flex-wrap items-center gap-2 rounded border border-red-300 bg-err/10 px-2.5 py-1.5">
+                <span className="text-xs text-err">
                   {removeDependents.length} included task{removeDependents.length === 1 ? '' : 's'} depend on this:{' '}
                   {removeDependents.map((d) => d.id).join(', ')}
                 </span>
                 <button
                   type="button"
                   onClick={() => removeTask(task.id, true)}
-                  className="rounded bg-red-600 px-2 py-0.5 text-[11px] font-semibold text-white hover:bg-red-700"
+                  className="rounded bg-red-600 px-2 py-0.5 text-[11px] font-semibold text-ink hover:bg-red-700"
                 >
                   Remove & exclude dependents
                 </button>
                 <button
                   type="button"
                   onClick={() => setPendingRemove(null)}
-                  className="rounded border border-gray-300 bg-white px-2 py-0.5 text-[11px] font-semibold text-gray-600 hover:bg-gray-50"
+                  className="rounded border border-line-strong bg-raised px-2 py-0.5 text-[11px] font-semibold text-ink-2 hover:bg-overlay"
                 >
                   Keep
                 </button>
@@ -594,7 +594,7 @@ export default function Gate3Approval({ projectId, projectState, status, onResum
               }}
               disabled={isPending}
               title="Edit description"
-              className="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-700"
+              className="rounded p-1 text-ink-3 hover:bg-overlay hover:text-ink"
             >
               ✏️
             </button>
@@ -603,7 +603,7 @@ export default function Gate3Approval({ projectId, projectState, status, onResum
               onClick={() => removeTask(task.id)}
               disabled={isPending}
               title="Remove task entirely"
-              className="rounded p-1 text-gray-400 hover:bg-red-50 hover:text-red-600"
+              className="rounded p-1 text-ink-3 hover:bg-err/10 hover:text-err"
             >
               🗑️
             </button>
@@ -616,27 +616,27 @@ export default function Gate3Approval({ projectId, projectState, status, onResum
   return (
     <div className="space-y-4">
       <div className="flex items-center space-x-2">
-        <span className="h-2.5 w-2.5 rounded-full bg-orange-500 animate-pulse" />
-        <h3 className="text-base font-bold text-gray-900 uppercase tracking-wide">
+        <span className="h-2.5 w-2.5 rounded-full bg-accent animate-pulse" />
+        <h3 className="text-base font-bold text-ink uppercase tracking-wide">
           Gate 3 — Implementation Plan Review
         </h3>
       </div>
-      <p className="text-sm text-gray-600">
+      <p className="text-sm text-ink-2">
         Edit the plan below — uncheck tasks to skip them, edit descriptions, add or remove tasks.
         The coder agents will generate exactly what you approve here.
       </p>
 
       {showArchBanner && (
-        <div className="rounded-lg border border-blue-300 bg-blue-50 px-4 py-3">
+        <div className="rounded-lg border border-run/45 bg-run/10 px-4 py-3">
           <div className="flex flex-wrap items-center gap-3">
-            <span className="text-sm font-medium text-blue-800">
+            <span className="text-sm font-medium text-run">
               🔄 Architecture was regenerated — the plan below was rebuilt from it.
             </span>
             {projectState?.previous_versions?.architecture_doc && (
               <button
                 type="button"
                 onClick={() => setShowArchDiff((v) => !v)}
-                className="rounded border border-blue-300 bg-white px-2.5 py-1 text-xs font-semibold text-blue-700 hover:bg-blue-100"
+                className="rounded border border-run/45 bg-raised px-2.5 py-1 text-xs font-semibold text-run hover:bg-blue-100"
               >
                 {showArchDiff ? 'Hide changes' : 'Review changes'}
               </button>
@@ -647,7 +647,7 @@ export default function Gate3Approval({ projectId, projectState, status, onResum
                 setShowArchBanner(false)
                 setShowArchDiff(false)
               }}
-              className="ml-auto text-xs font-semibold text-blue-400 hover:text-blue-600"
+              className="ml-auto text-xs font-semibold text-run hover:text-blue-600"
             >
               Dismiss
             </button>
@@ -670,7 +670,7 @@ export default function Gate3Approval({ projectId, projectState, status, onResum
           <button
             type="button"
             onClick={() => setShowPreview((v) => !v)}
-            className="rounded border border-gray-300 bg-white px-2 py-1 text-xs font-semibold text-gray-700 hover:bg-gray-50"
+            className="rounded border border-line-strong bg-raised px-2 py-1 text-xs font-semibold text-ink hover:bg-overlay"
           >
             {showPreview ? 'Hide Folder Structure' : '📁 Preview Folder Structure'}
           </button>
@@ -679,12 +679,12 @@ export default function Gate3Approval({ projectId, projectState, status, onResum
 
       {/* Rebuilt from included filepaths on every render, so it live-updates as tasks are edited */}
       {showPreview && (
-        <div className="max-h-80 overflow-auto rounded-lg border border-gray-200 bg-gray-50 p-4">
-          <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">
+        <div className="max-h-80 overflow-auto rounded-lg border border-line bg-overlay p-4">
+          <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-ink-3">
             {includedTasks.length} file{includedTasks.length === 1 ? '' : 's'} will be generated
           </p>
           {includedTasks.length === 0 ? (
-            <p className="text-xs italic text-gray-400">No tasks included.</p>
+            <p className="text-xs italic text-ink-3">No tasks included.</p>
           ) : (
             <FileTree node={buildFileTree(includedTasks.map((t) => t.filepath))} />
           )}
@@ -721,13 +721,13 @@ export default function Gate3Approval({ projectId, projectState, status, onResum
                       — {phaseIncluded.length}/{phaseTasks.length} task{phaseTasks.length === 1 ? '' : 's'}
                     </span>
                   </span>
-                  <span className="text-xs text-gray-400">{isCollapsed ? '▸' : '▾'}</span>
+                  <span className="text-xs text-ink-3">{isCollapsed ? '▸' : '▾'}</span>
                 </button>
 
                 {!isCollapsed && (
                   <div className="space-y-2 p-3">
                     {phaseTasks.length === 0 && (
-                      <p className="text-xs italic text-gray-400">No {cfg.label.toLowerCase()} tasks in this plan.</p>
+                      <p className="text-xs italic text-ink-3">No {cfg.label.toLowerCase()} tasks in this plan.</p>
                     )}
                     {phaseTasks.map(renderTaskCard)}
                     {addingPhase === phase ? (
@@ -751,9 +751,9 @@ export default function Gate3Approval({ projectId, projectState, status, onResum
       </div>
 
       {patchErrors.length > 0 && (
-        <div className="rounded border border-red-300 bg-red-50 p-3">
-          <p className="mb-1 text-sm font-semibold text-red-700">The plan failed validation:</p>
-          <ul className="list-inside list-disc space-y-0.5 text-xs text-red-600">
+        <div className="rounded border border-red-300 bg-err/10 p-3">
+          <p className="mb-1 text-sm font-semibold text-err">The plan failed validation:</p>
+          <ul className="list-inside list-disc space-y-0.5 text-xs text-err">
             {patchErrors.map((err, i) => (
               <li key={i}>{err}</li>
             ))}
@@ -762,22 +762,22 @@ export default function Gate3Approval({ projectId, projectState, status, onResum
       )}
 
       {!planValid && brokenDeps.size > 0 && (
-        <div className="rounded border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800">
+        <div className="rounded border border-warn/45 bg-warn/10 p-3 text-sm text-warn">
           Cannot approve: {brokenDeps.size} excluded/removed task{brokenDeps.size === 1 ? '' : 's'} still required by
           included tasks ({[...brokenDeps.keys()].join(', ')}). Re-check them or exclude their dependents.
         </div>
       )}
 
-      <div className="sticky bottom-0 space-y-3 border-t border-gray-100 bg-white pt-3">
+      <div className="sticky bottom-0 space-y-3 border-t border-line bg-raised pt-3">
         {confirmingCancel ? (
-          <div className="rounded border border-red-200 bg-red-50 p-3 space-y-2">
-            <p className="text-sm font-medium text-red-700">Cancel this project? This cannot be undone.</p>
+          <div className="rounded border border-err/35 bg-err/10 p-3 space-y-2">
+            <p className="text-sm font-medium text-err">Cancel this project? This cannot be undone.</p>
             <div className="flex gap-2">
               <button
                 type="button"
                 onClick={handleCancelProject}
                 disabled={isPending}
-                className="rounded bg-red-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-red-700"
+                className="rounded bg-red-600 px-3 py-1.5 text-xs font-semibold text-ink hover:bg-red-700"
               >
                 {submitting === 'reject' ? 'Cancelling...' : 'Yes, cancel project'}
               </button>
@@ -785,7 +785,7 @@ export default function Gate3Approval({ projectId, projectState, status, onResum
                 type="button"
                 onClick={() => setConfirmingCancel(false)}
                 disabled={isPending}
-                className="rounded border border-gray-300 bg-white px-3 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-50"
+                className="rounded border border-line-strong bg-raised px-3 py-1.5 text-xs font-semibold text-ink hover:bg-overlay"
               >
                 Keep project
               </button>
@@ -798,7 +798,7 @@ export default function Gate3Approval({ projectId, projectState, status, onResum
               onClick={handleApprove}
               disabled={isPending || regenAction || !planValid}
               title={planValid ? '' : 'Fix the dependency conflicts first'}
-              className="flex-1 rounded bg-green-600 py-2 px-3 text-sm font-semibold text-white hover:bg-green-700 disabled:opacity-60"
+              className="flex-1 rounded bg-green-600 py-2 px-3 text-sm font-semibold text-ink hover:bg-green-700 disabled:opacity-60"
             >
               {submitting === 'approve' ? 'Saving plan...' : '✅ Approve & Start Coding'}
             </button>
@@ -809,7 +809,7 @@ export default function Gate3Approval({ projectId, projectState, status, onResum
               className={
                 editCapped
                   ? cappedButtonClass
-                  : 'flex-1 rounded border border-gray-300 bg-white py-2 px-3 text-sm font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-60'
+                  : 'flex-1 rounded border border-line-strong bg-raised py-2 px-3 text-sm font-semibold text-ink hover:bg-overlay disabled:opacity-60'
               }
             >
               {editCapped ? '⚠️ ' : '🔄 '}Replan with Feedback
@@ -821,7 +821,7 @@ export default function Gate3Approval({ projectId, projectState, status, onResum
               className={
                 backCapped
                   ? cappedButtonClass
-                  : 'flex-1 rounded border border-gray-300 bg-white py-2 px-3 text-sm font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-60'
+                  : 'flex-1 rounded border border-line-strong bg-raised py-2 px-3 text-sm font-semibold text-ink hover:bg-overlay disabled:opacity-60'
               }
             >
               {backCapped ? '⚠️ ' : '⬅️ '}Go Back to Architecture
@@ -830,7 +830,7 @@ export default function Gate3Approval({ projectId, projectState, status, onResum
               type="button"
               onClick={() => setConfirmingCancel(true)}
               disabled={isPending || regenAction}
-              className="rounded border border-red-200 bg-white py-2 px-3 text-sm font-semibold text-red-600 hover:bg-red-50 disabled:opacity-60"
+              className="rounded border border-err/35 bg-raised py-2 px-3 text-sm font-semibold text-err hover:bg-err/10 disabled:opacity-60"
             >
               Cancel Project
             </button>

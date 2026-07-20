@@ -3,8 +3,8 @@ import MermaidDiagram from './MermaidDiagram'
 
 function ScrollableOutput({ children, className = '' }) {
   return (
-    <div className={`rounded border border-gray-200 bg-gray-50 ${className}`}>
-      <div className="max-h-[32rem] overflow-auto p-4 text-sm text-gray-700 whitespace-pre-wrap">
+    <div className={`rounded border border-line bg-overlay ${className}`}>
+      <div className="max-h-[32rem] overflow-auto p-4 text-sm text-ink whitespace-pre-wrap">
         {children}
       </div>
     </div>
@@ -83,30 +83,30 @@ export default function ApprovalGate({ status, gateEvent, currentStage, eventsCo
     if (fileEntries.length === 0) return null
 
     return (
-      <div className="mt-4 rounded-lg border border-gray-200 bg-gray-50 p-3">
+      <div className="mt-4 rounded-lg border border-line bg-overlay p-3">
         <div className="mb-3 flex items-center justify-between gap-3">
           <div>
-            <h5 className="text-sm font-bold text-gray-800">
+            <h5 className="text-sm font-bold text-ink">
               {hasGeneratedFiles ? 'Generated Files' : 'Files to Generate'}
             </h5>
-            <p className="text-xs text-gray-500">
+            <p className="text-xs text-ink-3">
               {hasGeneratedFiles
                 ? 'Click a file to preview the generated code.'
                 : 'Architecture has identified these files; code contents will appear after coder agents generate them.'}
             </p>
           </div>
-          <span className="rounded bg-white px-2 py-1 font-mono text-xs font-semibold text-gray-600">
+          <span className="rounded bg-raised px-2 py-1 font-mono text-xs font-semibold text-ink-2">
             {fileEntries.length}
           </span>
         </div>
 
         <div className="grid gap-3 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
-          <div className="max-h-72 overflow-y-auto rounded border border-gray-200 bg-white p-2">
+          <div className="max-h-72 overflow-y-auto rounded border border-line bg-raised p-2">
             {fileEntries.map(([file]) => {
               const isActive = file === activeFile
               const isBackend = file.includes('backend') || file.endsWith('.py')
               const isFrontend = file.includes('frontend') || file.includes('src/') || file.endsWith('.jsx') || file.endsWith('.tsx')
-              const accent = isBackend ? 'text-blue-700' : isFrontend ? 'text-green-700' : 'text-orange-700'
+              const accent = isBackend ? 'text-run' : isFrontend ? 'text-ok' : 'text-accent'
 
               return (
                 <button
@@ -115,8 +115,8 @@ export default function ApprovalGate({ status, gateEvent, currentStage, eventsCo
                   onClick={() => setSelectedFile(file)}
                   className={`mb-1 block w-full rounded px-2 py-1.5 text-left font-mono text-[11px] leading-snug transition-colors ${
                     isActive
-                      ? 'bg-gray-900 text-white'
-                      : `bg-white hover:bg-gray-100 ${accent}`
+                      ? 'bg-gray-900 text-ink'
+                      : `bg-raised hover:bg-overlay ${accent}`
                   }`}
                   title={file}
                 >
@@ -126,16 +126,16 @@ export default function ApprovalGate({ status, gateEvent, currentStage, eventsCo
             })}
           </div>
 
-          <div className="max-h-72 overflow-auto rounded border border-gray-200 bg-white p-3">
-            <div className="mb-2 break-all font-mono text-xs font-semibold text-gray-700">
+          <div className="max-h-72 overflow-auto rounded border border-line bg-raised p-3">
+            <div className="mb-2 break-all font-mono text-xs font-semibold text-ink">
               {activeFile || 'No file selected'}
             </div>
             {hasGeneratedFiles ? (
-              <pre className="whitespace-pre-wrap font-mono text-[11px] leading-relaxed text-gray-700">
+              <pre className="whitespace-pre-wrap font-mono text-[11px] leading-relaxed text-ink">
                 {activeFileContent || '// This file is present but has no generated content yet.'}
               </pre>
             ) : (
-              <div className="rounded border border-dashed border-gray-300 bg-gray-50 p-3 text-xs leading-relaxed text-gray-500">
+              <div className="rounded border border-dashed border-line-strong bg-overlay p-3 text-xs leading-relaxed text-ink-3">
                 This file is planned by the architecture agent. Once coder agents run, the generated code for this path will show here.
               </div>
             )}
@@ -211,10 +211,10 @@ export default function ApprovalGate({ status, gateEvent, currentStage, eventsCo
   // the run stopped — the exact dishonest spinner this state exists to prevent.
   if (status === 'interrupted') {
     return (
-      <div className="space-y-2 rounded-lg border border-purple-200 bg-white p-6 text-center">
+      <div className="space-y-2 rounded-lg border border-alt/35 bg-raised p-6 text-center">
         <div className="text-3xl">⏸</div>
-        <h3 className="text-sm font-bold text-gray-900">Run interrupted</h3>
-        <p className="text-xs text-gray-600">
+        <h3 className="text-sm font-bold text-ink">Run interrupted</h3>
+        <p className="text-xs text-ink-2">
           No agents are running. Use Resume above to continue from the last checkpoint.
         </p>
       </div>
@@ -223,10 +223,10 @@ export default function ApprovalGate({ status, gateEvent, currentStage, eventsCo
 
   if (status === 'cancelled') {
     return (
-      <div className="bg-white rounded-lg border border-gray-200 shadow-sm p-6 text-center space-y-3">
+      <div className="bg-raised rounded-lg border border-line  p-6 text-center space-y-3">
         <div className="text-4xl">🚫</div>
-        <h3 className="text-xl font-bold text-gray-900">Project Cancelled</h3>
-        <p className="text-sm text-gray-600">
+        <h3 className="text-xl font-bold text-ink">Project Cancelled</h3>
+        <p className="text-sm text-ink-2">
           This project was cancelled at a human approval gate and will not continue.
         </p>
       </div>
@@ -235,16 +235,16 @@ export default function ApprovalGate({ status, gateEvent, currentStage, eventsCo
 
   if (status === 'done' || status === 'completed') {
     return (
-      <div className="bg-white rounded-lg border border-gray-200 shadow-sm p-6 text-center space-y-4">
+      <div className="bg-raised rounded-lg border border-line  p-6 text-center space-y-4">
         <div className="text-4xl">🎉</div>
-        <h3 className="text-xl font-bold text-gray-900">Project Complete!</h3>
-        <p className="text-sm text-gray-600">
+        <h3 className="text-xl font-bold text-ink">Project Complete!</h3>
+        <p className="text-sm text-ink-2">
           All agents have finished executing the pipeline. Your project is ready.
         </p>
         <div className="pt-2">
           <a
             href={`http://localhost:8000/api/projects/${projectId}/download`}
-            className="block w-full rounded border border-blue-200 bg-blue-600 py-2.5 px-4 text-center text-sm font-semibold text-white hover:bg-blue-700"
+            className="block w-full rounded border border-run/35 bg-overlay py-2.5 px-4 text-center text-sm font-semibold text-ink hover:bg-line"
           >
             ⬇ Download Project ZIP
           </a>
@@ -258,16 +258,16 @@ export default function ApprovalGate({ status, gateEvent, currentStage, eventsCo
     const isPending = submitting !== null
 
     return (
-      <div className="bg-white rounded-lg border border-orange-200 shadow-sm p-6 space-y-4">
+      <div className="bg-raised rounded-lg border border-accent/35  p-6 space-y-4">
         <div className="flex items-center space-x-2">
-          <span className="h-2.5 w-2.5 rounded-full bg-orange-500 animate-pulse" />
-          <h3 className="text-base font-bold text-gray-900 uppercase tracking-wide">
+          <span className="h-2.5 w-2.5 rounded-full bg-accent animate-pulse" />
+          <h3 className="text-base font-bold text-ink uppercase tracking-wide">
             Human Gate Active
           </h3>
         </div>
 
-        <h4 className="text-lg font-bold text-gray-800">{title}</h4>
-        <p className="text-sm text-gray-600 leading-relaxed">{desc}</p>
+        <h4 className="text-lg font-bold text-ink">{title}</h4>
+        <p className="text-sm text-ink-2 leading-relaxed">{desc}</p>
 
         {gateName === 'human_gate_1' && (
           <div className="mt-4">
@@ -276,8 +276,8 @@ export default function ApprovalGate({ status, gateEvent, currentStage, eventsCo
                 onClick={() => setActiveTab('requirements')}
                 className={`px-3 py-1 text-sm rounded font-medium ${
                   activeTab === 'requirements'
-                    ? 'bg-blue-600 text-white'
-                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                    ? 'bg-overlay text-ink'
+                    : 'bg-overlay text-ink-2 hover:bg-gray-200'
                 }`}
               >
                 Requirements Doc
@@ -286,8 +286,8 @@ export default function ApprovalGate({ status, gateEvent, currentStage, eventsCo
                 onClick={() => setActiveTab('research')}
                 className={`px-3 py-1 text-sm rounded font-medium ${
                   activeTab === 'research'
-                    ? 'bg-blue-600 text-white'
-                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                    ? 'bg-overlay text-ink'
+                    : 'bg-overlay text-ink-2 hover:bg-gray-200'
                 }`}
               >
                 Research Report
@@ -296,8 +296,8 @@ export default function ApprovalGate({ status, gateEvent, currentStage, eventsCo
                 onClick={() => setActiveTab('techstack')}
                 className={`px-3 py-1 text-sm rounded font-medium ${
                   activeTab === 'techstack'
-                    ? 'bg-blue-600 text-white'
-                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                    ? 'bg-overlay text-ink'
+                    : 'bg-overlay text-ink-2 hover:bg-gray-200'
                 }`}
               >
                 Tech Stack
@@ -321,7 +321,7 @@ export default function ApprovalGate({ status, gateEvent, currentStage, eventsCo
                 return (
                   <div className="flex flex-wrap gap-2 mt-3">
                     {[stack.frontend, stack.backend, stack.database, stack.auth].map((item, i) => (
-                      <span key={i} className="bg-blue-100 text-blue-700 px-2 py-1 rounded text-xs font-medium">
+                      <span key={i} className="bg-run/10 text-run px-2 py-1 rounded text-xs font-medium">
                         {item}
                       </span>
                     ))}
@@ -335,15 +335,15 @@ export default function ApprovalGate({ status, gateEvent, currentStage, eventsCo
         {gateName === 'human_gate_2' && projectState?.architecture_doc && (
           <div className="mt-4 space-y-4">
             <div className="grid grid-cols-2 gap-3">
-              <div className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-center">
-                <div className="text-lg font-bold text-blue-700">
+              <div className="rounded-lg border border-run/35 bg-run/10 px-3 py-2 text-center">
+                <div className="text-lg font-bold text-run">
                   {projectState.file_list?.length || 0}
                 </div>
-                <div className="text-xs text-blue-600">Files to Generate</div>
+                <div className="text-xs text-run">Files to Generate</div>
               </div>
-              <div className="rounded-lg border border-green-200 bg-green-50 px-3 py-2 text-center">
-                <div className="text-lg font-bold text-green-700">{apiEndpointCount}</div>
-                <div className="text-xs text-green-600">API Endpoints</div>
+              <div className="rounded-lg border border-ok/35 bg-ok/10 px-3 py-2 text-center">
+                <div className="text-lg font-bold text-ok">{apiEndpointCount}</div>
+                <div className="text-xs text-ok">API Endpoints</div>
               </div>
             </div>
 
@@ -358,8 +358,8 @@ export default function ApprovalGate({ status, gateEvent, currentStage, eventsCo
                   onClick={() => setActiveTab(tab.id)}
                   className={`rounded-full px-3 py-1 text-sm font-medium transition-colors ${
                     activeTab === tab.id
-                      ? 'bg-green-600 text-white'
-                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                      ? 'bg-green-600 text-ink'
+                      : 'bg-overlay text-ink-2 hover:bg-gray-200'
                   }`}
                 >
                   {tab.label}
@@ -369,7 +369,7 @@ export default function ApprovalGate({ status, gateEvent, currentStage, eventsCo
 
             {activeTab === 'architecture' && (
               <ScrollableOutput>
-                <pre className="font-mono text-xs leading-relaxed whitespace-pre-wrap text-gray-700">
+                <pre className="font-mono text-xs leading-relaxed whitespace-pre-wrap text-ink">
                   {projectState.architecture_doc}
                 </pre>
               </ScrollableOutput>
@@ -378,7 +378,7 @@ export default function ApprovalGate({ status, gateEvent, currentStage, eventsCo
             {activeTab === 'diagrams' && (
               <div className="max-h-96 space-y-4 overflow-y-auto">
                 {mermaidBlocks.length === 0 ? (
-                  <p className="text-sm text-gray-500">No Mermaid diagrams found in architecture output.</p>
+                  <p className="text-sm text-ink-3">No Mermaid diagrams found in architecture output.</p>
                 ) : (
                   mermaidBlocks.map((code, index) => (
                     <MermaidDiagram
@@ -392,8 +392,8 @@ export default function ApprovalGate({ status, gateEvent, currentStage, eventsCo
             )}
 
             {activeTab === 'filelist' && (
-              <div className="rounded-lg border border-gray-200 bg-gray-50 p-4">
-                <p className="mb-3 text-xs text-gray-500">
+              <div className="rounded-lg border border-line bg-overlay p-4">
+                <p className="mb-3 text-xs text-ink-3">
                   These {projectState.file_list?.length || 0} files will be generated by the coder agents after you approve the implementation plan.
                 </p>
                 <div className="max-h-[32rem] overflow-auto">
@@ -401,7 +401,7 @@ export default function ApprovalGate({ status, gateEvent, currentStage, eventsCo
                     const isBackend = file.includes('backend') || file.endsWith('.py')
                     const isFrontend = file.includes('frontend') || file.includes('src/') || file.endsWith('.jsx') || file.endsWith('.tsx')
                     const isConfig = file.endsWith('.yml') || file.endsWith('.yaml') || file.endsWith('.json') || file === 'Dockerfile' || file.endsWith('.md')
-                    const color = isBackend ? 'text-blue-600' : isFrontend ? 'text-green-600' : isConfig ? 'text-orange-600' : 'text-gray-600'
+                    const color = isBackend ? 'text-run' : isFrontend ? 'text-ok' : isConfig ? 'text-accent' : 'text-ink-2'
 
                     return (
                       <div key={`${file}-${index}`} className={`py-0.5 font-mono text-xs ${color}`}>
@@ -418,7 +418,7 @@ export default function ApprovalGate({ status, gateEvent, currentStage, eventsCo
         {renderFileBrowser()}
 
         {submitting ? (
-          <div className="text-sm text-blue-600 font-medium italic animate-pulse">
+          <div className="text-sm text-run font-medium italic animate-pulse">
             Pipeline resuming...
           </div>
         ) : (
@@ -427,22 +427,22 @@ export default function ApprovalGate({ status, gateEvent, currentStage, eventsCo
               <button
                 onClick={handleApprove}
                 disabled={isPending}
-                className="flex-1 bg-green-600 hover:bg-green-700 text-white font-semibold py-2 px-3 rounded text-sm transition-colors cursor-pointer text-center"
+                className="flex-1 bg-ok hover:brightness-110 text-white font-semibold py-2 px-3 rounded text-sm transition-colors cursor-pointer text-center"
               >
                 {submitting === 'approve' ? 'Sending...' : '✅ Approve & Continue'}
               </button>
               <button
                 onClick={() => setFeedbackOpen(!feedbackOpen)}
                 disabled={isPending}
-                className="flex-1 bg-white hover:bg-gray-50 text-gray-700 border border-gray-300 font-semibold py-2 px-3 rounded text-sm transition-colors cursor-pointer text-center"
+                className="flex-1 bg-raised hover:bg-overlay text-ink border border-line-strong font-semibold py-2 px-3 rounded text-sm transition-colors cursor-pointer text-center"
               >
                 ✏️ Request Changes
               </button>
             </div>
 
             {feedbackOpen && (
-              <div className="space-y-3 pt-2 border-t border-gray-100">
-                <label className="block text-xs font-semibold text-gray-600">
+              <div className="space-y-3 pt-2 border-t border-line">
+                <label className="block text-xs font-semibold text-ink-2">
                   Feedback / Request details:
                 </label>
                 <textarea
@@ -450,15 +450,15 @@ export default function ApprovalGate({ status, gateEvent, currentStage, eventsCo
                   onChange={(e) => setFeedbackText(e.target.value)}
                   placeholder="Tell the agents what to change or refine..."
                   rows={4}
-                  className="w-full px-3 py-2 border border-gray-300 rounded text-sm text-gray-900 focus:ring-1 focus:ring-blue-500 focus:outline-none placeholder-gray-400"
+                  className="w-full px-3 py-2 border border-line-strong rounded text-sm text-ink focus:ring-1 focus:ring-blue-500 focus:outline-none placeholder-gray-400"
                 />
                 <button
                   onClick={handleSubmitChanges}
                   disabled={isPending || !feedbackText.trim()}
-                  className={`w-full py-2 px-4 rounded text-white font-semibold text-sm transition-colors cursor-pointer text-center ${
+                  className={`w-full py-2 px-4 rounded text-ink font-semibold text-sm transition-colors cursor-pointer text-center ${
                     !feedbackText.trim()
                       ? 'bg-blue-300 cursor-not-allowed'
-                      : 'bg-blue-600 hover:bg-blue-700'
+                      : 'bg-overlay hover:bg-line'
                   }`}
                 >
                   {submitting === 'edit' ? 'Sending...' : 'Submit Changes'}
@@ -473,24 +473,24 @@ export default function ApprovalGate({ status, gateEvent, currentStage, eventsCo
 
   // Default: Pipeline running state
   return (
-    <div className="bg-white rounded-lg border border-gray-200 shadow-sm p-6 space-y-4">
+    <div className="bg-raised rounded-lg border border-line  p-6 space-y-4">
       <div className="flex items-center space-x-2">
-        <span className="h-2.5 w-2.5 rounded-full bg-blue-500 animate-pulse" />
-        <h3 className="text-sm font-semibold text-gray-700">Agents working...</h3>
+        <span className="h-2.5 w-2.5 rounded-full bg-run animate-pulse" />
+        <h3 className="text-sm font-semibold text-ink">Agents working...</h3>
       </div>
 
       <div className="space-y-2">
-        <div className="text-xs text-gray-500">Current Stage:</div>
-        <div className="text-base font-bold text-gray-900 capitalize">
+        <div className="text-xs text-ink-3">Current Stage:</div>
+        <div className="text-base font-bold text-ink capitalize">
           {currentStage || 'Initializing...'}
         </div>
       </div>
 
       {renderFileBrowser()}
 
-      <div className="border-t border-gray-100 pt-3 flex justify-between items-center text-xs text-gray-500">
+      <div className="border-t border-line pt-3 flex justify-between items-center text-xs text-ink-3">
         <span>Events Streamed:</span>
-        <span className="font-semibold text-gray-700">{eventsCount}</span>
+        <span className="font-semibold text-ink">{eventsCount}</span>
       </div>
     </div>
   )

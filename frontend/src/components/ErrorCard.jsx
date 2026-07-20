@@ -54,11 +54,11 @@ export default function ErrorCard({ info, onRecover }) {
   }
 
   const palette = isRateLimit
-    ? { border: 'border-amber-300', bg: 'bg-amber-50', title: 'text-amber-800', badge: 'bg-amber-100 text-amber-800' }
-    : { border: 'border-red-300', bg: 'bg-red-50', title: 'text-red-800', badge: 'bg-red-100 text-red-800' }
+    ? { border: 'border-warn/45', bg: 'bg-warn/10', title: 'text-warn', badge: 'bg-warn/10 text-warn' }
+    : { border: 'border-red-300', bg: 'bg-err/10', title: 'text-err', badge: 'bg-err/10 text-err' }
 
   return (
-    <div className={`rounded-lg border ${palette.border} ${palette.bg} p-4 shadow-sm`}>
+    <div className={`rounded-lg border ${palette.border} ${palette.bg} p-4 `}>
       <div className="flex items-start justify-between gap-3">
         <div>
           <div className="flex items-center gap-2">
@@ -70,9 +70,9 @@ export default function ErrorCard({ info, onRecover }) {
               {(info.error_type || 'error').replace('_', ' ')}
             </span>
           </div>
-          <p className="mt-1.5 text-sm text-gray-700">{friendly}</p>
+          <p className="mt-1.5 text-sm text-ink">{friendly}</p>
           {isRateLimit && (
-            <p className="mt-1 text-xs font-medium text-amber-700">
+            <p className="mt-1 text-xs font-medium text-warn">
               {secondsLeft > 0
                 ? `Auto-retry in ${secondsLeft}s (cycle ${info.cycle || 1}/${info.max_cycles || 3})`
                 : 'Auto-retrying now…'}
@@ -86,12 +86,12 @@ export default function ErrorCard({ info, onRecover }) {
           <button
             type="button"
             onClick={() => setShowDetails((v) => !v)}
-            className="text-xs font-semibold text-gray-500 hover:text-gray-700"
+            className="text-xs font-semibold text-ink-3 hover:text-ink"
           >
             {showDetails ? '▾ Hide details' : '▸ Details'}
           </button>
           {showDetails && (
-            <pre className="mt-1 max-h-40 overflow-auto rounded border border-gray-200 bg-white p-2 font-mono text-[11px] leading-relaxed text-gray-600 whitespace-pre-wrap break-words">
+            <pre className="mt-1 max-h-40 overflow-auto rounded border border-line bg-raised p-2 font-mono text-[11px] leading-relaxed text-ink-2 whitespace-pre-wrap break-words">
               {info.message}
             </pre>
           )}
@@ -103,7 +103,7 @@ export default function ErrorCard({ info, onRecover }) {
           type="button"
           disabled={submitting !== null}
           onClick={() => act('retry')}
-          className="rounded bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
+          className="rounded bg-overlay px-3 py-1.5 text-xs font-semibold text-ink hover:bg-line disabled:opacity-50"
         >
           {submitting === 'retry' ? 'Retrying…' : isRateLimit ? 'Retry Now' : 'Retry This Agent'}
         </button>
@@ -112,12 +112,12 @@ export default function ErrorCard({ info, onRecover }) {
             type="button"
             disabled={submitting !== null}
             onClick={() => act('skip')}
-            className="rounded border border-gray-300 bg-white px-3 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+            className="rounded border border-line-strong bg-raised px-3 py-1.5 text-xs font-semibold text-ink hover:bg-overlay disabled:opacity-50"
           >
             {submitting === 'skip' ? 'Skipping…' : 'Skip This Agent'}
           </button>
         ) : (
-          <span className="text-[11px] italic text-gray-500">
+          <span className="text-[11px] italic text-ink-3">
             Can't skip — downstream stages need {agentLabel.toLowerCase()}'s output.
           </span>
         )}
@@ -125,12 +125,12 @@ export default function ErrorCard({ info, onRecover }) {
           type="button"
           disabled={submitting !== null}
           onClick={() => act('cancel')}
-          className="ml-auto rounded border border-red-200 bg-white px-3 py-1.5 text-xs font-semibold text-red-600 hover:bg-red-50 disabled:opacity-50"
+          className="ml-auto rounded border border-err/35 bg-raised px-3 py-1.5 text-xs font-semibold text-err hover:bg-err/10 disabled:opacity-50"
         >
           {submitting === 'cancel' ? 'Cancelling…' : 'Cancel Project'}
         </button>
       </div>
-      {actionError && <p className="mt-2 text-xs font-medium text-red-600">{actionError}</p>}
+      {actionError && <p className="mt-2 text-xs font-medium text-err">{actionError}</p>}
     </div>
   )
 }

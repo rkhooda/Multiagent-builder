@@ -28,11 +28,11 @@ function ms(v) {
 
 function Stat({ label, value, sub, accent }) {
   return (
-    <div className="rounded border border-gray-200 bg-gray-50 px-3 py-2">
-      <div className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">{label}</div>
-      <div className={`mt-0.5 text-sm font-bold ${accent || 'text-gray-800'}`}>
+    <div className="rounded border border-line bg-overlay px-3 py-2">
+      <div className="text-[10px] font-semibold uppercase tracking-wide text-ink-3">{label}</div>
+      <div className={`mt-0.5 text-sm font-bold ${accent || 'text-ink'}`}>
         {value}
-        {sub && <span className="ml-1 text-[10px] font-normal text-gray-400">{sub}</span>}
+        {sub && <span className="ml-1 text-[10px] font-normal text-ink-3">{sub}</span>}
       </div>
     </div>
   )
@@ -55,14 +55,14 @@ export default function MetricsPanel({ projectId, compact = false }) {
   // A metrics outage must never look like a pipeline failure.
   if (error) {
     return (
-      <div className="rounded-lg border border-gray-200 bg-white p-4 text-xs text-gray-500">
+      <div className="rounded-lg border border-line bg-raised p-4 text-xs text-ink-3">
         Metrics unavailable ({error}). The run itself is unaffected.
       </div>
     )
   }
   if (!data) {
     return (
-      <div className="rounded-lg border border-gray-200 bg-white p-4 text-xs text-gray-400">
+      <div className="rounded-lg border border-line bg-raised p-4 text-xs text-ink-3">
         Loading metrics…
       </div>
     )
@@ -71,9 +71,9 @@ export default function MetricsPanel({ projectId, compact = false }) {
   // Projects generated before Day 23 have no rows — explain rather than show zeros.
   if (!data.has_metrics) {
     return (
-      <div className="rounded-lg border border-gray-200 bg-white p-4">
-        <h3 className="text-sm font-semibold text-gray-700">Run Metrics</h3>
-        <p className="mt-1 text-xs text-gray-500">
+      <div className="rounded-lg border border-line bg-raised p-4">
+        <h3 className="text-sm font-semibold text-ink">Run Metrics</h3>
+        <p className="mt-1 text-xs text-ink-3">
           No metrics recorded for this project. Runs from before observability was
           added (Day 23) have no instrumentation data — re-run the pipeline to collect it.
         </p>
@@ -100,27 +100,27 @@ export default function MetricsPanel({ projectId, compact = false }) {
   const providers = (data.providers || []).filter((p) => p.tracked)
 
   return (
-    <div className="rounded-lg border border-gray-200 bg-white p-4">
+    <div className="rounded-lg border border-line bg-raised p-4">
       <div className="flex items-baseline justify-between">
-        <h3 className="flex items-center gap-2 text-sm font-semibold text-gray-700">
+        <h3 className="flex items-center gap-2 text-sm font-semibold text-ink">
           Run Metrics
           {data.fast_mode && (
             <span
-              className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-800"
+              className="rounded bg-warn/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-warn"
               title="Generated in Fast Mode: lighter budgets, and defects were reported rather than repaired."
             >
               Fast Mode
             </span>
           )}
         </h3>
-        <span className="text-[10px] text-gray-400">
+        <span className="text-[10px] text-ink-3">
           {data.attempts} attempt{data.attempts === 1 ? '' : 's'}
           {data.failed_attempts > 0 && ` · ${data.failed_attempts} failed`}
         </span>
       </div>
 
       <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-        <Stat label="Total Tokens" value={fmt(data.total_tokens)} accent="text-indigo-700" />
+        <Stat label="Total Tokens" value={fmt(data.total_tokens)} accent="text-accent" />
         <Stat label="Input Tokens" value={fmt(data.prompt_tokens)} sub="prompt" />
         <Stat label="Output Tokens" value={fmt(data.completion_tokens)} sub="completion" />
         <Stat label="LLM Wall-Clock" value={ms(data.total_latency_ms)} sub="summed" />
@@ -128,7 +128,7 @@ export default function MetricsPanel({ projectId, compact = false }) {
           label="Cache Hits"
           value={cache.total ? `${Math.round((cache.hit_rate || 0) * 100)}%` : '—'}
           sub={cache.total ? `${cache.hits}/${cache.total}` : 'no data'}
-          accent={cache.hits > 0 ? 'text-emerald-700' : undefined}
+          accent={cache.hits > 0 ? 'text-ok' : undefined}
         />
       </div>
 
@@ -137,24 +137,24 @@ export default function MetricsPanel({ projectId, compact = false }) {
           84s, and only the total answers "what should I optimise next". */}
       {timeRows.length > 0 && (
         <div className="mt-4">
-          <div className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">
+          <div className="text-[10px] font-semibold uppercase tracking-wide text-ink-3">
             Time Breakdown
           </div>
           <div className="mt-1.5 space-y-1">
             {timeRows.map((r) => (
               <div key={r.agent} className="flex items-center gap-2">
-                <div className="w-28 flex-shrink-0 font-mono text-[11px] text-gray-600">
+                <div className="w-28 flex-shrink-0 font-mono text-[11px] text-ink-2">
                   {r.agent}
                 </div>
-                <div className="h-3 flex-1 overflow-hidden rounded-sm bg-gray-100">
+                <div className="h-3 flex-1 overflow-hidden rounded-sm bg-overlay">
                   <div
-                    className="h-full rounded-sm bg-indigo-400"
+                    className="h-full rounded-sm bg-run"
                     style={{ width: `${Math.max(r.pct_of_total, 1)}%` }}
                   />
                 </div>
-                <div className="w-24 flex-shrink-0 text-right text-[11px] tabular-nums text-gray-600">
+                <div className="w-24 flex-shrink-0 text-right text-[11px] tabular-nums text-ink-2">
                   {ms(r.total_ms)}
-                  <span className="ml-1 text-gray-400">{r.pct_of_total}%</span>
+                  <span className="ml-1 text-ink-3">{r.pct_of_total}%</span>
                 </div>
               </div>
             ))}
@@ -167,7 +167,7 @@ export default function MetricsPanel({ projectId, compact = false }) {
           pipeline (Day 26 hit Groq's 100k tokens/day ceiling). */}
       {providers.length > 0 && (
         <div className="mt-4">
-          <div className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">
+          <div className="text-[10px] font-semibold uppercase tracking-wide text-ink-3">
             Provider Daily Budget
           </div>
           <div className="mt-1.5 grid grid-cols-1 gap-1.5 sm:grid-cols-2">
@@ -176,18 +176,18 @@ export default function MetricsPanel({ projectId, compact = false }) {
               const danger = (p.pct_used ?? 0) >= 90
               return (
                 <div key={p.provider} className="flex items-center gap-2">
-                  <div className="w-24 flex-shrink-0 font-mono text-[11px] text-gray-600">
+                  <div className="w-24 flex-shrink-0 font-mono text-[11px] text-ink-2">
                     {p.provider}
                   </div>
-                  <div className="h-3 flex-1 overflow-hidden rounded-sm bg-gray-100">
+                  <div className="h-3 flex-1 overflow-hidden rounded-sm bg-overlay">
                     <div
-                      className={`h-full rounded-sm ${danger ? 'bg-red-500' : 'bg-emerald-500'}`}
+                      className={`h-full rounded-sm ${danger ? 'bg-err' : 'bg-emerald-500'}`}
                       style={{ width: `${Math.max(pct, 1)}%` }}
                     />
                   </div>
                   <div
                     className={`w-28 flex-shrink-0 text-right text-[11px] tabular-nums ${
-                      danger ? 'font-semibold text-red-700' : 'text-gray-600'
+                      danger ? 'font-semibold text-err' : 'text-ink-2'
                     }`}
                   >
                     {fmt(p.remaining)} left
@@ -200,7 +200,7 @@ export default function MetricsPanel({ projectId, compact = false }) {
       )}
 
       {(data.truncations || []).length > 0 && (
-        <p className="mt-3 rounded border-l-4 border-amber-400 bg-amber-50 px-3 py-2 text-[11px] text-amber-800">
+        <p className="mt-3 rounded border-l-4 border-warn bg-warn/10 px-3 py-2 text-[11px] text-warn">
           <span className="font-semibold">
             {data.truncations.length} output{data.truncations.length === 1 ? '' : 's'} hit the
             token ceiling
@@ -212,7 +212,7 @@ export default function MetricsPanel({ projectId, compact = false }) {
       )}
 
       {missingUsage > 0 && (
-        <p className="mt-2 text-[11px] text-amber-700">
+        <p className="mt-2 text-[11px] text-warn">
           {missingUsage} attempt{missingUsage === 1 ? '' : 's'} returned no token usage from the
           provider and {missingUsage === 1 ? 'is' : 'are'} excluded from the averages below.
         </p>
@@ -222,7 +222,7 @@ export default function MetricsPanel({ projectId, compact = false }) {
         <div className="mt-3 overflow-x-auto">
           <table className="w-full min-w-[560px] text-left text-xs">
             <thead>
-              <tr className="border-b border-gray-200 text-[10px] uppercase tracking-wide text-gray-500">
+              <tr className="border-b border-line text-[10px] uppercase tracking-wide text-ink-3">
                 <th className="py-1.5 pr-3 font-semibold">Agent</th>
                 <th className="py-1.5 pr-3 font-semibold" title="Successful calls — averages are over these">
                   Calls
@@ -237,12 +237,12 @@ export default function MetricsPanel({ projectId, compact = false }) {
                 <th className="py-1.5 font-semibold">Total Tokens</th>
               </tr>
             </thead>
-            <tbody className="text-gray-700">
+            <tbody className="text-ink">
               {rows.map((r) => (
-                <tr key={r.agent} className="border-b border-gray-100 last:border-0">
+                <tr key={r.agent} className="border-b border-line last:border-0">
                   <td className="py-1.5 pr-3 font-mono text-[11px]">{r.agent}</td>
                   <td className="py-1.5 pr-3">{r.calls}</td>
-                  <td className={`py-1.5 pr-3 ${r.attempts > r.calls ? 'font-semibold text-amber-700' : ''}`}>
+                  <td className={`py-1.5 pr-3 ${r.attempts > r.calls ? 'font-semibold text-warn' : ''}`}>
                     {r.attempts ?? '—'}
                   </td>
                   <td className="py-1.5 pr-3">{fmt(r.avg_prompt_tokens)}</td>

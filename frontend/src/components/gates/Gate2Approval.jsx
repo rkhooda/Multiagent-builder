@@ -78,9 +78,9 @@ function MarkdownWithMermaid({ content }) {
 
 function Panel({ title, children }) {
   return (
-    <div className="rounded-lg border border-gray-200 bg-white">
-      <div className="border-b border-gray-100 px-4 py-2">
-        <h4 className="text-sm font-bold text-gray-800">{title}</h4>
+    <div className="rounded-lg border border-line bg-raised">
+      <div className="border-b border-line px-4 py-2">
+        <h4 className="text-sm font-bold text-ink">{title}</h4>
       </div>
       <div className="max-h-[28rem] overflow-auto p-4">{children}</div>
     </div>
@@ -191,12 +191,12 @@ export default function Gate2Approval({ projectId, projectState, status, onResum
   return (
     <div className="space-y-4">
       <div className="flex items-center space-x-2">
-        <span className="h-2.5 w-2.5 rounded-full bg-orange-500 animate-pulse" />
-        <h3 className="text-base font-bold text-gray-900 uppercase tracking-wide">
+        <span className="h-2.5 w-2.5 rounded-full bg-accent animate-pulse" />
+        <h3 className="text-base font-bold text-ink uppercase tracking-wide">
           Gate 2 — Architecture Review
         </h3>
       </div>
-      <p className="text-sm text-gray-600">
+      <p className="text-sm text-ink-2">
         Review the system architecture below before the pipeline proceeds to planning.
       </p>
 
@@ -209,7 +209,7 @@ export default function Gate2Approval({ projectId, projectState, status, onResum
               <button
                 type="button"
                 onClick={() => setShowDiff((v) => !v)}
-                className="rounded border border-gray-300 bg-white px-2 py-1 text-xs font-semibold text-gray-700 hover:bg-gray-50"
+                className="rounded border border-line-strong bg-raised px-2 py-1 text-xs font-semibold text-ink hover:bg-overlay"
               >
                 {showDiff ? 'Hide Architecture Changes' : 'View Architecture Changes'}
               </button>
@@ -218,7 +218,7 @@ export default function Gate2Approval({ projectId, projectState, status, onResum
               <button
                 type="button"
                 onClick={() => setShowRequirementsDiff((v) => !v)}
-                className="rounded border border-gray-300 bg-white px-2 py-1 text-xs font-semibold text-gray-700 hover:bg-gray-50"
+                className="rounded border border-line-strong bg-raised px-2 py-1 text-xs font-semibold text-ink hover:bg-overlay"
               >
                 {showRequirementsDiff ? 'Hide Requirements Changes' : 'View Requirements Changes'}
               </button>
@@ -237,7 +237,7 @@ export default function Gate2Approval({ projectId, projectState, status, onResum
         {showDiff && previousArchitecture ? (
           <DiffView oldText={previousArchitecture} newText={architectureDoc} />
         ) : !architectureDoc ? (
-          <p className="text-sm text-gray-500">Loading architecture document...</p>
+          <p className="text-sm text-ink-3">Loading architecture document...</p>
         ) : !parsedOk ? (
           <Panel title="Architecture Document">
             <div className="prose prose-sm max-w-none">
@@ -247,7 +247,7 @@ export default function Gate2Approval({ projectId, projectState, status, onResum
         ) : (
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
             <Panel title="Folder Structure">
-              <pre className="whitespace-pre-wrap break-words font-mono text-xs leading-relaxed text-gray-700">
+              <pre className="whitespace-pre-wrap break-words font-mono text-xs leading-relaxed text-ink">
                 {folderTree}
               </pre>
             </Panel>
@@ -261,19 +261,19 @@ export default function Gate2Approval({ projectId, projectState, status, onResum
             <Panel title="Database Schema">
               <div className="space-y-3">
                 {dbDiagrams.length === 0 ? (
-                  <p className="text-xs text-gray-500">No Mermaid ER diagram found.</p>
+                  <p className="text-xs text-ink-3">No Mermaid ER diagram found.</p>
                 ) : (
                   dbDiagrams.map((code, i) => (
                     <MermaidDiagram key={i} code={code} title={`Diagram ${i + 1}`} />
                   ))
                 )}
                 {sqlBlocks.length > 0 && (
-                  <details className="rounded border border-gray-200 bg-gray-50 p-2">
-                    <summary className="cursor-pointer text-xs font-semibold text-gray-700">
+                  <details className="rounded border border-line bg-overlay p-2">
+                    <summary className="cursor-pointer text-xs font-semibold text-ink">
                       SQL CREATE TABLE statements
                     </summary>
                     {sqlBlocks.map((sql, i) => (
-                      <pre key={i} className="mt-2 whitespace-pre-wrap break-words font-mono text-xs text-gray-700">
+                      <pre key={i} className="mt-2 whitespace-pre-wrap break-words font-mono text-xs text-ink">
                         {sql}
                       </pre>
                     ))}
@@ -287,7 +287,7 @@ export default function Gate2Approval({ projectId, projectState, status, onResum
                 {securitySection ? (
                   <ReactMarkdown remarkPlugins={[remarkGfm]}>{securitySection}</ReactMarkdown>
                 ) : (
-                  <p className="text-xs text-gray-500">No security section found.</p>
+                  <p className="text-xs text-ink-3">No security section found.</p>
                 )}
               </div>
             </Panel>
@@ -295,10 +295,10 @@ export default function Gate2Approval({ projectId, projectState, status, onResum
         )}
       </div>
 
-      <div className="sticky bottom-0 space-y-3 border-t border-gray-100 bg-white pt-3">
+      <div className="sticky bottom-0 space-y-3 border-t border-line bg-raised pt-3">
         {confirmingCancel ? (
-          <div className="rounded border border-red-200 bg-red-50 p-3 space-y-2">
-            <p className="text-sm font-medium text-red-700">
+          <div className="rounded border border-err/35 bg-err/10 p-3 space-y-2">
+            <p className="text-sm font-medium text-err">
               Cancel this project? This cannot be undone.
             </p>
             <div className="flex gap-2">
@@ -306,7 +306,7 @@ export default function Gate2Approval({ projectId, projectState, status, onResum
                 type="button"
                 onClick={handleCancelProject}
                 disabled={isPending}
-                className="rounded bg-red-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-red-700"
+                className="rounded bg-red-600 px-3 py-1.5 text-xs font-semibold text-ink hover:bg-red-700"
               >
                 {submitting === 'reject' ? 'Cancelling...' : 'Yes, cancel project'}
               </button>
@@ -314,7 +314,7 @@ export default function Gate2Approval({ projectId, projectState, status, onResum
                 type="button"
                 onClick={() => setConfirmingCancel(false)}
                 disabled={isPending}
-                className="rounded border border-gray-300 bg-white px-3 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-50"
+                className="rounded border border-line-strong bg-raised px-3 py-1.5 text-xs font-semibold text-ink hover:bg-overlay"
               >
                 Keep project
               </button>
@@ -326,7 +326,7 @@ export default function Gate2Approval({ projectId, projectState, status, onResum
               type="button"
               onClick={handleApprove}
               disabled={isPending || regenAction}
-              className="flex-1 rounded bg-green-600 py-2 px-3 text-sm font-semibold text-white hover:bg-green-700 disabled:opacity-60"
+              className="flex-1 rounded bg-green-600 py-2 px-3 text-sm font-semibold text-ink hover:bg-green-700 disabled:opacity-60"
             >
               {submitting === 'approve' ? 'Sending...' : '✅ Approve & Continue'}
             </button>
@@ -337,7 +337,7 @@ export default function Gate2Approval({ projectId, projectState, status, onResum
               className={
                 editCapped
                   ? cappedButtonClass
-                  : 'flex-1 rounded border border-gray-300 bg-white py-2 px-3 text-sm font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-60'
+                  : 'flex-1 rounded border border-line-strong bg-raised py-2 px-3 text-sm font-semibold text-ink hover:bg-overlay disabled:opacity-60'
               }
             >
               {editCapped ? '⚠️ ' : '✏️ '}Request Changes
@@ -349,7 +349,7 @@ export default function Gate2Approval({ projectId, projectState, status, onResum
               className={
                 backCapped
                   ? cappedButtonClass
-                  : 'flex-1 rounded border border-gray-300 bg-white py-2 px-3 text-sm font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-60'
+                  : 'flex-1 rounded border border-line-strong bg-raised py-2 px-3 text-sm font-semibold text-ink hover:bg-overlay disabled:opacity-60'
               }
             >
               {backCapped ? '⚠️ ' : '⬅️ '}Go Back to Requirements
@@ -358,7 +358,7 @@ export default function Gate2Approval({ projectId, projectState, status, onResum
               type="button"
               onClick={() => setConfirmingCancel(true)}
               disabled={isPending || regenAction}
-              className="rounded border border-red-200 bg-white py-2 px-3 text-sm font-semibold text-red-600 hover:bg-red-50 disabled:opacity-60"
+              className="rounded border border-err/35 bg-raised py-2 px-3 text-sm font-semibold text-err hover:bg-err/10 disabled:opacity-60"
             >
               Cancel Project
             </button>

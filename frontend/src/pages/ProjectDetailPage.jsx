@@ -15,6 +15,17 @@ import PhaseProgress, { derivePhaseProgress } from '../components/PhaseProgress'
 import ProjectRecord from '../components/ProjectRecord'
 import { RestartDialog, DeleteDialog } from '../components/LifecycleDialogs'
 import { statusMeta, stageLabel } from '../lib/status'
+import { Badge, Button, Card, Dot, Eyebrow, Skeleton, SkeletonText } from '../components/ui'
+
+function formatTime(isoString) {
+  try {
+    return new Date(isoString).toLocaleTimeString([], {
+      hour: '2-digit', minute: '2-digit', second: '2-digit',
+    })
+  } catch {
+    return isoString
+  }
+}
 
 const MARKDOWN_AGENTS = new Set(['research', 'requirements', 'architecture', 'qa', 'planning'])
 
@@ -27,39 +38,137 @@ function EventOutput({ event, defaultExpanded = false }) {
   if (!fullContent) return null
 
   return (
-    <div className="my-2 rounded border border-gray-100 bg-gray-50">
+    <div className="my-2 overflow-hidden rounded border border-line bg-overlay/60">
       <button
         type="button"
         onClick={() => setExpanded((value) => !value)}
-        className="flex w-full items-center justify-between gap-3 border-b border-gray-200 px-3 py-2 text-left"
+        className="flex w-full items-center justify-between gap-3 border-b border-line px-3 py-2 text-left transition-colors hover:bg-overlay"
       >
-        <span className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">
-          Agent Output
-        </span>
-        <span className="text-[11px] font-semibold text-blue-600 hover:text-blue-700">
-          {expanded ? 'Collapse' : 'Click to view full output'}
+        <span className="eyebrow">Output</span>
+        <span className="font-mono text-[10px] font-semibold uppercase tracking-wider text-accent">
+          {expanded ? 'Collapse' : 'Expand'}
         </span>
       </button>
 
       {expanded ? (
         <div className="max-h-96 overflow-auto p-3">
           {isMarkdown ? (
-            <div className="prose prose-sm max-w-none">
+            <div className="markdown">
               <ReactMarkdown remarkPlugins={[remarkGfm]}>{fullContent}</ReactMarkdown>
             </div>
           ) : (
-            <pre className="whitespace-pre-wrap break-words font-mono text-sm leading-relaxed text-gray-600">
+            <pre className="whitespace-pre-wrap break-words font-mono text-[12px] leading-relaxed text-ink-2">
               {fullContent}
             </pre>
           )}
         </div>
       ) : (
         <div className="p-3">
-          <p className="whitespace-pre-wrap break-words font-mono text-xs leading-relaxed text-gray-500 line-clamp-2">
+          <p className="line-clamp-2 whitespace-pre-wrap break-words font-mono text-[11px] leading-relaxed text-ink-3">
             {shortPreview}
           </p>
         </div>
       )}
+    </div>
+  )
+}
+
+/**
+ * One event in the live stream.
+ *
+ * Entry animation comes from a CSS class, so it fires when the browser creates
+ * the node and never again. Events already on screen do not re-animate when a
+ * new one arrives, which is what keeps a 47-file coder phase from strobing.
+ */
+const EVENT_TONES = {
+  agent_complete: 'ok',
+  file_written: 'ok',
+  file_failed: 'err',
+  error: 'err',
+  agent_error: 'err',
+  file_blocked: 'idle',
+  gate_reached: 'accent',
+  validation_complete: 'alt',
+}
+
+const TONE_TEXT = {
+  ok: 'text-ok', err: 'text-err', idle: 'text-ink-3',
+  accent: 'text-accent', alt: 'text-alt', run: 'text-run',
+}
+
+function FeedEvent({ event }) {
+  const tone = EVENT_TONES[event.type] || 'run'
+
+  const node = (
+    <span className="absolute left-0 top-2 grid h-3 w-3 place-items-center rounded-full border-2 border-raised bg-raised">
+      <Dot tone={tone} />
+    </span>
+  )
+
+  // Per-file events: one line each, deliberately lighter than an agent card.
+  // Dozens arrive per phase, so they are a ticker, not a stack of cards.
+  if (event.type === 'file_written' || event.type === 'file_failed' || event.type === 'file_blocked') {
+    const mark = event.type === 'file_written' ? '✓' : event.type === 'file_failed' ? '✕' : '⊘'
+    return (
+      <div className="enter relative flex items-start gap-3 pl-7">
+        {node}
+        <div className="flex min-w-0 flex-1 items-center gap-2 py-0.5">
+          <span className={`text-[11px] ${TONE_TEXT[tone]}`}>{mark}</span>
+          <span className="truncate font-mono text-[11px] text-ink-2">{event.filepath}</span>
+          {event.total != null ? (
+            <span className="ml-auto shrink-0 font-mono text-[10px] tabular-nums text-ink-3">
+              {event.done}/{event.total}
+            </span>
+          ) : null}
+        </div>
+      </div>
+    )
+  }
+
+  if (event.type === 'validation_complete') {
+    const below = event.below_threshold
+    return (
+      <div className="enter relative flex items-start gap-3 pl-7">
+        {node}
+        <Card className="min-w-0 flex-1 p-3">
+          <div className="flex items-center gap-2">
+            <Eyebrow>Automated checks</Eyebrow>
+            {below && <Badge tone="warn">Below threshold</Badge>}
+            <span className="ml-auto font-mono text-[10px] text-ink-3">
+              {event.files_checked} files
+            </span>
+          </div>
+          <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-0.5 font-mono text-[11px] text-ink-2">
+            <span>{event.syntax_errors} unresolved</span>
+            <span>{event.auto_repaired} repaired</span>
+            <span>{event.import_warnings || 0} import warnings</span>
+            {event.artifact_errors > 0 && <span>{event.artifact_errors} invalid JSON/YAML</span>}
+            <span className="text-ink-3">
+              repairs {event.repair_calls_spent}/{event.repair_ceiling}
+            </span>
+          </div>
+        </Card>
+      </div>
+    )
+  }
+
+  return (
+    <div className="enter relative flex items-start gap-3 pl-7">
+      {node}
+      <Card className="min-w-0 flex-1 p-3">
+        <div className="flex items-start justify-between gap-2">
+          <h4 className="text-[13px] font-semibold capitalize text-ink">
+            {event.agent ? event.agent.replace(/_/g, ' ') : 'System'}
+          </h4>
+          <Badge tone={tone}>{event.type.replace(/_/g, ' ')}</Badge>
+        </div>
+
+        {(event.content || event.preview || event.output_preview || event.message) && (
+          <EventOutput event={event} />
+        )}
+
+        <div className="mt-1.5 font-mono text-[10px] text-ink-3">{formatTime(event.timestamp)}</div>
+      </Card>
     </div>
   )
 }
@@ -309,70 +418,13 @@ export default function ProjectDetailPage() {
     setTimeout(fetchMetadata, 800)
   }
 
-  // Helper for border and badge colors
-  const getEventStyle = (type) => {
-    switch (type) {
-      case 'agent_complete':
-      case 'pipeline_complete':
-        return {
-          border: 'border-l-4 border-green-500',
-          badge: 'bg-green-100 text-green-800'
-        }
-      case 'gate_reached':
-        return {
-          border: 'border-l-4 border-orange-500',
-          badge: 'bg-orange-100 text-orange-800'
-        }
-      case 'file_written':
-        return {
-          border: 'border-l-4 border-blue-500',
-          badge: 'bg-blue-100 text-blue-800'
-        }
-      // Day 22: automated checks get their own colour so the pass reads as a
-      // distinct step between coding and QA, not as another agent card.
-      case 'validation_complete':
-        return {
-          border: 'border-l-4 border-purple-500',
-          badge: 'bg-purple-100 text-purple-800'
-        }
-      case 'error':
-      case 'agent_error':
-        return {
-          border: 'border-l-4 border-red-500',
-          badge: 'bg-red-100 text-red-800'
-        }
-      case 'rate_limited':
-        return {
-          border: 'border-l-4 border-amber-500',
-          badge: 'bg-amber-100 text-amber-800'
-        }
-      case 'agent_skipped':
-        return {
-          border: 'border-l-4 border-gray-400',
-          badge: 'bg-gray-200 text-gray-700'
-        }
-      default:
-        return {
-          border: 'border-l-4 border-gray-300',
-          badge: 'bg-gray-100 text-gray-800'
-        }
-    }
-  }
 
-  const formatTime = (isoString) => {
-    try {
-      const d = new Date(isoString)
-      return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
-    } catch (e) {
-      return isoString
-    }
-  }
 
   if (metadataLoading && events.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-[calc(100vh-64px)] p-6 bg-[#f9fafb]">
-        <div className="flex items-center space-x-3 text-gray-500 animate-pulse">
-          <svg className="animate-spin h-6 w-6 text-blue-600" fill="none" viewBox="0 0 24 24">
+      <div className="flex flex-col items-center justify-center min-h-[calc(100vh-64px)] p-6 bg-surface">
+        <div className="flex items-center space-x-3 text-ink-3 animate-pulse">
+          <svg className="animate-spin h-6 w-6 text-run" fill="none" viewBox="0 0 24 24">
             <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
             <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
           </svg>
@@ -384,11 +436,11 @@ export default function ProjectDetailPage() {
 
   if (metadataError && events.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-[calc(100vh-64px)] p-6 bg-[#f9fafb] text-center space-y-4">
-        <div className="text-red-500 text-4xl">⚠️</div>
-        <h2 className="text-lg font-bold text-gray-900">Failed to Load Project</h2>
-        <p className="text-sm text-gray-600">{metadataError}</p>
-        <Link to="/" className="text-sm text-blue-600 hover:underline">
+      <div className="flex flex-col items-center justify-center min-h-[calc(100vh-64px)] p-6 bg-surface text-center space-y-4">
+        <div className="text-err text-4xl">⚠️</div>
+        <h2 className="text-lg font-bold text-ink">Failed to Load Project</h2>
+        <p className="text-sm text-ink-2">{metadataError}</p>
+        <Link to="/" className="text-sm text-run hover:underline">
           &larr; Back to Dashboard
         </Link>
       </div>
@@ -412,21 +464,22 @@ export default function ProjectDetailPage() {
     ['human_gate_1', 'human_gate_2', 'human_gate_3', 'human_gate_4'].includes(gateName)
 
   return (
-    <div className="flex flex-col h-full bg-[#f9fafb]">
+    <div className="flex h-full flex-col bg-surface">
       {/* Project Header Bar */}
-      <div className="bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between shadow-xs flex-shrink-0">
+      <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-line bg-raised px-4 py-3 sm:px-6">
         <div>
-          <h1 className="text-xl font-bold text-gray-900 truncate">{name}</h1>
-          <p className="text-xs text-gray-500 truncate max-w-2xl mt-0.5">
+          <h1 className="truncate text-lg font-semibold tracking-tight text-ink">{name}</h1>
+          <p className="mt-0.5 max-w-2xl truncate text-[12px] text-ink-3">
             Brief: {projectMetadata?.brief}
           </p>
         </div>
-        <div className="flex items-center space-x-3">
-          <span className={`px-2.5 py-1 text-xs font-semibold rounded-full border ${statusMeta(displayStatus).badge}`}>
+        <div className="flex items-center gap-2">
+          <Badge tone={statusMeta(displayStatus).tone}>
+            <Dot tone={statusMeta(displayStatus).tone} />
             {statusMeta(displayStatus).label}
-          </span>
+          </Badge>
           {fileCount > 0 && (
-            <span className="px-2.5 py-1 text-xs font-semibold rounded-full bg-green-100 text-green-800 border border-green-200">
+            <span className="px-2.5 py-1 text-xs font-semibold rounded-full bg-ok/10 text-ok border border-ok/35">
               {fileCount} files generated
             </span>
           )}
@@ -435,20 +488,20 @@ export default function ProjectDetailPage() {
             onClick={() => setRestarting(true)}
             disabled={displayStatus === 'running'}
             title={displayStatus === 'running' ? 'Cannot restart while the pipeline is running' : 'Re-run from a chosen stage'}
-            className="rounded border border-gray-200 bg-gray-50 px-3 py-1.5 text-xs font-semibold text-gray-600 transition-colors hover:text-gray-900 disabled:opacity-40"
+            className="rounded border border-line bg-overlay px-3 py-1.5 text-xs font-semibold text-ink-2 transition-colors hover:text-ink disabled:opacity-40"
           >
             Restart
           </button>
           <button
             type="button"
             onClick={() => setDeleting(true)}
-            className="rounded border border-gray-200 bg-gray-50 px-3 py-1.5 text-xs font-semibold text-red-600 transition-colors hover:bg-red-50"
+            className="rounded border border-line bg-overlay px-3 py-1.5 text-xs font-semibold text-err transition-colors hover:bg-err/10"
           >
             Delete
           </button>
           <Link
             to="/"
-            className="text-xs font-semibold text-gray-600 hover:text-gray-900 bg-gray-50 border border-gray-200 px-3 py-1.5 rounded transition-colors"
+            className="text-xs font-semibold text-ink-2 hover:text-ink bg-overlay border border-line px-3 py-1.5 rounded transition-colors"
           >
             Dashboard
           </Link>
@@ -474,7 +527,7 @@ export default function ProjectDetailPage() {
           a stage completes. */}
       {(displayStatus === 'completed' || displayStatus === 'awaiting_approval')
         && !gateName.includes('gate_4') && (
-        <div className="border-b border-gray-200 bg-[#f9fafb] px-6 py-3">
+        <div className="border-b border-line px-4 py-3 sm:px-6">
           <div className="mx-auto max-w-6xl">
             <MetricsPanel projectId={projectId} compact />
           </div>
@@ -484,12 +537,12 @@ export default function ProjectDetailPage() {
       {/* Zombie card: the server died mid-node. The checkpoint still holds a
           resumable position, so this offers Resume rather than a dead spinner. */}
       {displayStatus === 'interrupted' && (
-        <div className="border-b border-gray-200 bg-[#f9fafb] px-6 py-3">
-          <div className="mx-auto max-w-6xl rounded-lg border border-purple-200 bg-purple-50 p-4">
+        <div className="border-b border-line px-4 py-3 sm:px-6">
+          <div className="mx-auto max-w-6xl rounded-lg border border-alt/35 bg-alt/10 p-4">
             <div className="flex items-center justify-between gap-4">
               <div>
-                <p className="text-sm font-bold text-purple-900">This run was interrupted</p>
-                <p className="mt-0.5 text-xs text-purple-700">
+                <p className="text-sm font-bold text-alt">This run was interrupted</p>
+                <p className="mt-0.5 text-xs text-alt">
                   The backend stopped while{' '}
                   <span className="font-semibold">{stageLabel(projectMetadata?.position?.next_node)}</span>{' '}
                   was running. Nothing was lost — the last checkpoint is intact and the
@@ -500,7 +553,7 @@ export default function ProjectDetailPage() {
                 type="button"
                 onClick={handleResumeInterrupted}
                 disabled={resuming}
-                className="flex-shrink-0 rounded bg-purple-600 px-4 py-2 text-sm font-semibold text-white hover:bg-purple-700 disabled:opacity-50"
+                className="flex-shrink-0 rounded bg-overlay px-4 py-2 text-sm font-semibold text-ink hover:bg-line disabled:opacity-50"
               >
                 {resuming ? 'Resuming…' : 'Resume'}
               </button>
@@ -510,7 +563,7 @@ export default function ProjectDetailPage() {
       )}
 
       {errorInfo && (
-        <div className="border-b border-gray-200 bg-[#f9fafb] px-6 py-3">
+        <div className="border-b border-line px-4 py-3 sm:px-6">
           <div className="mx-auto max-w-6xl">
             <ErrorCard info={errorInfo} onRecover={handleRecover} />
           </div>
@@ -521,7 +574,7 @@ export default function ProjectDetailPage() {
           Suppressed at gate 4, which renders its own richer file browser. */}
       {projectMetadata && !isFullWidthGate
         && ['completed', 'cancelled', 'interrupted', 'error_paused'].includes(displayStatus) && (
-        <div className="border-b border-gray-200 bg-[#f9fafb] px-6 py-3">
+        <div className="border-b border-line px-4 py-3 sm:px-6">
           <div className="mx-auto max-w-6xl">
             <ProjectRecord projectId={projectId} projectState={projectMetadata} />
           </div>
@@ -530,7 +583,7 @@ export default function ProjectDetailPage() {
 
       {isFullWidthGate ? (
         <div className="flex-1 overflow-y-auto p-6">
-          <div className="mx-auto max-w-6xl rounded-lg border border-orange-200 bg-white p-6 shadow-sm">
+          <div className="mx-auto max-w-6xl rounded-lg border border-accent/35 bg-raised p-6 ">
             {gateName === 'human_gate_1' ? (
               <Gate1Approval
                 projectId={projectId}
@@ -571,21 +624,21 @@ export default function ProjectDetailPage() {
       /* Main Two-Column Layout */
       <div className="flex-1 flex overflow-hidden">
         {/* Left Column: Live Event Timeline */}
-        <div className="w-[65%] flex flex-col h-full border-r border-gray-200 bg-white">
-          <div className="bg-gray-50 px-6 py-3 border-b border-gray-200 flex justify-between items-center">
-            <h3 className="text-sm font-semibold text-gray-700">Live Agent Stream</h3>
+        <div className="flex h-full w-full flex-col border-r border-line bg-surface lg:w-[65%]">
+          <div className="flex shrink-0 items-center justify-between border-b border-line bg-raised px-4 py-2.5 sm:px-6">
+            <h3 className="eyebrow">Live agent stream</h3>
             <div className="flex items-center gap-3">
-              <span className="text-xs text-gray-500 bg-gray-200 px-2 py-0.5 rounded font-mono">
+              <span className="text-xs text-ink-3 bg-overlay px-2 py-0.5 rounded font-mono">
                 Status: {status}
               </span>
               {/* File counter badge */}
-              <span className="text-xs text-gray-600 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded font-mono">
+              <span className="text-xs text-ink-2 bg-run/10 border border-run/35 px-2 py-0.5 rounded font-mono">
                 {events.filter(e => e.type === 'file_written').length} files generated
               </span>
             </div>
           </div>
 
-          <div className="flex-1 overflow-y-auto p-6 space-y-4">
+          <div className="flex-1 space-y-3 overflow-y-auto p-4 sm:p-5">
             {phaseProgress.length > 0 && (
               <div className="space-y-2 mb-2">
                 {phaseProgress.map((p) => (
@@ -595,125 +648,21 @@ export default function ProjectDetailPage() {
             )}
             {events.length === 0 && status === 'connecting' ? (
               <div className="flex flex-col items-center justify-center h-full text-center space-y-4 animate-pulse">
-                <svg className="animate-spin h-8 w-8 text-blue-600" fill="none" viewBox="0 0 24 24">
+                <svg className="animate-spin h-8 w-8 text-run" fill="none" viewBox="0 0 24 24">
                   <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                   <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
                 </svg>
-                <div className="text-sm font-medium text-gray-600">Connecting to pipeline...</div>
+                <div className="text-sm font-medium text-ink-2">Connecting to pipeline...</div>
               </div>
             ) : events.length === 0 ? (
-              <div className="flex flex-col items-center justify-center h-full text-center text-gray-500">
+              <div className="flex flex-col items-center justify-center h-full text-center text-ink-3">
                 <p className="text-sm italic">No events streamed yet. Starting up...</p>
               </div>
             ) : (
-              <div className="space-y-4 relative before:absolute before:top-2 before:bottom-2 before:left-[13px] before:w-[2px] before:bg-gray-100">
-                {events.map((event, index) => {
-                  const styles = getEventStyle(event.type)
-                  
-                  // Day 22 automated-checks card: counts at a glance, amber when
-                  // the run finished below the quality threshold.
-                  if (event.type === 'validation_complete') {
-                    const importWarnings = event.import_warnings || 0
-                    const below = event.below_threshold
-                    return (
-                      <div key={index} className="relative flex items-start space-x-4 pl-8">
-                        <span className={`absolute left-0.5 top-1.5 h-6.5 w-6.5 rounded-full border-4 border-white flex items-center justify-center shadow-xs ${below ? 'bg-amber-500' : 'bg-purple-500'}`} />
-                        <div className={`flex-1 bg-white p-3 rounded-lg border shadow-xs border-l-4 ${below ? 'border-amber-500 border-amber-100' : 'border-purple-500 border-purple-100'}`}>
-                          <div className="flex items-center gap-2">
-                            <span className="text-sm">{below ? '⚠' : '🔍'}</span>
-                            <span className="text-xs font-bold uppercase tracking-wide text-gray-800">
-                              Automated Checks
-                            </span>
-                            <span className="ml-auto font-mono text-[11px] text-gray-400">
-                              {event.files_checked} files
-                            </span>
-                          </div>
-                          <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-gray-600">
-                            <span>{event.syntax_errors} unresolved syntax</span>
-                            <span>{event.auto_repaired} auto-repaired</span>
-                            <span>{importWarnings} import warnings</span>
-                            {event.artifact_errors > 0 && <span>{event.artifact_errors} invalid JSON/YAML</span>}
-                            <span className="text-gray-400">
-                              repairs {event.repair_calls_spent}/{event.repair_ceiling}
-                            </span>
-                          </div>
-                          <div className="mt-1 text-[10px] font-medium text-gray-400">
-                            {formatTime(event.timestamp)}
-                          </div>
-                        </div>
-                      </div>
-                    )
-                  }
-
-                  // Special rendering for per-file events (written / failed / blocked).
-                  if (event.type === 'file_written' || event.type === 'file_failed' || event.type === 'file_blocked') {
-                    const kind = event.type === 'file_written'
-                      ? { dot: 'bg-green-500', border: 'border-green-500', card: 'border-green-100', icon: '✓', iconColor: 'text-green-500' }
-                      : event.type === 'file_failed'
-                        ? { dot: 'bg-red-500', border: 'border-red-500', card: 'border-red-100', icon: '✕', iconColor: 'text-red-500' }
-                        : { dot: 'bg-gray-400', border: 'border-gray-400', card: 'border-gray-200', icon: '⊘', iconColor: 'text-gray-500' }
-                    return (
-                      <div key={index} className="relative flex items-start space-x-4 pl-8">
-                        <span className={`absolute left-0.5 top-1.5 h-6.5 w-6.5 rounded-full border-4 border-white flex items-center justify-center shadow-xs ${kind.dot}`} />
-                        <div className={`flex-1 bg-white p-3 rounded-lg border ${kind.card} shadow-xs border-l-4 ${kind.border}`}>
-                          <div className="flex items-center gap-2">
-                            <span className={`${kind.iconColor} text-sm`}>{event.type === 'file_blocked' ? '⊘' : kind.icon}</span>
-                            <span className="font-mono text-xs text-gray-700">{event.filepath}</span>
-                            {event.total != null ? (
-                              <span className="text-gray-400 text-xs ml-auto font-mono">
-                                {event.done}/{event.total}
-                              </span>
-                            ) : event.progress ? (
-                              <span className="text-gray-400 text-xs ml-auto font-mono">{event.progress}</span>
-                            ) : null}
-                          </div>
-                          {(event.error || event.reason) && (
-                            <div className="text-[11px] text-gray-500 mt-1 font-mono truncate">
-                              {event.type === 'file_blocked' ? event.reason : event.error}
-                            </div>
-                          )}
-                          <div className="text-[10px] text-gray-400 mt-1 font-medium">
-                            {formatTime(event.timestamp)}
-                          </div>
-                        </div>
-                      </div>
-                    )
-                  }
-                  
-                  return (
-                    <div 
-                      key={index} 
-                      className={`relative flex items-start space-x-4 pl-8 group`}
-                    >
-                      {/* Timeline Dot */}
-                      <span className={`absolute left-0.5 top-1.5 h-6.5 w-6.5 rounded-full border-4 border-white flex items-center justify-center shadow-xs ${
-                        event.type === 'agent_complete' ? 'bg-green-500' :
-                        event.type === 'gate_reached' ? 'bg-orange-500' :
-                        event.type === 'error' ? 'bg-red-500' : 'bg-gray-400'
-                      }`} />
-
-                      {/* Event Card */}
-                      <div className={`flex-1 bg-white p-4 rounded-lg border border-gray-100 shadow-xs hover:shadow-sm transition-all duration-200 ${styles.border}`}>
-                        <div className="flex justify-between items-start mb-1">
-                          <h4 className="text-sm font-bold text-gray-800 capitalize">
-                            {event.agent ? event.agent.replace('_', ' ') : 'System Agent'}
-                          </h4>
-                          <span className={`px-2 py-0.5 text-[10px] font-semibold rounded uppercase tracking-wide ${styles.badge}`}>
-                            {event.type.replace('_', ' ')}
-                          </span>
-                        </div>
-
-                        {(event.content || event.preview || event.output_preview || event.message) && (
-                          <EventOutput event={event} />
-                        )}
-
-                        <div className="text-[10px] text-gray-400 mt-2 font-medium">
-                          {formatTime(event.timestamp)}
-                        </div>
-                      </div>
-                    </div>
-                  )
-                })}
+              <div className="relative space-y-2.5 before:absolute before:top-2 before:bottom-2 before:left-[5.5px] before:w-px before:bg-line">
+                {events.map((event, index) => (
+                  <FeedEvent key={index} event={event} />
+                ))}
                 <div ref={bottomRef} />
               </div>
             )}
@@ -721,7 +670,7 @@ export default function ProjectDetailPage() {
         </div>
 
         {/* Right Column: Gate Review or Indicator */}
-        <div className="w-[35%] bg-gray-50 p-6 overflow-y-auto">
+        <div className="hidden w-[35%] overflow-y-auto bg-surface p-5 lg:block">
           <ApprovalGate
             status={displayStatus}
             gateEvent={activeGateEvent}

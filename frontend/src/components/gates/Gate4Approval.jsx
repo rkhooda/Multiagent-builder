@@ -17,9 +17,9 @@ function formatDuration(seconds) {
 
 function Stat({ label, children }) {
   return (
-    <div className="rounded border border-gray-200 bg-gray-50 px-3 py-2">
-      <div className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">{label}</div>
-      <div className="mt-0.5 text-sm font-bold text-gray-800">{children}</div>
+    <div className="rounded border border-line bg-overlay px-3 py-2">
+      <div className="text-[10px] font-semibold uppercase tracking-wide text-ink-3">{label}</div>
+      <div className="mt-0.5 text-sm font-bold text-ink">{children}</div>
     </div>
   )
 }
@@ -45,56 +45,56 @@ function QualityThresholdBanner({ report }) {
   ].filter(([, count]) => count > 0)
 
   return (
-    <div className="rounded-lg border border-amber-300 bg-amber-50 p-3">
+    <div className="rounded-lg border border-warn/45 bg-warn/10 p-3">
       <div className="flex items-start gap-2">
         <span aria-hidden="true" className="text-base leading-none">⚠</span>
         <div className="flex-1">
-          <p className="text-sm font-semibold text-amber-900">
+          <p className="text-sm font-semibold text-warn">
             Code quality below threshold: {pct}% of files have unresolved issues.
           </p>
-          <p className="mt-0.5 text-xs text-amber-800">
+          <p className="mt-0.5 text-xs text-warn">
             Consider reviewing the architecture or replanning before downloading.
             {' '}(Threshold: {thresholdPct}%. Download remains available.)
           </p>
           {report.repair_budget_exhausted && (
-            <p className="mt-1 text-xs font-medium text-amber-900">
+            <p className="mt-1 text-xs font-medium text-warn">
               Repair budget exhausted ({report.repair_calls_spent}/{report.repair_ceiling} calls).
               A run needing this many repairs usually points at the prompts or architecture.
             </p>
           )}
           {(report.degraded_tools || []).map((tool) => (
-            <p key={tool} className="mt-1 text-xs text-amber-800">Reduced checking: {tool}</p>
+            <p key={tool} className="mt-1 text-xs text-warn">Reduced checking: {tool}</p>
           ))}
           <button
             type="button"
             onClick={() => setShowBreakdown((open) => !open)}
             aria-expanded={showBreakdown}
-            className="mt-1.5 text-xs font-semibold text-amber-900 underline hover:text-amber-700"
+            className="mt-1.5 text-xs font-semibold text-warn underline hover:text-amber-700"
           >
             {showBreakdown ? 'Hide breakdown' : 'Show breakdown'}
           </button>
           {showBreakdown && (
-            <div className="mt-2 rounded border border-amber-200 bg-white p-2">
+            <div className="mt-2 rounded border border-warn/35 bg-raised p-2">
               <table className="w-full text-xs">
                 <tbody>
                   {rows.map(([label, count]) => (
                     <tr key={label}>
-                      <td className="py-0.5 pr-3 text-gray-700">{label}</td>
-                      <td className="py-0.5 text-right font-semibold text-gray-900">{count}</td>
+                      <td className="py-0.5 pr-3 text-ink">{label}</td>
+                      <td className="py-0.5 text-right font-semibold text-ink">{count}</td>
                     </tr>
                   ))}
-                  <tr className="border-t border-amber-200">
-                    <td className="py-0.5 pr-3 font-medium text-gray-700">
+                  <tr className="border-t border-warn/35">
+                    <td className="py-0.5 pr-3 font-medium text-ink">
                       Files affected / checked
                     </td>
-                    <td className="py-0.5 text-right font-bold text-gray-900">
+                    <td className="py-0.5 text-right font-bold text-ink">
                       {(report.unresolved_files || []).length} / {report.files_checked}
                     </td>
                   </tr>
                 </tbody>
               </table>
               {(report.unresolved_files || []).length > 0 && (
-                <ul className="mt-1.5 max-h-32 space-y-0.5 overflow-y-auto font-mono text-[10px] text-gray-600">
+                <ul className="mt-1.5 max-h-32 space-y-0.5 overflow-y-auto font-mono text-[10px] text-ink-2">
                   {report.unresolved_files.map((path) => <li key={path}>{path}</li>)}
                 </ul>
               )}
@@ -111,27 +111,27 @@ function SummaryCard({ filesData, projectState, severityCounts }) {
   const models = [...new Set(Object.values(projectState?.agent_models || {}))]
 
   return (
-    <div className="rounded-lg border border-gray-200 bg-white p-4">
+    <div className="rounded-lg border border-line bg-raised p-4">
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
         <Stat label="Files Generated">{filesData ? filesData.total_files : '…'}</Stat>
         <Stat label="Lines of Code">{filesData ? filesData.total_lines.toLocaleString() : '…'}</Stat>
         <Stat label="QA Issues">
           {projectState?.qa_issues_count === -1 ? (
-            <span className="text-amber-600">Not reviewed</span>
+            <span className="text-warn">Not reviewed</span>
           ) : (
             <>
               {totalIssues || projectState?.qa_issues_count || 0}
-              <span className="ml-1.5 text-[10px] font-semibold text-gray-500">
-                {severityCounts.critical > 0 && <span className="text-red-600">{severityCounts.critical} crit </span>}
-                {severityCounts.warnings > 0 && <span className="text-orange-600">{severityCounts.warnings} warn </span>}
-                {severityCounts.info > 0 && <span className="text-blue-600">{severityCounts.info} info</span>}
+              <span className="ml-1.5 text-[10px] font-semibold text-ink-3">
+                {severityCounts.critical > 0 && <span className="text-err">{severityCounts.critical} crit </span>}
+                {severityCounts.warnings > 0 && <span className="text-accent">{severityCounts.warnings} warn </span>}
+                {severityCounts.info > 0 && <span className="text-run">{severityCounts.info} info</span>}
               </span>
             </>
           )}
         </Stat>
         <Stat label="Total Pipeline Time">
           {formatDuration(projectState?.generation_seconds)}
-          <span className="ml-1 text-[10px] font-normal text-gray-400">incl. reviews</span>
+          <span className="ml-1 text-[10px] font-normal text-ink-3">incl. reviews</span>
         </Stat>
         {/* The old "Token Cost $0.00" stat moved to MetricsPanel below: on free
             tiers the dollar figure is always zero and says nothing, while the
@@ -139,9 +139,9 @@ function SummaryCard({ filesData, projectState, severityCounts }) {
       </div>
       {models.length > 0 && (
         <div className="mt-3 flex flex-wrap items-center gap-1.5">
-          <span className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">Models used:</span>
+          <span className="text-[10px] font-semibold uppercase tracking-wide text-ink-3">Models used:</span>
           {models.map((model) => (
-            <span key={model} className="rounded bg-gray-100 px-2 py-0.5 font-mono text-[10px] text-gray-600">
+            <span key={model} className="rounded bg-overlay px-2 py-0.5 font-mono text-[10px] text-ink-2">
               {model}
             </span>
           ))}
@@ -156,18 +156,18 @@ function FixModal({ filepath, findings, dependentCount, submitting, error, onSub
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="w-full max-w-lg space-y-3 rounded-lg bg-white p-5 shadow-xl">
-        <h4 className="text-sm font-bold text-gray-900">Request AI Fix</h4>
-        <p className="break-all font-mono text-xs text-gray-600">{filepath}</p>
+      <div className="w-full max-w-lg space-y-3 rounded-lg bg-raised p-5 shadow-xl">
+        <h4 className="text-sm font-bold text-ink">Request AI Fix</h4>
+        <p className="break-all font-mono text-xs text-ink-2">{filepath}</p>
 
         {dependentCount > 0 && (
-          <div className="rounded border border-orange-200 bg-orange-50 px-3 py-2 text-xs font-medium text-orange-700">
+          <div className="rounded border border-accent/35 bg-accent-soft px-3 py-2 text-xs font-medium text-accent">
             ⚠ {dependentCount} file{dependentCount > 1 ? 's' : ''} import{dependentCount > 1 ? '' : 's'} this one —
             review {dependentCount > 1 ? 'them' : 'it'} after the fix. Dependents are not regenerated automatically.
           </div>
         )}
 
-        <label className="block text-xs font-semibold text-gray-600">
+        <label className="block text-xs font-semibold text-ink-2">
           What needs to be fixed in this file?
         </label>
         <textarea
@@ -176,12 +176,12 @@ function FixModal({ filepath, findings, dependentCount, submitting, error, onSub
           rows={4}
           autoFocus
           placeholder="Describe the fix, or click a QA finding below to include it…"
-          className="w-full rounded border border-gray-300 px-3 py-2 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-1 focus:ring-purple-500"
+          className="w-full rounded border border-line-strong px-3 py-2 text-sm text-ink placeholder-gray-400 focus:outline-none focus:ring-1 focus:ring-purple-500"
         />
 
         {findings.length > 0 && (
           <div className="space-y-1.5">
-            <span className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">
+            <span className="text-[11px] font-semibold uppercase tracking-wide text-ink-3">
               QA findings for this file — click to include
             </span>
             <div className="flex flex-wrap gap-1.5">
@@ -193,7 +193,7 @@ function FixModal({ filepath, findings, dependentCount, submitting, error, onSub
                     setInstruction((prev) => (prev ? `${prev.trimEnd()}\n- ${finding.description}` : `- ${finding.description}`))
                   }
                   title={finding.description}
-                  className="max-w-full truncate rounded-full border border-orange-200 bg-orange-50 px-2.5 py-1 text-left text-[11px] text-orange-800 hover:bg-orange-100"
+                  className="max-w-full truncate rounded-full border border-accent/35 bg-accent-soft px-2.5 py-1 text-left text-[11px] text-accent hover:bg-orange-100"
                 >
                   {finding.description.slice(0, 80)}
                   {finding.description.length > 80 ? '…' : ''}
@@ -203,14 +203,14 @@ function FixModal({ filepath, findings, dependentCount, submitting, error, onSub
           </div>
         )}
 
-        {error && <p className="text-xs font-medium text-red-600">{error}</p>}
+        {error && <p className="text-xs font-medium text-err">{error}</p>}
 
         <div className="flex gap-2 pt-1">
           <button
             type="button"
             onClick={() => onSubmit(instruction)}
             disabled={submitting || instruction.trim().length < 5}
-            className="flex-1 rounded bg-purple-600 py-2 px-3 text-sm font-semibold text-white hover:bg-purple-700 disabled:cursor-not-allowed disabled:opacity-50"
+            className="flex-1 rounded bg-overlay py-2 px-3 text-sm font-semibold text-ink hover:bg-line disabled:cursor-not-allowed disabled:opacity-50"
           >
             {submitting ? 'Fixing… this can take a minute' : 'Fix This File'}
           </button>
@@ -218,7 +218,7 @@ function FixModal({ filepath, findings, dependentCount, submitting, error, onSub
             type="button"
             onClick={onClose}
             disabled={submitting}
-            className="rounded border border-gray-300 bg-white py-2 px-3 text-sm font-semibold text-gray-700 hover:bg-gray-50"
+            className="rounded border border-line-strong bg-raised py-2 px-3 text-sm font-semibold text-ink hover:bg-overlay"
           >
             Cancel
           </button>
@@ -386,21 +386,21 @@ export default function Gate4Approval({ projectId, projectState, status, onResum
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-2">
-        <span className="h-2.5 w-2.5 animate-pulse rounded-full bg-orange-500" />
-        <h3 className="text-base font-bold uppercase tracking-wide text-gray-900">
+        <span className="h-2.5 w-2.5 animate-pulse rounded-full bg-accent" />
+        <h3 className="text-base font-bold uppercase tracking-wide text-ink">
           Gate 4 — Final Review
         </h3>
         <button
           type="button"
           onClick={handleDownload}
-          className="ml-auto rounded bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
+          className="ml-auto rounded bg-overlay px-4 py-2 text-sm font-semibold text-ink hover:bg-line"
         >
           ⬇ Download Project ZIP
         </button>
       </div>
 
       {downloadToast && (
-        <div className="rounded border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-medium text-blue-700">
+        <div className="rounded border border-run/35 bg-run/10 px-3 py-2 text-xs font-medium text-run">
           Preparing ZIP… your browser will save{' '}
           {filesData ? `${filesData.total_files} files (${formatBytes(filesData.total_bytes)})` : 'the project'} shortly.
         </div>
@@ -422,17 +422,17 @@ export default function Gate4Approval({ projectId, projectState, status, onResum
         )]
         if (notGenerated.length === 0) return null
         return (
-          <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-2.5 text-xs font-medium text-amber-800">
+          <div className="rounded-lg border border-warn/35 bg-warn/10 px-4 py-2.5 text-xs font-medium text-warn">
             ⚠️ {notGenerated.length} file{notGenerated.length > 1 ? 's' : ''} did not generate
             (failed or blocked by a failed dependency) and {notGenerated.length > 1 ? 'were' : 'was'} written
             as a placeholder — review the QA report and use Request AI Fix to regenerate:{' '}
-            <span className="font-mono text-amber-700">{notGenerated.slice(0, 4).join(', ')}{notGenerated.length > 4 ? ` +${notGenerated.length - 4} more` : ''}</span>
+            <span className="font-mono text-warn">{notGenerated.slice(0, 4).join(', ')}{notGenerated.length > 4 ? ` +${notGenerated.length - 4} more` : ''}</span>
           </div>
         )
       })()}
 
       {/* Tabs */}
-      <div className="flex gap-1 border-b border-gray-200">
+      <div className="flex gap-1 border-b border-line">
         {[
           { key: 'files', label: `Files${filesData ? ` (${filesData.total_files})` : ''}` },
           {
@@ -448,8 +448,8 @@ export default function Gate4Approval({ projectId, projectState, status, onResum
             onClick={() => setActiveTab(tab.key)}
             className={`rounded-t border-b-2 px-4 py-2 text-sm font-semibold ${
               activeTab === tab.key
-                ? 'border-blue-600 text-blue-700'
-                : 'border-transparent text-gray-500 hover:text-gray-700'
+                ? 'border-blue-600 text-run'
+                : 'border-transparent text-ink-3 hover:text-ink'
             }`}
           >
             {tab.label}
@@ -459,7 +459,7 @@ export default function Gate4Approval({ projectId, projectState, status, onResum
 
       {activeTab === 'files' ? (
         filesError ? (
-          <p className="text-sm text-red-600">Failed to load files: {filesError}</p>
+          <p className="text-sm text-err">Failed to load files: {filesError}</p>
         ) : (
           <FileBrowser
             projectId={projectId}
@@ -482,16 +482,16 @@ export default function Gate4Approval({ projectId, projectState, status, onResum
       )}
 
       {/* Final actions */}
-      <div className="sticky bottom-0 border-t border-gray-100 bg-white pt-3">
+      <div className="sticky bottom-0 border-t border-line bg-raised pt-3">
         {confirmingCancel ? (
-          <div className="space-y-2 rounded border border-red-200 bg-red-50 p-3">
-            <p className="text-sm font-medium text-red-700">Cancel this project? This cannot be undone.</p>
+          <div className="space-y-2 rounded border border-err/35 bg-err/10 p-3">
+            <p className="text-sm font-medium text-err">Cancel this project? This cannot be undone.</p>
             <div className="flex gap-2">
               <button
                 type="button"
                 onClick={handleCancelProject}
                 disabled={isPending}
-                className="rounded bg-red-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-red-700 disabled:opacity-60"
+                className="rounded bg-red-600 px-3 py-1.5 text-xs font-semibold text-ink hover:bg-red-700 disabled:opacity-60"
               >
                 {submitting === 'reject' ? 'Cancelling…' : 'Yes, cancel project'}
               </button>
@@ -499,7 +499,7 @@ export default function Gate4Approval({ projectId, projectState, status, onResum
                 type="button"
                 onClick={() => setConfirmingCancel(false)}
                 disabled={isPending}
-                className="rounded border border-gray-300 bg-white px-3 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-50"
+                className="rounded border border-line-strong bg-raised px-3 py-1.5 text-xs font-semibold text-ink hover:bg-overlay"
               >
                 Keep project
               </button>
@@ -511,7 +511,7 @@ export default function Gate4Approval({ projectId, projectState, status, onResum
               type="button"
               onClick={handleComplete}
               disabled={isPending || fixing}
-              className="flex-1 rounded bg-green-600 py-2 px-3 text-sm font-semibold text-white hover:bg-green-700 disabled:opacity-60"
+              className="flex-1 rounded bg-green-600 py-2 px-3 text-sm font-semibold text-ink hover:bg-green-700 disabled:opacity-60"
             >
               {submitting === 'approve' ? 'Completing…' : '✅ Mark Project Complete'}
             </button>
@@ -519,7 +519,7 @@ export default function Gate4Approval({ projectId, projectState, status, onResum
               type="button"
               onClick={() => setConfirmingCancel(true)}
               disabled={isPending || fixing}
-              className="rounded border border-red-200 bg-white py-2 px-3 text-sm font-semibold text-red-600 hover:bg-red-50 disabled:opacity-60"
+              className="rounded border border-err/35 bg-raised py-2 px-3 text-sm font-semibold text-err hover:bg-err/10 disabled:opacity-60"
             >
               Cancel Project
             </button>

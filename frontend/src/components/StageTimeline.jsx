@@ -144,7 +144,7 @@ export default function StageTimeline({ projectState, status, events, regenerati
   }
 
   return (
-    <div className="border-b border-gray-200 bg-white px-6 py-2">
+    <div className="border-b border-line bg-raised px-6 py-2">
       <div className="flex items-center gap-1 overflow-x-auto whitespace-nowrap">
         {STAGES.map(([key, label], i) => {
           const state = stageState(key)
@@ -160,26 +160,26 @@ export default function StageTimeline({ projectState, status, events, regenerati
                   onClick={() => handleClick(key)}
                   className={`flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold transition-colors ${
                     state === 'done'
-                      ? `text-gray-600 ${hasDiff ? 'hover:bg-blue-50 cursor-pointer' : 'cursor-default'}`
+                      ? `text-ink-2 ${hasDiff ? 'hover:bg-blue-50 cursor-pointer' : 'cursor-default'}`
                       : state === 'pending'
                         ? 'cursor-default text-gray-300'
                         : state === 'error'
-                          ? 'bg-red-50 text-red-700'
+                          ? 'bg-err/10 text-err'
                           : state === 'skipped'
-                            ? 'cursor-default text-gray-400'
-                            : 'bg-blue-50 text-blue-700'
+                            ? 'cursor-default text-ink-3'
+                            : 'bg-run/10 text-run'
                   } ${diffStage === key ? 'ring-1 ring-blue-400' : ''}`}
                 >
-                  {state === 'done' && <span className="text-green-500">✓</span>}
-                  {state === 'error' && <span className="h-2 w-2 rounded-full bg-red-500" />}
-                  {state === 'skipped' && <span className="text-gray-400">⊘</span>}
-                  {state === 'active' && <span className="h-2 w-2 animate-pulse rounded-full bg-blue-500" />}
+                  {state === 'done' && <span className="text-ok">✓</span>}
+                  {state === 'error' && <span className="h-2 w-2 rounded-full bg-err" />}
+                  {state === 'skipped' && <span className="text-ink-3">⊘</span>}
+                  {state === 'active' && <span className="h-2 w-2 animate-pulse rounded-full bg-run" />}
                   {state === 'regenerating' && (
-                    <span className="h-3 w-3 animate-spin rounded-full border-[1.5px] border-blue-300 border-t-blue-600" />
+                    <span className="h-3 w-3 animate-spin rounded-full border-[1.5px] border-run/45 border-t-blue-600" />
                   )}
                   {label}
                   {attemptCount > 1 && (
-                    <span className="rounded-full bg-amber-100 px-1.5 text-[10px] font-bold text-amber-700">
+                    <span className="rounded-full bg-warn/10 px-1.5 text-[10px] font-bold text-warn">
                       {attemptCount}×
                     </span>
                   )}
@@ -188,7 +188,7 @@ export default function StageTimeline({ projectState, status, events, regenerati
                     return partial > 0 ? (
                       <span
                         title={`${partial} file(s) failed or blocked`}
-                        className="rounded-full bg-amber-100 px-1.5 text-[10px] font-bold text-amber-700"
+                        className="rounded-full bg-warn/10 px-1.5 text-[10px] font-bold text-warn"
                       >
                         ⚠ {partial}
                       </span>
@@ -197,20 +197,20 @@ export default function StageTimeline({ projectState, status, events, regenerati
                 </button>
 
                 {(attemptCount > 0 || !hasHistory) && (
-                  <div className="pointer-events-none absolute left-0 top-full z-30 hidden min-w-[16rem] rounded border border-gray-200 bg-white p-2 shadow-lg group-hover:block">
+                  <div className="pointer-events-none absolute left-0 top-full z-30 hidden min-w-[16rem] rounded border border-line bg-raised p-2 shadow-2xl group-hover:block">
                     {attemptCount > 0 ? (
                       <>
                         {attempts.map((entry) => (
-                          <p key={entry.attempt} className="py-0.5 text-[11px] text-gray-600">
+                          <p key={entry.attempt} className="py-0.5 text-[11px] text-ink-2">
                             {attemptLine(entry)}
                           </p>
                         ))}
                         {hasDiff && state === 'done' && (
-                          <p className="pt-1 text-[10px] font-medium text-blue-500">Click to view changes</p>
+                          <p className="pt-1 text-[10px] font-medium text-run">Click to view changes</p>
                         )}
                       </>
                     ) : (
-                      <p className="text-[11px] italic text-gray-400">Attempt history unavailable for this project.</p>
+                      <p className="text-[11px] italic text-ink-3">Attempt history unavailable for this project.</p>
                     )}
                   </div>
                 )}
@@ -221,15 +221,15 @@ export default function StageTimeline({ projectState, status, events, regenerati
       </div>
 
       {diffStage && diffOld && (
-        <div className="mt-2 rounded border border-gray-200">
-          <div className="flex items-center justify-between border-b border-gray-100 px-3 py-1.5">
-            <span className="text-xs font-semibold text-gray-600">
+        <div className="mt-2 rounded border border-line">
+          <div className="flex items-center justify-between border-b border-line px-3 py-1.5">
+            <span className="text-xs font-semibold text-ink-2">
               {(STAGES.find(([key]) => key === diffStage) || [])[1]} — changes vs previous version
             </span>
             <button
               type="button"
               onClick={() => setDiffStage(null)}
-              className="text-xs font-semibold text-gray-400 hover:text-gray-600"
+              className="text-xs font-semibold text-ink-3 hover:text-gray-600"
             >
               Close
             </button>

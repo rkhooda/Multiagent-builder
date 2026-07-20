@@ -16,9 +16,9 @@ function formatDuration(seconds) {
 function Stat({ label, value, hint }) {
   return (
     <div className="min-w-0">
-      <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">{label}</p>
-      <p className="truncate text-lg font-bold text-gray-900">{value}</p>
-      {hint && <p className="truncate text-[10px] text-gray-400">{hint}</p>}
+      <p className="text-[10px] font-semibold uppercase tracking-wide text-ink-3">{label}</p>
+      <p className="truncate text-lg font-bold text-ink">{value}</p>
+      {hint && <p className="truncate text-[10px] text-ink-3">{hint}</p>}
     </div>
   )
 }
@@ -55,7 +55,7 @@ export default function ProjectRecord({ projectId, projectState }) {
 
   return (
     <div className="space-y-3">
-      <div className="rounded-lg border border-gray-200 bg-white p-4">
+      <div className="rounded-lg border border-line bg-raised p-4">
         <div className="flex items-start justify-between gap-4">
           <div className="grid flex-1 grid-cols-2 gap-4 sm:grid-cols-5">
             <Stat label="Files" value={files?.total_files ?? '—'} hint={files ? formatBytes(files.total_bytes) : ''} />
@@ -75,13 +75,13 @@ export default function ProjectRecord({ projectId, projectState }) {
           <div className="flex flex-shrink-0 flex-col gap-1.5">
             <a
               href={`${API}/${projectId}/download`}
-              className="whitespace-nowrap rounded bg-gray-800 px-3 py-1.5 text-xs font-semibold text-white hover:bg-gray-900"
+              className="whitespace-nowrap rounded bg-overlay px-3 py-1.5 text-xs font-semibold text-ink hover:bg-overlay"
             >
               ↓ Download ZIP
             </a>
             <a
               href={`${API}/${projectId}/summary.pdf`}
-              className="whitespace-nowrap rounded border border-gray-300 px-3 py-1.5 text-center text-xs font-semibold text-gray-700 hover:bg-gray-50"
+              className="whitespace-nowrap rounded border border-line-strong px-3 py-1.5 text-center text-xs font-semibold text-ink hover:bg-overlay"
             >
               Export Summary
             </a>
@@ -90,17 +90,17 @@ export default function ProjectRecord({ projectId, projectState }) {
       </div>
 
       {fileList.length > 0 && (
-        <div className="rounded-lg border border-gray-200 bg-white">
-          <div className="border-b border-gray-100 px-4 py-2">
-            <h4 className="text-xs font-bold uppercase tracking-wide text-gray-500">
+        <div className="rounded-lg border border-line bg-raised">
+          <div className="border-b border-line px-4 py-2">
+            <h4 className="text-xs font-bold uppercase tracking-wide text-ink-3">
               Generated Files ({fileList.length})
             </h4>
           </div>
           <ul className="divide-y divide-gray-50">
             {shown.map((file) => (
               <li key={file.path} className="flex items-center justify-between px-4 py-1.5">
-                <span className="truncate font-mono text-xs text-gray-700">{file.path}</span>
-                <span className="ml-3 flex-shrink-0 font-mono text-[10px] text-gray-400">
+                <span className="truncate font-mono text-xs text-ink">{file.path}</span>
+                <span className="ml-3 flex-shrink-0 font-mono text-[10px] text-ink-3">
                   {file.line_count ?? '—'} lines · {formatBytes(file.size_bytes)}
                 </span>
               </li>
@@ -110,7 +110,7 @@ export default function ProjectRecord({ projectId, projectState }) {
             <button
               type="button"
               onClick={() => setExpanded((v) => !v)}
-              className="w-full border-t border-gray-100 py-2 text-xs font-semibold text-blue-600 hover:bg-gray-50"
+              className="w-full border-t border-line py-2 text-xs font-semibold text-run hover:bg-overlay"
             >
               {expanded ? 'Show less' : `Show all ${fileList.length} files`}
             </button>

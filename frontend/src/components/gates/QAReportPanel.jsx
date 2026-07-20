@@ -53,15 +53,15 @@ export function parseQAReport(report) {
 }
 
 const BADGE_STYLES = {
-  red: 'bg-red-100 text-red-700 border-red-200',
-  orange: 'bg-orange-100 text-orange-700 border-orange-200',
-  blue: 'bg-blue-100 text-blue-700 border-blue-200',
+  red: 'bg-err/10 text-err border-err/35',
+  orange: 'bg-accent-soft text-accent border-accent/35',
+  blue: 'bg-run/10 text-run border-run/35',
 }
 
 const CARD_STYLES = {
-  red: 'border-red-200 bg-red-50',
-  orange: 'border-orange-200 bg-orange-50',
-  blue: 'border-blue-200 bg-blue-50',
+  red: 'border-err/35 bg-err/10',
+  orange: 'border-accent/35 bg-accent-soft',
+  blue: 'border-run/35 bg-run/10',
 }
 
 export default function QAReportPanel({ qaReport, parsedReport, onOpenFile }) {
@@ -74,7 +74,7 @@ export default function QAReportPanel({ qaReport, parsedReport, onOpenFile }) {
 
   if (!qaReport) {
     return (
-      <div className="rounded-lg border border-gray-200 bg-white p-6 text-center text-sm text-gray-500">
+      <div className="rounded-lg border border-line bg-raised p-6 text-center text-sm text-ink-3">
         No QA report available for this project.
       </div>
     )
@@ -83,7 +83,7 @@ export default function QAReportPanel({ qaReport, parsedReport, onOpenFile }) {
   if (!hasParsedSections) {
     // Structure not recognized at all — render the whole report as markdown.
     return (
-      <div className="max-h-[34rem] overflow-auto rounded-lg border border-gray-200 bg-white p-4">
+      <div className="max-h-[34rem] overflow-auto rounded-lg border border-line bg-raised p-4">
         <div className="prose prose-sm max-w-none">
           <ReactMarkdown remarkPlugins={[remarkGfm]}>{qaReport}</ReactMarkdown>
         </div>
@@ -92,10 +92,10 @@ export default function QAReportPanel({ qaReport, parsedReport, onOpenFile }) {
   }
 
   return (
-    <div className="max-h-[34rem] space-y-4 overflow-auto rounded-lg border border-gray-200 bg-white p-4">
+    <div className="max-h-[34rem] space-y-4 overflow-auto rounded-lg border border-line bg-raised p-4">
       {/* Header badges */}
       <div className="flex flex-wrap items-center gap-2">
-        <span className="rounded-full border border-gray-300 bg-gray-100 px-2.5 py-1 text-xs font-bold text-gray-700">
+        <span className="rounded-full border border-line-strong bg-overlay px-2.5 py-1 text-xs font-bold text-ink">
           {totalIssues} issue{totalIssues === 1 ? '' : 's'} total
         </span>
         {SEVERITIES.map((s) => (
@@ -113,12 +113,12 @@ export default function QAReportPanel({ qaReport, parsedReport, onOpenFile }) {
         if (!section) return null
         return (
           <div key={s.key}>
-            <h4 className="mb-2 text-sm font-bold text-gray-800">{s.key}</h4>
+            <h4 className="mb-2 text-sm font-bold text-ink">{s.key}</h4>
             {section.isEmpty || (section.parsed && section.findings.length === 0) ? (
-              <p className="text-xs text-gray-500">No issues identified.</p>
+              <p className="text-xs text-ink-3">No issues identified.</p>
             ) : !section.parsed ? (
               // Findings didn't match the expected shape — show the raw section.
-              <div className="prose prose-sm max-w-none rounded border border-gray-200 bg-gray-50 p-3">
+              <div className="prose prose-sm max-w-none rounded border border-line bg-overlay p-3">
                 <ReactMarkdown remarkPlugins={[remarkGfm]}>{section.raw}</ReactMarkdown>
               </div>
             ) : (
@@ -129,12 +129,12 @@ export default function QAReportPanel({ qaReport, parsedReport, onOpenFile }) {
                       type="button"
                       onClick={() => onOpenFile(finding.file)}
                       title="Open this file in the browser"
-                      className="font-mono text-xs font-semibold text-blue-700 underline-offset-2 hover:underline"
+                      className="font-mono text-xs font-semibold text-run underline-offset-2 hover:underline"
                     >
                       {finding.file}
                       {finding.line ? `:${finding.line}` : ''}
                     </button>
-                    <p className="mt-1 text-xs leading-relaxed text-gray-700">{finding.description}</p>
+                    <p className="mt-1 text-xs leading-relaxed text-ink">{finding.description}</p>
                   </div>
                 ))}
               </div>

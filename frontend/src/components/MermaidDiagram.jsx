@@ -51,24 +51,24 @@ export default function MermaidDiagram({ code, title }) {
 
   if (error) {
     return (
-      <div className="rounded-lg border border-red-200 bg-red-50 p-3">
-        <p className="text-sm font-medium text-red-600">Diagram could not be rendered</p>
-        <p className="mt-1 text-xs text-red-500">{error}</p>
-        <pre className="mt-2 overflow-x-auto text-xs text-gray-500">{code}</pre>
+      <div className="rounded-lg border border-err/35 bg-err/10 p-3">
+        <p className="text-sm font-medium text-err">Diagram could not be rendered</p>
+        <p className="mt-1 text-xs text-err">{error}</p>
+        <pre className="mt-2 overflow-x-auto text-xs text-ink-3">{code}</pre>
       </div>
     )
   }
 
   return (
-    <div className="rounded-lg border border-gray-200 bg-white p-3 shadow-sm">
+    <div className="rounded-lg border border-line bg-raised p-3 ">
       {title && (
-        <p className="mb-2 text-xs font-semibold uppercase tracking-[0.12em] text-gray-500">
+        <p className="mb-2 text-xs font-semibold uppercase tracking-[0.12em] text-ink-3">
           {title}
         </p>
       )}
       {isRendering && (
-        <div className="flex items-center gap-2 py-4 text-sm text-gray-400">
-          <div className="h-4 w-4 animate-spin rounded-full border-2 border-gray-300 border-t-blue-500" />
+        <div className="flex items-center gap-2 py-4 text-sm text-ink-3">
+          <div className="h-4 w-4 animate-spin rounded-full border-2 border-line-strong border-t-blue-500" />
           Rendering diagram...
         </div>
       )}

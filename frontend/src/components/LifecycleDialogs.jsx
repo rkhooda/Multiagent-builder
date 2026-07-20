@@ -16,11 +16,11 @@ function Modal({ title, children, onClose }) {
         role="dialog"
         aria-modal="true"
         aria-label={title}
-        className="w-full max-w-lg rounded-lg bg-white shadow-xl"
+        className="w-full max-w-lg rounded-lg bg-raised shadow-xl"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="border-b border-gray-200 px-5 py-3">
-          <h3 className="text-sm font-bold text-gray-900">{title}</h3>
+        <div className="border-b border-line px-5 py-3">
+          <h3 className="text-sm font-bold text-ink">{title}</h3>
         </div>
         <div className="max-h-[70vh] overflow-y-auto px-5 py-4">{children}</div>
       </div>
@@ -79,14 +79,14 @@ export function RestartDialog({ projectId, projectName, onClose, onDone }) {
 
   return (
     <Modal title={`Restart "${projectName || projectId}"`} onClose={onClose}>
-      <label className="block text-xs font-semibold uppercase tracking-wide text-gray-500">
+      <label className="block text-xs font-semibold uppercase tracking-wide text-ink-3">
         Re-run from
       </label>
       <select
         value={stage}
         onChange={(e) => setStage(e.target.value)}
         disabled={submitting}
-        className="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-sm"
+        className="mt-1 w-full rounded border border-line-strong px-3 py-2 text-sm"
       >
         {RESTART_STAGES.map(([value, label]) => (
           <option key={value} value={value}>{label}</option>
@@ -94,40 +94,40 @@ export function RestartDialog({ projectId, projectName, onClose, onDone }) {
       </select>
 
       {loading ? (
-        <p className="mt-4 text-sm text-gray-500">Checking what this would discard…</p>
+        <p className="mt-4 text-sm text-ink-3">Checking what this would discard…</p>
       ) : preview ? (
         <div className="mt-4 space-y-3">
-          <div className="rounded border border-red-200 bg-red-50 p-3">
-            <p className="text-sm font-semibold text-red-800">This discards:</p>
-            <p className="mt-1 text-sm text-red-700">
+          <div className="rounded border border-err/35 bg-err/10 p-3">
+            <p className="text-sm font-semibold text-err">This discards:</p>
+            <p className="mt-1 text-sm text-err">
               {preview.discards.map(stageLabel).join(', ')}
               {preview.files_to_archive > 0
                 ? ` — including ${preview.files_to_archive} generated file${preview.files_to_archive === 1 ? '' : 's'}`
                 : ''}
             </p>
             {preview.files_to_archive > 0 && (
-              <p className="mt-1 text-xs text-red-600">
+              <p className="mt-1 text-xs text-err">
                 Discarded files are moved to <code>.archived/</code> inside the project, not deleted.
               </p>
             )}
           </div>
 
-          <div className="rounded border border-green-200 bg-green-50 p-3">
-            <p className="text-sm font-semibold text-green-800">This keeps:</p>
-            <p className="mt-1 text-sm text-green-700">
+          <div className="rounded border border-ok/35 bg-ok/10 p-3">
+            <p className="text-sm font-semibold text-ok">This keeps:</p>
+            <p className="mt-1 text-sm text-ok">
               {preview.keeps.length ? preview.keeps.map(stageLabel).join(', ') : 'Nothing — this re-runs the whole pipeline.'}
             </p>
           </div>
 
           {cost && (
-            <div className="rounded border border-amber-200 bg-amber-50 p-3">
-              <p className="text-sm font-semibold text-amber-800">Estimated cost to re-run</p>
-              <p className="mt-1 text-sm text-amber-700">
+            <div className="rounded border border-warn/35 bg-warn/10 p-3">
+              <p className="text-sm font-semibold text-warn">Estimated cost to re-run</p>
+              <p className="mt-1 text-sm text-warn">
                 ~{cost.estimated_tokens.toLocaleString()} tokens across {cost.estimated_calls} calls,
                 based on what these agents already spent on this project.
               </p>
               {cost.agents_without_history.length > 0 && (
-                <p className="mt-1 text-xs text-amber-600">
+                <p className="mt-1 text-xs text-warn">
                   No history yet for {cost.agents_without_history.join(', ')} — the real cost will be higher.
                 </p>
               )}
@@ -136,14 +136,14 @@ export function RestartDialog({ projectId, projectName, onClose, onDone }) {
         </div>
       ) : null}
 
-      {error && <p className="mt-3 text-sm text-red-600">{error}</p>}
+      {error && <p className="mt-3 text-sm text-err">{error}</p>}
 
       <div className="mt-5 flex justify-end gap-2">
         <button
           type="button"
           onClick={onClose}
           disabled={submitting}
-          className="rounded border border-gray-300 px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50"
+          className="rounded border border-line-strong px-4 py-2 text-sm font-semibold text-ink hover:bg-overlay"
         >
           Cancel
         </button>
@@ -151,7 +151,7 @@ export function RestartDialog({ projectId, projectName, onClose, onDone }) {
           type="button"
           onClick={submit}
           disabled={submitting || loading || !preview}
-          className="rounded bg-amber-600 px-4 py-2 text-sm font-semibold text-white hover:bg-amber-700 disabled:opacity-50"
+          className="rounded bg-amber-600 px-4 py-2 text-sm font-semibold text-ink hover:bg-amber-700 disabled:opacity-50"
         >
           {submitting ? 'Restarting…' : `Restart from ${stageLabel(stage)}`}
         </button>
@@ -188,28 +188,28 @@ export function DeleteDialog({ projectId, projectName, status, onClose, onDone }
 
   return (
     <Modal title={`Delete "${projectName || projectId}"`} onClose={onClose}>
-      <div className="rounded border border-amber-200 bg-amber-50 p-3">
-        <p className="text-sm font-semibold text-amber-900">Download the project ZIP first</p>
-        <p className="mt-1 text-xs text-amber-800">
+      <div className="rounded border border-warn/35 bg-warn/10 p-3">
+        <p className="text-sm font-semibold text-warn">Download the project ZIP first</p>
+        <p className="mt-1 text-xs text-warn">
           This cannot be undone. Generated files, the run history and all metrics for this
           project are permanently removed.
         </p>
         <a
           href={`${API}/${projectId}/download`}
-          className="mt-2 inline-block rounded border border-amber-300 bg-white px-3 py-1.5 text-xs font-semibold text-amber-900 hover:bg-amber-100"
+          className="mt-2 inline-block rounded border border-warn/45 bg-raised px-3 py-1.5 text-xs font-semibold text-warn hover:bg-amber-100"
         >
           ↓ Download ZIP
         </a>
       </div>
 
       {isRunning && (
-        <p className="mt-3 rounded border border-blue-200 bg-blue-50 p-3 text-xs text-blue-800">
+        <p className="mt-3 rounded border border-run/35 bg-run/10 p-3 text-xs text-run">
           This project is still running. Deleting it will cancel the run first.
         </p>
       )}
 
-      <label className="mt-4 block text-xs font-semibold text-gray-700">
-        Type <span className="font-mono text-red-600">delete</span> to confirm
+      <label className="mt-4 block text-xs font-semibold text-ink">
+        Type <span className="font-mono text-err">delete</span> to confirm
       </label>
       <input
         value={typed}
@@ -217,17 +217,17 @@ export function DeleteDialog({ projectId, projectName, status, onClose, onDone }
         disabled={submitting}
         autoFocus
         placeholder="delete"
-        className="mt-1 w-full rounded border border-gray-300 px-3 py-2 font-mono text-sm"
+        className="mt-1 w-full rounded border border-line-strong px-3 py-2 font-mono text-sm"
       />
 
-      {error && <p className="mt-3 text-sm text-red-600">{error}</p>}
+      {error && <p className="mt-3 text-sm text-err">{error}</p>}
 
       <div className="mt-5 flex justify-end gap-2">
         <button
           type="button"
           onClick={onClose}
           disabled={submitting}
-          className="rounded border border-gray-300 px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50"
+          className="rounded border border-line-strong px-4 py-2 text-sm font-semibold text-ink hover:bg-overlay"
         >
           Cancel
         </button>
@@ -235,7 +235,7 @@ export function DeleteDialog({ projectId, projectName, status, onClose, onDone }
           type="button"
           onClick={submit}
           disabled={submitting || typed.trim().toLowerCase() !== 'delete'}
-          className="rounded bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700 disabled:opacity-40"
+          className="rounded bg-red-600 px-4 py-2 text-sm font-semibold text-ink hover:bg-red-700 disabled:opacity-40"
         >
           {submitting ? 'Deleting…' : 'Delete permanently'}
         </button>
