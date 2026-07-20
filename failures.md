@@ -1186,3 +1186,81 @@ seeded by hand to park it at gate 4, and its `validation_report` values
 (25% failure rate, 1 phantom import) are **synthetic** — chosen to force the
 banner into its below-threshold state. The `agent_runs` metrics for that project
 are entirely real. Do not read that checkpoint as a genuine end-to-end run.
+
+## Day 24 observations
+
+Lifecycle day: projects list, cold resume, restart-from-stage, cascade delete,
+summary PDF. Almost entirely plumbing over existing persisted data — one real
+agent call was spent, on a deliberate restart test.
+
+### Two real bugs, both found by running the thing rather than building it
+
+**1. An unresumable run was reported as `completed`.** Found while verifying
+restart-from-stage. After a node raises, `handle_pipeline_failure` calls
+`graph.update_state(...)` without `as_node`, which makes LangGraph re-derive the
+pending position — and it can come back empty. Streaming that checkpoint then
+yields **zero** events (confirmed directly: `list(graph.stream(None, config))`
+returned `[]`), after which `run_graph_background` fell through to its completion
+branch and stamped `completed`. A project with no architecture, no plan and no
+generated code would appear in the list as finished.
+
+Fixed the misreport: if no node ran and the project carries a `failed_agent`,
+stay `error_paused` and tell the user to restart from an earlier stage.
+
+**OPEN — the underlying position loss is NOT fixed.** `/recover retry` on such a
+project still cannot re-enter the graph; it now fails honestly instead of lying.
+The clean fix is for the failure handler to stop clobbering the pending task, but
+that is a change to the Day 17 recovery path and the providers were rate-limited
+(Groq) / 503 (Gemini) at the time, so it could not be tested end to end. Do not
+assume retry-after-crash works for mid-node failures until this is closed.
+
+**2. The interrupted banner never rendered.** `setStatus('interrupted')` was
+writing into the variable `useProjectStream` owns for its connection lifecycle;
+the socket's `connected` event fired afterwards and overwrote it, so the zombie
+showed a badge reading "Unknown" and a right-hand panel claiming "Agents
+working…" — the exact dead spinner the feature exists to prevent. `vite build`
+passes either way; only loading a seeded zombie in a browser exposed it.
+Interruption is now derived from `position.phase` at render time.
+
+### Cold-resume finding: the gates were already cold-safe
+
+The day's stated expectation was that at least one gate would turn out to depend
+on a live WebSocket event. It did not happen. Gates 1–4 read everything from
+`projectState`; the single live-only prop (`lastAgentComplete`) merely picks the
+wording of the in-flight regeneration overlay, which cannot occur on a cold load.
+Verified in a browser against a cold server: gate 1 rendered research +
+requirements + tech stack, gate 4 rendered its stats, metrics and quality banner.
+
+### Restart-from-stage
+
+`invalidate_downstream` was reused unchanged; restart re-enters by writing the
+checkpoint as `as_node=<gate>` with a decision, so the existing `GATE_ROUTES`
+conditional edges do the routing and restart adds no graph wiring. All five
+targets are asserted to land on the right node against the real compiled graph
+(`test_lifecycle.py`, zero API cost).
+
+The one live restart (a *completed* project, from architecture) performed its
+state surgery exactly as designed — research and requirements preserved,
+architecture and plan snapshotted into `previous_versions` and cleared,
+`stage_history` recording `trigger: restart` — and then failed on the LLM call:
+Groq rate-limited on both attempts, Gemini 2.5 Flash returned 503 "high demand".
+An external provider failure, not a pipeline defect, but it means **the restart
+has never been observed producing a fresh document end to end.**
+
+### Delete cascade
+
+Order is metrics → checkpoint → files → projects row, i.e. the discoverable
+pointer last, so any half-failure leaves a visible project that can simply be
+deleted again. Hard delete, with the ZIP download offered inline in the confirm
+dialog. `test_lifecycle.py` asserts all four stores are clean afterwards, that a
+running project's task is cancelled and awaited first, and that seven traversal
+payloads are rejected. Exercised through the UI as well as over HTTP.
+
+### Caveats
+- Restarting from `code_generation` has not been run; only its routing is proven.
+- The PDF was verified against a real project, a fully empty state, a hostile
+  input state and a real cancelled project. The task referenced
+  `/mnt/skills/public/pdf/SKILL.md`, which does not exist in this environment, so
+  plain reportlab platypus was used instead of that skill's guidance.
+- 51 legacy projects are still in the list; 3 rows with status `error` were
+  migrated to `error_paused` on init.
