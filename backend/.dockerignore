@@ -1,0 +1,29 @@
+# Two reasons, and the second is the one that bites.
+#
+# Size: venv/ and node_modules/ are the bulk of this directory and are rebuilt
+# inside the image anyway.
+#
+# Secrets and state: anything copied into a layer stays in the image history
+# even if a later step deletes it. A baked .env would ship the user's API keys
+# to anyone who pulls the image, and a baked projects.db would ship someone
+# else's generated projects as the container's starting state.
+
+venv/
+.venv/
+__pycache__/
+*.pyc
+
+.env
+*.db
+*.db-wal
+*.db-shm
+
+# Generated projects live in a mounted volume, never in the image.
+outputs/
+
+# Installed in the jsdeps stage from the lockfile.
+scripts/node_modules/
+
+server.log
+.DS_Store
+.git/
