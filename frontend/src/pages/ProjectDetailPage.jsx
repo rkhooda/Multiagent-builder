@@ -12,6 +12,9 @@ import Gate3Approval from '../components/gates/Gate3Approval'
 import Gate4Approval from '../components/gates/Gate4Approval'
 import ErrorCard from '../components/ErrorCard'
 import PhaseProgress, { derivePhaseProgress } from '../components/PhaseProgress'
+import ProjectRecord from '../components/ProjectRecord'
+import { RestartDialog, DeleteDialog } from '../components/LifecycleDialogs'
+import { statusMeta, stageLabel } from '../lib/status'
 
 const MARKDOWN_AGENTS = new Set(['research', 'requirements', 'architecture', 'qa', 'planning'])
 
@@ -74,7 +77,10 @@ export default function ProjectDetailPage() {
   // {target, startedAt} of the in-flight feedback cycle — lets the timeline
   // know which stage is regenerating right now.
   const [cycleInfo, setCycleInfo] = useState(null)
-  
+  const [restarting, setRestarting] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+  const [resuming, setResuming] = useState(false)
+
   const { events, setEvents, status, setStatus, resumePipeline } = useProjectStream(projectId)
   const bottomRef = useRef(null)
 
@@ -122,8 +128,14 @@ export default function ProjectDetailPage() {
         setEvents(initialEvents)
       }
       
-      // Sync the WS status with the loaded project status if appropriate
-      if (data.status === 'completed') {
+      // Sync the WS status with the loaded project status if appropriate.
+      // position.phase is checked FIRST because it is the only signal that can
+      // tell a genuinely-running project from one the server died under — the
+      // row says `running` in both cases. Without this the zombie renders as a
+      // spinner that never resolves.
+      if (data.position?.phase === 'interrupted') {
+        setStatus('interrupted')
+      } else if (data.status === 'completed') {
         setStatus('done')
       } else if (data.status === 'awaiting_approval') {
         setStatus('awaiting_approval')
@@ -255,6 +267,29 @@ export default function ProjectDetailPage() {
     return s === 'error_paused' || s === 'rate_limited'
   }
 
+  // Zombie recovery: the checkpoint holds a resumable `next`, so re-entering the
+  // graph is all that is needed — the resume endpoint restarts streaming from
+  // wherever the run died.
+  const handleResumeInterrupted = async () => {
+    setResuming(true)
+    try {
+      const res = await fetch(`http://localhost:8000/api/projects/${projectId}/resume`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ decision: 'approve', feedback: '' }),
+      })
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}))
+        throw new Error(body?.detail || `Resume failed (HTTP ${res.status})`)
+      }
+      setStatus('connecting')
+      setTimeout(fetchMetadata, 1000)
+    } catch (err) {
+      console.error(err)
+      setResuming(false)
+    }
+  }
+
   const handleRecover = async (action) => {
     const res = await fetch(`http://localhost:8000/api/projects/${projectId}/recover`, {
       method: 'POST',
@@ -323,27 +358,6 @@ export default function ProjectDetailPage() {
     }
   }
 
-  const getStatusBadgeStyle = (projectStatus) => {
-    switch (projectStatus) {
-      case 'completed':
-      case 'done':
-        return 'bg-green-100 text-green-800 border-green-200'
-      case 'awaiting_approval':
-        return 'bg-orange-100 text-orange-800 border-orange-200'
-      case 'running':
-        return 'bg-blue-100 text-blue-800 border-blue-200'
-      case 'error':
-      case 'error_paused':
-        return 'bg-red-100 text-red-800 border-red-200'
-      case 'rate_limited':
-        return 'bg-amber-100 text-amber-800 border-amber-200'
-      case 'cancelled':
-        return 'bg-gray-200 text-gray-700 border-gray-300'
-      default:
-        return 'bg-gray-100 text-gray-800 border-gray-200'
-    }
-  }
-
   const formatTime = (isoString) => {
     try {
       const d = new Date(isoString)
@@ -401,14 +415,30 @@ export default function ProjectDetailPage() {
           </p>
         </div>
         <div className="flex items-center space-x-3">
-          <span className={`px-2.5 py-1 text-xs font-semibold rounded-full border ${getStatusBadgeStyle(displayStatus)}`}>
-            {displayStatus.replace('_', ' ').toUpperCase()}
+          <span className={`px-2.5 py-1 text-xs font-semibold rounded-full border ${statusMeta(displayStatus).badge}`}>
+            {statusMeta(displayStatus).label}
           </span>
           {fileCount > 0 && (
             <span className="px-2.5 py-1 text-xs font-semibold rounded-full bg-green-100 text-green-800 border border-green-200">
               {fileCount} files generated
             </span>
           )}
+          <button
+            type="button"
+            onClick={() => setRestarting(true)}
+            disabled={displayStatus === 'running'}
+            title={displayStatus === 'running' ? 'Cannot restart while the pipeline is running' : 'Re-run from a chosen stage'}
+            className="rounded border border-gray-200 bg-gray-50 px-3 py-1.5 text-xs font-semibold text-gray-600 transition-colors hover:text-gray-900 disabled:opacity-40"
+          >
+            Restart
+          </button>
+          <button
+            type="button"
+            onClick={() => setDeleting(true)}
+            className="rounded border border-gray-200 bg-gray-50 px-3 py-1.5 text-xs font-semibold text-red-600 transition-colors hover:bg-red-50"
+          >
+            Delete
+          </button>
           <Link
             to="/"
             className="text-xs font-semibold text-gray-600 hover:text-gray-900 bg-gray-50 border border-gray-200 px-3 py-1.5 rounded transition-colors"
@@ -444,10 +474,49 @@ export default function ProjectDetailPage() {
         </div>
       )}
 
+      {/* Zombie card: the server died mid-node. The checkpoint still holds a
+          resumable position, so this offers Resume rather than a dead spinner. */}
+      {displayStatus === 'interrupted' && (
+        <div className="border-b border-gray-200 bg-[#f9fafb] px-6 py-3">
+          <div className="mx-auto max-w-6xl rounded-lg border border-purple-200 bg-purple-50 p-4">
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <p className="text-sm font-bold text-purple-900">This run was interrupted</p>
+                <p className="mt-0.5 text-xs text-purple-700">
+                  The backend stopped while{' '}
+                  <span className="font-semibold">{stageLabel(projectMetadata?.position?.next_node)}</span>{' '}
+                  was running. Nothing was lost — the last checkpoint is intact and the
+                  pipeline can carry on from there.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={handleResumeInterrupted}
+                disabled={resuming}
+                className="flex-shrink-0 rounded bg-purple-600 px-4 py-2 text-sm font-semibold text-white hover:bg-purple-700 disabled:opacity-50"
+              >
+                {resuming ? 'Resuming…' : 'Resume'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {errorInfo && (
         <div className="border-b border-gray-200 bg-[#f9fafb] px-6 py-3">
           <div className="mx-auto max-w-6xl">
             <ErrorCard info={errorInfo} onRecover={handleRecover} />
+          </div>
+        </div>
+      )}
+
+      {/* Permanent record — stats, files and exports from persisted state.
+          Suppressed at gate 4, which renders its own richer file browser. */}
+      {projectMetadata && !isFullWidthGate
+        && ['completed', 'cancelled', 'interrupted', 'error_paused'].includes(displayStatus) && (
+        <div className="border-b border-gray-200 bg-[#f9fafb] px-6 py-3">
+          <div className="mx-auto max-w-6xl">
+            <ProjectRecord projectId={projectId} projectState={projectMetadata} />
           </div>
         </div>
       )}
@@ -657,6 +726,28 @@ export default function ProjectDetailPage() {
           />
         </div>
       </div>
+      )}
+
+      {restarting && (
+        <RestartDialog
+          projectId={projectId}
+          projectName={name}
+          onClose={() => setRestarting(false)}
+          onDone={() => {
+            setStatus('connecting')
+            setEvents([])
+            setTimeout(fetchMetadata, 1000)
+          }}
+        />
+      )}
+      {deleting && (
+        <DeleteDialog
+          projectId={projectId}
+          projectName={name}
+          status={displayStatus}
+          onClose={() => setDeleting(false)}
+          onDone={() => { window.location.href = '/' }}
+        />
       )}
     </div>
   )
