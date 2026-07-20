@@ -6,18 +6,29 @@
  * pages — a status added on the backend now has exactly one place to land here.
  */
 
+/**
+ * Each status carries a design-system `tone`, not class names. Tone drives
+ * <Badge tone> and <Dot tone>, so re-colouring a status is a one-word change
+ * here and the theme decides what the word looks like.
+ *
+ * `awaiting_approval` is the only status that gets `accent`, because the accent
+ * means exactly one thing across this app: the line has stopped and it needs a
+ * human. `rate_limited` deliberately takes the muted `warn` tone rather than
+ * the accent — waiting on a provider is not waiting on you, and letting both
+ * wear the same gold would spend the signal that makes gates findable.
+ */
 export const STATUS = {
-  running: { label: 'Running', badge: 'bg-blue-100 text-blue-800 border-blue-200', dot: 'bg-blue-500' },
-  awaiting_approval: { label: 'Awaiting approval', badge: 'bg-orange-100 text-orange-800 border-orange-200', dot: 'bg-orange-500' },
-  rate_limited: { label: 'Rate limited', badge: 'bg-amber-100 text-amber-800 border-amber-200', dot: 'bg-amber-500' },
-  error_paused: { label: 'Error', badge: 'bg-red-100 text-red-800 border-red-200', dot: 'bg-red-500' },
-  completed: { label: 'Complete', badge: 'bg-green-100 text-green-800 border-green-200', dot: 'bg-green-500' },
-  cancelled: { label: 'Cancelled', badge: 'bg-gray-200 text-gray-700 border-gray-300', dot: 'bg-gray-400' },
+  running: { label: 'Running', tone: 'run' },
+  awaiting_approval: { label: 'Needs you', tone: 'accent' },
+  rate_limited: { label: 'Rate limited', tone: 'warn' },
+  error_paused: { label: 'Error', tone: 'err' },
+  completed: { label: 'Complete', tone: 'ok' },
+  cancelled: { label: 'Cancelled', tone: 'idle' },
   // Derived, never persisted: a `running` row that no backend task is driving.
-  interrupted: { label: 'Interrupted', badge: 'bg-purple-100 text-purple-800 border-purple-200', dot: 'bg-purple-500' },
+  interrupted: { label: 'Interrupted', tone: 'alt' },
 }
 
-const FALLBACK = { label: 'Unknown', badge: 'bg-gray-100 text-gray-800 border-gray-200', dot: 'bg-gray-400' }
+const FALLBACK = { label: 'Unknown', tone: 'idle' }
 
 // Transient WebSocket-only states map onto the persisted vocabulary.
 const ALIASES = {

@@ -1,1 +1,195 @@
 @import "tailwindcss";
+
+/* ============================================================================
+   Design system — the console
+   ----------------------------------------------------------------------------
+   This product is a supervised assembly line: nine agents run in sequence and a
+   human inspects at four gates. So the interface is a control room, not a
+   dashboard — quiet instrumentation you watch for hours, with one signal that
+   means "the line is waiting for you".
+
+   THE ONE RULE: filled accent = a human decision is required, nothing else.
+   Everything the machine does on its own is rendered in neutrals and muted
+   status hues. In a dense console the operator's only urgent question is "does
+   this need me?", and rationing a single warm gold to answer it is worth more
+   than colour applied for decoration. rate_limited borrows the same hue at
+   OUTLINE weight — waiting on a provider is not the same as waiting on you.
+
+   Encoding: `@theme inline` maps Tailwind's utility namespace onto plain CSS
+   custom properties, so `bg-raised` / `text-ink-2` / `border-line` generate
+   normally while the VALUES stay swappable at runtime. Dark is the default on
+   :root; light overrides the same variable names. There are no `dark:` variants
+   anywhere in this codebase and there should never be — a theme change is one
+   block here, not a sweep through nineteen components.
+   ========================================================================== */
+
+@theme inline {
+  --color-surface: var(--surface);
+  --color-raised: var(--raised);
+  --color-overlay: var(--overlay);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-ink-3: var(--ink-3);
+
+  --color-accent: var(--accent);
+  --color-accent-soft: var(--accent-soft);
+  --color-accent-ink: var(--accent-ink);
+
+  --color-run: var(--run);
+  --color-ok: var(--ok);
+  --color-warn: var(--warn);
+  --color-err: var(--err);
+  --color-idle: var(--idle);
+  --color-alt: var(--alt);
+
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+  /* Mono is a deliberate typographic device here, not a code-block default.
+     Stage names, statuses, counts, ids and metric values are machine facts, and
+     setting them in tracked-out uppercase mono is what makes the surface read as
+     instrumentation rather than as a web page. Sans carries prose only. */
+  --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas,
+    "Liberation Mono", monospace;
+}
+
+/* ── Dark: the default, and the daily driver ─────────────────────────────── */
+:root {
+  color-scheme: dark;
+
+  /* Cool charcoal rather than pure black: #000 with a bright accent is the
+     stock "developer tool" look, and true black also makes every elevation
+     step above it read as grey haze. A slight blue cast keeps the neutrals
+     from going muddy under the amber. */
+  --surface: #0e1218;
+  --raised: #151a22;
+  --overlay: #1c232d;
+  --line: #252d39;
+  --line-strong: #323c4b;
+
+  --ink: #e6eaf0;
+  --ink-2: #98a2b2;
+  --ink-3: #646e7e;
+
+  --accent: #e9a23b;
+  --accent-soft: #e9a23b1f;
+  --accent-ink: #17110455;
+
+  --run: #4c9af5;
+  --ok: #3eb489;
+  --warn: #d9903a;
+  --err: #e5484d;
+  --idle: #6b7686;
+  --alt: #a78bfa;
+}
+
+/* ── Light: supported, secondary ─────────────────────────────────────────── */
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  --surface: #f6f7f9;
+  --raised: #ffffff;
+  --overlay: #f0f2f5;
+  --line: #e2e6ec;
+  --line-strong: #cdd4de;
+
+  --ink: #161b22;
+  --ink-2: #57606c;
+  --ink-3: #838c98;
+
+  /* Darkened so the same token stays legible as text and as a border on white;
+     the dark-mode gold fails contrast on a light surface. */
+  --accent: #a96a09;
+  --accent-soft: #e9a23b24;
+  --accent-ink: #ffffff;
+
+  --run: #1f6feb;
+  --ok: #1a7f5a;
+  --warn: #9a6412;
+  --err: #c62a2f;
+  --idle: #6b7686;
+  --alt: #7c4ddb;
+}
+
+@layer base {
+  html {
+    background: var(--surface);
+  }
+
+  body {
+    background: var(--surface);
+    color: var(--ink);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  /* Numbers in this UI are almost always compared down a column — token counts,
+     latencies, file totals. Tabular figures stop them jittering as they stream. */
+  table,
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+
+  ::selection {
+    background: var(--accent-soft);
+  }
+
+  /* Keyboard focus must stay visible everywhere; the accent doubles as the
+     focus colour because "this is where you act" is the same meaning. */
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+    border-radius: 3px;
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--line-strong);
+    border: 3px solid var(--surface);
+    border-radius: 999px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--ink-3);
+  }
+}
+
+@layer components {
+  /* The eyebrow: tracked-out mono in muted ink. Used for every section label
+     and column header so the console's structural language is consistent. */
+  .eyebrow {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    line-height: 1.4;
+    font-weight: 600;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+  }
+}
+
+/* ── Motion ──────────────────────────────────────────────────────────────────
+   Honoured once, globally, rather than trusted to each component. Framer Motion
+   reads the same media query through useReducedMotion for its own transitions;
+   this catches everything else, including CSS transitions and any animation
+   added later that forgets to ask. Nothing in this UI communicates state by
+   motion alone — animation only ever reinforces a colour or text change — so
+   removing it costs no information. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

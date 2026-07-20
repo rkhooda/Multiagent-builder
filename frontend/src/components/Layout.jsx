@@ -1,178 +1,183 @@
 import React, { useState, useEffect } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
+import { statusMeta } from '../lib/status'
+import { applyTheme, storedTheme } from '../lib/theme'
+import { Button, Dot, Eyebrow, cx } from './ui'
+
+const API = 'http://localhost:8000'
+
+const TITLES = { '/': 'Projects', '/new': 'New project' }
+
+function ThemeToggle() {
+  const [theme, setTheme] = useState(storedTheme)
+  const next = theme === 'dark' ? 'light' : 'dark'
+  return (
+    <button
+      onClick={() => setTheme(applyTheme(next))}
+      title={`Switch to ${next} mode`}
+      aria-label={`Switch to ${next} mode`}
+      className="rounded-md border border-line-strong bg-overlay p-1.5 text-ink-2 transition-colors hover:border-ink-3 hover:text-ink"
+    >
+      {theme === 'dark' ? (
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+          <circle cx="12" cy="12" r="4" />
+          <path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" />
+        </svg>
+      ) : (
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M21 12.8A9 9 0 1111.2 3a7 7 0 009.8 9.8z" />
+        </svg>
+      )}
+    </button>
+  )
+}
 
 export default function Layout({ children }) {
   const location = useLocation()
   const navigate = useNavigate()
-  
+
   const [projects, setProjects] = useState([])
-  const [isConnected, setIsConnected] = useState(false)
-  const [checkingHealth, setCheckingHealth] = useState(true)
+  const [health, setHealth] = useState('checking')   // checking | up | down
+  const [navOpen, setNavOpen] = useState(false)
 
-  // Determine page title based on path
-  const getPageTitle = () => {
-    const path = location.pathname
-    if (path === '/') return 'Projects Dashboard'
-    if (path === '/new') return 'Start a New Project'
-    if (path.startsWith('/projects/')) {
-      return 'Project Details'
-    }
-    return 'Agent Builder'
-  }
-
-  // Fetch health check
-  const checkHealth = async () => {
-    try {
-      const res = await fetch('http://localhost:8000/health')
-      if (res.ok) {
-        setIsConnected(true)
-      } else {
-        setIsConnected(false)
-      }
-    } catch (err) {
-      setIsConnected(false)
-    } finally {
-      setCheckingHealth(false)
-    }
-  }
-
-  // Fetch projects for sidebar list
-  const fetchProjects = async () => {
-    try {
-      const res = await fetch('http://localhost:8000/api/projects')
-      if (res.ok) {
-        const data = await res.json()
-        // The list endpoint returns {projects, total} as of Day 24.
-        setProjects(data.projects || [])
-      }
-    } catch (err) {
-      console.error('Error fetching projects for sidebar:', err)
-    }
-  }
+  const title =
+    TITLES[location.pathname] ||
+    (location.pathname.startsWith('/projects/') ? 'Project' : 'Agent Builder')
 
   useEffect(() => {
-    checkHealth()
-    fetchProjects()
+    let cancelled = false
 
-    // Refresh project list every 10 seconds
-    const interval = setInterval(() => {
-      fetchProjects()
-    }, 10000)
+    const check = async () => {
+      try {
+        const res = await fetch(`${API}/health`)
+        if (!cancelled) setHealth(res.ok ? 'up' : 'down')
+      } catch {
+        if (!cancelled) setHealth('down')
+      }
+    }
+    const load = async () => {
+      try {
+        const res = await fetch(`${API}/api/projects`)
+        if (!res.ok) return
+        const data = await res.json()
+        if (!cancelled) setProjects(data.projects || [])
+      } catch {
+        /* the sidebar list is not worth surfacing an error for */
+      }
+    }
 
-    return () => clearInterval(interval)
+    check()
+    load()
+    const interval = setInterval(() => { check(); load() }, 10000)
+    return () => { cancelled = true; clearInterval(interval) }
   }, [])
 
-  // Map backend status to dot colors
-  const getStatusDotColor = (status) => {
-    switch (status) {
-      case 'completed':
-      case 'complete':
-        return 'bg-green-500'
-      case 'awaiting_approval':
-        return 'bg-orange-500'
-      case 'running':
-        return 'bg-blue-500'
-      case 'error':
-      case 'failed':
-        return 'bg-red-500'
-      default:
-        return 'bg-gray-400'
-    }
-  }
+  // Close the mobile drawer on navigation — otherwise it stays open over the
+  // page you just asked for.
+  useEffect(() => { setNavOpen(false) }, [location.pathname])
 
-  return (
-    <div className="flex h-screen w-screen overflow-hidden font-sans">
-      {/* Left Sidebar */}
-      <div className="w-[260px] bg-[#0d1117] text-gray-300 flex flex-col flex-shrink-0 h-full border-r border-gray-800">
-        {/* App Title */}
-        <div className="p-6 border-b border-gray-800">
-          <Link to="/" className="text-xl font-bold text-white tracking-wide block hover:text-gray-100 transition-colors">
-            🤖 Agent Builder
-          </Link>
-        </div>
-
-        {/* New Project Button */}
-        <div className="p-4">
-          <button
-            onClick={() => navigate('/new')}
-            className="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-4 rounded transition-colors text-center block cursor-pointer"
-          >
-            + New Project
-          </button>
-        </div>
-
-        {/* Recent Projects List */}
-        <div className="flex-1 overflow-y-auto px-4 py-2">
-          <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3 px-2">
-            Recent Projects
-          </h3>
-          {projects.length === 0 ? (
-            <p className="text-sm text-gray-500 px-2 italic">No projects yet</p>
-          ) : (
-            <ul className="space-y-1">
-              {projects.map((project) => {
-                const isActive = location.pathname === `/projects/${project.id}`
-                return (
-                  <li key={project.id}>
-                    <Link
-                      to={`/projects/${project.id}`}
-                      className={`flex items-center justify-between px-3 py-2 rounded text-sm transition-colors ${
-                        isActive
-                          ? 'bg-gray-800 text-white font-medium'
-                          : 'hover:bg-gray-900 text-gray-400 hover:text-gray-200'
-                      }`}
-                    >
-                      <span className="truncate mr-2">{project.name}</span>
-                      <span
-                        className={`h-2.5 w-2.5 rounded-full flex-shrink-0 ${getStatusDotColor(
-                          project.status
-                        )}`}
-                        title={project.status}
-                      />
-                    </Link>
-                  </li>
-                )
-              })}
-            </ul>
-          )}
-        </div>
+  // One definition, rendered in both the desktop rail and the mobile drawer, so
+  // the navigation cannot drift between widths.
+  const sidebar = (
+    <>
+      <div className="border-b border-line px-5 py-4">
+        <Link to="/" className="group flex items-center gap-2.5">
+          <span className="grid h-7 w-7 place-items-center rounded bg-accent-soft font-mono text-[13px] font-bold text-accent">
+            A
+          </span>
+          <span className="text-[15px] font-semibold tracking-tight text-ink transition-colors group-hover:text-accent">
+            Agent Builder
+          </span>
+        </Link>
       </div>
 
-      {/* Main Container */}
-      <div className="flex-1 flex flex-col min-w-0 bg-[#f9fafb]">
-        {/* Top Header Bar */}
-        <header className="h-16 bg-[#161b22] text-white flex items-center justify-between px-6 border-b border-gray-800 flex-shrink-0 z-10 shadow-sm">
-          <h2 className="text-lg font-semibold truncate">{getPageTitle()}</h2>
-          
-          {/* Health Indicator */}
-          <div className="flex items-center space-x-2 text-sm">
-            <span className="text-gray-400">Status:</span>
-            {checkingHealth ? (
-              <span className="inline-flex items-center text-gray-400">
-                <svg className="animate-spin -ml-1 mr-1.5 h-4.5 w-4.5 text-gray-400" fill="none" viewBox="0 0 24 24">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                </svg>
-                Checking...
+      <div className="px-4 py-4">
+        <Button variant="accent" className="w-full" onClick={() => navigate('/new')}>
+          New project
+        </Button>
+      </div>
+
+      <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-4">
+        <Eyebrow className="px-1 pb-2">Recent</Eyebrow>
+        {projects.length === 0 ? (
+          <p className="px-1 text-[13px] text-ink-3">No projects yet.</p>
+        ) : (
+          <ul className="space-y-0.5">
+            {projects.map((project) => {
+              const active = location.pathname === `/projects/${project.id}`
+              const meta = statusMeta(project.status)
+              return (
+                <li key={project.id}>
+                  <Link
+                    to={`/projects/${project.id}`}
+                    className={cx(
+                      'flex items-center justify-between gap-2 rounded-md px-2.5 py-1.5 text-[13px] transition-colors',
+                      active
+                        ? 'bg-overlay font-medium text-ink'
+                        : 'text-ink-2 hover:bg-overlay hover:text-ink',
+                    )}
+                  >
+                    <span className="truncate">{project.name || 'Untitled'}</span>
+                    <Dot tone={meta.tone} title={meta.label} />
+                  </Link>
+                </li>
+              )
+            })}
+          </ul>
+        )}
+      </div>
+    </>
+  )
+
+  return (
+    <div className="flex h-screen w-screen overflow-hidden bg-surface">
+      <aside className="hidden w-[248px] shrink-0 flex-col border-r border-line bg-raised lg:flex">
+        {sidebar}
+      </aside>
+
+      {navOpen && (
+        <>
+          <button
+            aria-label="Close navigation"
+            onClick={() => setNavOpen(false)}
+            className="fixed inset-0 z-40 bg-black/60 lg:hidden"
+          />
+          <aside className="fixed inset-y-0 left-0 z-50 flex w-[248px] flex-col border-r border-line bg-raised lg:hidden">
+            {sidebar}
+          </aside>
+        </>
+      )}
+
+      <div className="flex min-w-0 flex-1 flex-col">
+        <header className="flex h-14 shrink-0 items-center justify-between gap-3 border-b border-line bg-raised px-4 sm:px-6">
+          <div className="flex min-w-0 items-center gap-3">
+            <button
+              onClick={() => setNavOpen(true)}
+              aria-label="Open navigation"
+              className="-ml-1 rounded-md p-1.5 text-ink-2 hover:bg-overlay hover:text-ink lg:hidden"
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                <path d="M3 6h18M3 12h18M3 18h18" />
+              </svg>
+            </button>
+            <h1 className="truncate text-[15px] font-semibold tracking-tight text-ink">{title}</h1>
+          </div>
+
+          <div className="flex items-center gap-3">
+            <span
+              className="hidden items-center gap-1.5 sm:inline-flex"
+              title={health === 'up' ? 'Backend reachable' : 'Backend unreachable'}
+            >
+              <Dot tone={health === 'up' ? 'ok' : health === 'down' ? 'err' : 'idle'} />
+              <span className="eyebrow">
+                {health === 'checking' ? 'Connecting' : health === 'up' ? 'Connected' : 'Offline'}
               </span>
-            ) : isConnected ? (
-              <span className="inline-flex items-center text-green-400 font-medium">
-                <span className="h-2 w-2 rounded-full bg-green-400 mr-1.5 animate-pulse" />
-                Connected
-              </span>
-            ) : (
-              <span className="inline-flex items-center text-red-400 font-medium">
-                <span className="h-2 w-2 rounded-full bg-red-400 mr-1.5" />
-                Disconnected
-              </span>
-            )}
+            </span>
+            <ThemeToggle />
           </div>
         </header>
 
-        {/* Content Area */}
-        <main className="flex-1 overflow-auto">
-          {children}
-        </main>
+        <main className="min-h-0 flex-1 overflow-auto">{children}</main>
       </div>
     </div>
   )
