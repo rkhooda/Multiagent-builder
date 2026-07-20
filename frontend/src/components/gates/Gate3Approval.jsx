@@ -472,7 +472,7 @@ export default function Gate3Approval({ projectId, projectState, status, onResum
           highlightId === task.id
             ? 'border-accent ring-2 ring-accent/40'
             : isBrokenDependent
-              ? 'border-red-300 bg-err/10'
+              ? 'border-err/45 bg-err/10'
               : isExcluded
                 ? 'border-line bg-overlay opacity-60'
                 : `${cfg.border} bg-raised`
@@ -498,7 +498,7 @@ export default function Gate3Approval({ projectId, projectState, status, onResum
                 <span className="rounded bg-accent-soft px-1.5 py-0.5 text-[10px] font-semibold text-accent">Custom</span>
               )}
             </div>
-            <p className={`mt-0.5 font-mono text-[11px] ${isExcluded ? 'text-gray-300' : 'text-ink-3'}`}>{task.filepath}</p>
+            <p className={`mt-0.5 font-mono text-[11px] ${isExcluded ? 'text-ink-2' : 'text-ink-3'}`}>{task.filepath}</p>
 
             {isEditing ? (
               <div className="mt-2 space-y-2">
@@ -534,8 +534,8 @@ export default function Gate3Approval({ projectId, projectState, status, onResum
                     onClick={() => scrollToTask(dep)}
                     className={`rounded-full border px-2 py-0.5 font-mono text-[10px] font-semibold transition-colors ${
                       includedIds.has(dep)
-                        ? 'border-line-strong bg-overlay text-ink-2 hover:bg-gray-200'
-                        : 'border-red-300 bg-err/10 text-err hover:bg-red-200'
+                        ? 'border-line-strong bg-overlay text-ink-2 hover:bg-line'
+                        : 'border-err/45 bg-err/10 text-err hover:bg-err/20'
                     }`}
                     title={includedIds.has(dep) ? `Jump to ${dep}` : `${dep} is excluded or removed!`}
                   >
@@ -554,7 +554,7 @@ export default function Gate3Approval({ projectId, projectState, status, onResum
                 <button
                   type="button"
                   onClick={() => excludeDependentsToo(task.id)}
-                  className="rounded bg-amber-600 px-2 py-0.5 text-[11px] font-semibold text-ink hover:bg-amber-700"
+                  className="rounded bg-warn px-2 py-0.5 text-[11px] font-semibold text-ink hover:brightness-110"
                 >
                   Exclude dependents too
                 </button>
@@ -562,7 +562,7 @@ export default function Gate3Approval({ projectId, projectState, status, onResum
             )}
 
             {isPendingRemove && (
-              <div className="mt-2 flex flex-wrap items-center gap-2 rounded border border-red-300 bg-err/10 px-2.5 py-1.5">
+              <div className="mt-2 flex flex-wrap items-center gap-2 rounded border border-err/45 bg-err/10 px-2.5 py-1.5">
                 <span className="text-xs text-err">
                   {removeDependents.length} included task{removeDependents.length === 1 ? '' : 's'} depend on this:{' '}
                   {removeDependents.map((d) => d.id).join(', ')}
@@ -570,7 +570,7 @@ export default function Gate3Approval({ projectId, projectState, status, onResum
                 <button
                   type="button"
                   onClick={() => removeTask(task.id, true)}
-                  className="rounded bg-red-600 px-2 py-0.5 text-[11px] font-semibold text-ink hover:bg-red-700"
+                  className="rounded bg-err px-2 py-0.5 text-[11px] font-semibold text-ink hover:brightness-110"
                 >
                   Remove & exclude dependents
                 </button>
@@ -648,7 +648,7 @@ export default function Gate3Approval({ projectId, projectState, status, onResum
                 setShowArchBanner(false)
                 setShowArchDiff(false)
               }}
-              className="ml-auto text-xs font-semibold text-run hover:text-blue-600"
+              className="ml-auto text-xs font-semibold text-run hover:brightness-110"
             >
               Dismiss
             </button>
@@ -752,7 +752,7 @@ export default function Gate3Approval({ projectId, projectState, status, onResum
       </div>
 
       {patchErrors.length > 0 && (
-        <div className="rounded border border-red-300 bg-err/10 p-3">
+        <div className="rounded border border-err/45 bg-err/10 p-3">
           <p className="mb-1 text-sm font-semibold text-err">The plan failed validation:</p>
           <ul className="list-inside list-disc space-y-0.5 text-xs text-err">
             {patchErrors.map((err, i) => (
@@ -779,7 +779,7 @@ export default function Gate3Approval({ projectId, projectState, status, onResum
                 type="button"
                 onClick={handleCancelProject}
                 disabled={isPending}
-                className="rounded bg-red-600 px-3 py-1.5 text-xs font-semibold text-ink hover:bg-red-700"
+                className="rounded bg-err px-3 py-1.5 text-xs font-semibold text-ink hover:brightness-110"
               >
                 {submitting === 'reject' ? 'Cancelling...' : 'Yes, cancel project'}
               </button>

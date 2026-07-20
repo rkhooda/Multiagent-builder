@@ -70,7 +70,7 @@ function QualityThresholdBanner({ report }) {
             type="button"
             onClick={() => setShowBreakdown((open) => !open)}
             aria-expanded={showBreakdown}
-            className="mt-1.5 text-xs font-semibold text-warn underline hover:text-amber-700"
+            className="mt-1.5 text-xs font-semibold text-warn underline hover:brightness-110"
           >
             {showBreakdown ? 'Hide breakdown' : 'Show breakdown'}
           </button>
@@ -194,7 +194,7 @@ function FixModal({ filepath, findings, dependentCount, submitting, error, onSub
                     setInstruction((prev) => (prev ? `${prev.trimEnd()}\n- ${finding.description}` : `- ${finding.description}`))
                   }
                   title={finding.description}
-                  className="max-w-full truncate rounded-full border border-accent/35 bg-accent-soft px-2.5 py-1 text-left text-[11px] text-accent hover:bg-orange-100"
+                  className="max-w-full truncate rounded-full border border-accent/35 bg-accent-soft px-2.5 py-1 text-left text-[11px] text-accent hover:bg-accent/15"
                 >
                   {finding.description.slice(0, 80)}
                   {finding.description.length > 80 ? '…' : ''}
@@ -496,7 +496,7 @@ export default function Gate4Approval({ projectId, projectState, status, onResum
                 type="button"
                 onClick={handleCancelProject}
                 disabled={isPending}
-                className="rounded bg-red-600 px-3 py-1.5 text-xs font-semibold text-ink hover:bg-red-700 disabled:opacity-60"
+                className="rounded bg-err px-3 py-1.5 text-xs font-semibold text-ink hover:brightness-110 disabled:opacity-60"
               >
                 {submitting === 'reject' ? 'Cancelling…' : 'Yes, cancel project'}
               </button>

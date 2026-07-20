@@ -153,7 +153,7 @@ export default function StageTimeline({ projectState, status, events, regenerati
           const hasDiff = Boolean(STAGE_DOC[key] && projectState?.previous_versions?.[STAGE_DOC[key]])
           return (
             <div key={key} className="flex items-center">
-              {i > 0 && <span className="mx-1 text-gray-300">→</span>}
+              {i > 0 && <span className="mx-1 text-ink-2">→</span>}
               <div className="group relative">
                 <button
                   type="button"
@@ -162,7 +162,7 @@ export default function StageTimeline({ projectState, status, events, regenerati
                     state === 'done'
                       ? `text-ink-2 ${hasDiff ? 'hover:bg-overlay cursor-pointer' : 'cursor-default'}`
                       : state === 'pending'
-                        ? 'cursor-default text-gray-300'
+                        ? 'cursor-default text-ink-2'
                         : state === 'error'
                           ? 'bg-err/10 text-err'
                           : state === 'skipped'
@@ -229,7 +229,7 @@ export default function StageTimeline({ projectState, status, events, regenerati
             <button
               type="button"
               onClick={() => setDiffStage(null)}
-              className="text-xs font-semibold text-ink-3 hover:text-gray-600"
+              className="text-xs font-semibold text-ink-3 hover:text-ink-2"
             >
               Close
             </button>

@@ -311,7 +311,7 @@ export default function Gate2Approval({ projectId, projectState, status, onResum
                 type="button"
                 onClick={handleCancelProject}
                 disabled={isPending}
-                className="rounded bg-red-600 px-3 py-1.5 text-xs font-semibold text-ink hover:bg-red-700"
+                className="rounded bg-err px-3 py-1.5 text-xs font-semibold text-ink hover:brightness-110"
               >
                 {submitting === 'reject' ? 'Cancelling...' : 'Yes, cancel project'}
               </button>

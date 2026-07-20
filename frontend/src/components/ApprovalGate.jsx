@@ -115,7 +115,7 @@ export default function ApprovalGate({ status, gateEvent, currentStage, eventsCo
                   onClick={() => setSelectedFile(file)}
                   className={`mb-1 block w-full rounded px-2 py-1.5 text-left font-mono text-[11px] leading-snug transition-colors ${
                     isActive
-                      ? 'bg-gray-900 text-ink'
+                      ? 'bg-overlay text-ink'
                       : `bg-raised hover:bg-overlay ${accent}`
                   }`}
                   title={file}
@@ -277,7 +277,7 @@ export default function ApprovalGate({ status, gateEvent, currentStage, eventsCo
                 className={`px-3 py-1 text-sm rounded font-medium ${
                   activeTab === 'requirements'
                     ? 'bg-overlay text-ink'
-                    : 'bg-overlay text-ink-2 hover:bg-gray-200'
+                    : 'bg-overlay text-ink-2 hover:bg-line'
                 }`}
               >
                 Requirements Doc
@@ -287,7 +287,7 @@ export default function ApprovalGate({ status, gateEvent, currentStage, eventsCo
                 className={`px-3 py-1 text-sm rounded font-medium ${
                   activeTab === 'research'
                     ? 'bg-overlay text-ink'
-                    : 'bg-overlay text-ink-2 hover:bg-gray-200'
+                    : 'bg-overlay text-ink-2 hover:bg-line'
                 }`}
               >
                 Research Report
@@ -297,7 +297,7 @@ export default function ApprovalGate({ status, gateEvent, currentStage, eventsCo
                 className={`px-3 py-1 text-sm rounded font-medium ${
                   activeTab === 'techstack'
                     ? 'bg-overlay text-ink'
-                    : 'bg-overlay text-ink-2 hover:bg-gray-200'
+                    : 'bg-overlay text-ink-2 hover:bg-line'
                 }`}
               >
                 Tech Stack
@@ -358,8 +358,8 @@ export default function ApprovalGate({ status, gateEvent, currentStage, eventsCo
                   onClick={() => setActiveTab(tab.id)}
                   className={`rounded-full px-3 py-1 text-sm font-medium transition-colors ${
                     activeTab === tab.id
-                      ? 'bg-green-600 text-ink'
-                      : 'bg-overlay text-ink-2 hover:bg-gray-200'
+                      ? 'bg-ok text-white'
+                      : 'bg-overlay text-ink-2 hover:bg-line'
                   }`}
                 >
                   {tab.label}

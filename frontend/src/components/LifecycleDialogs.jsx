@@ -151,7 +151,7 @@ export function RestartDialog({ projectId, projectName, onClose, onDone }) {
           type="button"
           onClick={submit}
           disabled={submitting || loading || !preview}
-          className="rounded bg-amber-600 px-4 py-2 text-sm font-semibold text-ink hover:bg-amber-700 disabled:opacity-50"
+          className="rounded bg-warn px-4 py-2 text-sm font-semibold text-ink hover:brightness-110 disabled:opacity-50"
         >
           {submitting ? 'Restarting…' : `Restart from ${stageLabel(stage)}`}
         </button>
@@ -196,7 +196,7 @@ export function DeleteDialog({ projectId, projectName, status, onClose, onDone }
         </p>
         <a
           href={`${API}/${projectId}/download`}
-          className="mt-2 inline-block rounded border border-warn/45 bg-raised px-3 py-1.5 text-xs font-semibold text-warn hover:bg-amber-100"
+          className="mt-2 inline-block rounded border border-warn/45 bg-raised px-3 py-1.5 text-xs font-semibold text-warn hover:bg-warn/20"
         >
           ↓ Download ZIP
         </a>
@@ -235,7 +235,7 @@ export function DeleteDialog({ projectId, projectName, status, onClose, onDone }
           type="button"
           onClick={submit}
           disabled={submitting || typed.trim().toLowerCase() !== 'delete'}
-          className="rounded bg-red-600 px-4 py-2 text-sm font-semibold text-ink hover:bg-red-700 disabled:opacity-40"
+          className="rounded bg-err px-4 py-2 text-sm font-semibold text-ink hover:brightness-110 disabled:opacity-40"
         >
           {submitting ? 'Deleting…' : 'Delete permanently'}
         </button>

@@ -31,10 +31,10 @@ const PRISM_LANGUAGE = {
 
 const DOT_COLOR = {
   python: 'bg-run',
-  javascript: 'bg-yellow-400', jsx: 'bg-yellow-400', typescript: 'bg-yellow-400', tsx: 'bg-yellow-400',
+  javascript: 'bg-warn', jsx: 'bg-warn', typescript: 'bg-warn', tsx: 'bg-warn',
   sql: 'bg-accent',
   markdown: 'bg-idle',
-  json: 'bg-teal-500', yaml: 'bg-teal-500',
+  json: 'bg-ok', yaml: 'bg-ok',
 }
 
 export function formatBytes(bytes) {
@@ -113,7 +113,7 @@ function TreeNode({ node, depth, selectedPath, collapsed, onToggle, onSelect, is
         selected ? 'bg-run/10 font-semibold text-run' : 'text-ink'
       }`}
     >
-      <span className={`h-2 w-2 flex-shrink-0 rounded-full ${DOT_COLOR[node.file.language] || 'bg-gray-300'}`} />
+      <span className={`h-2 w-2 flex-shrink-0 rounded-full ${DOT_COLOR[node.file.language] || 'bg-idle'}`} />
       <span className="truncate">{node.name}</span>
       {issueCount > 0 && (
         <span

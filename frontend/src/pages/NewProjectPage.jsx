@@ -202,7 +202,7 @@ export default function NewProjectPage() {
               disabled={loading}
               className={`w-full font-semibold py-2.5 px-4 rounded text-ink text-sm transition-colors cursor-pointer text-center block ${
                 loading
-                  ? 'bg-blue-400 cursor-not-allowed'
+                  ? 'bg-run cursor-not-allowed'
                   : 'bg-overlay hover:bg-line'
               }`}
             >

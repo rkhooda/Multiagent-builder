@@ -55,7 +55,7 @@ export default function ErrorCard({ info, onRecover }) {
 
   const palette = isRateLimit
     ? { border: 'border-warn/45', bg: 'bg-warn/10', title: 'text-warn', badge: 'bg-warn/10 text-warn' }
-    : { border: 'border-red-300', bg: 'bg-err/10', title: 'text-err', badge: 'bg-err/10 text-err' }
+    : { border: 'border-err/45', bg: 'bg-err/10', title: 'text-err', badge: 'bg-err/10 text-err' }
 
   return (
     <div className={`rounded-lg border ${palette.border} ${palette.bg} p-4 `}>

@@ -182,7 +182,7 @@ export default function MetricsPanel({ projectId, compact = false }) {
                   </div>
                   <div className="h-3 flex-1 overflow-hidden rounded-sm bg-overlay">
                     <div
-                      className={`h-full rounded-sm ${danger ? 'bg-err' : 'bg-emerald-500'}`}
+                      className={`h-full rounded-sm ${danger ? 'bg-err' : 'bg-ok'}`}
                       style={{ width: `${Math.max(pct, 1)}%` }}
                     />
                   </div>

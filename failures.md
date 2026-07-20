@@ -1394,3 +1394,68 @@ and scales budgets only where headroom was measured.
 Quality baseline held: offline re-score of `2901fb46` returns **21.9% usable**,
 identical to Day 25. All 12 offline suites green. Live-API agent tests could not
 run — exhausted quota, not regression.
+
+## Day 27 observations
+
+Pure frontend day: design system, dark mode, motion, gate layout, mobile.
+Zero LLM spend — every visual state was designed against Day 25's persisted
+projects loaded cold, and no pipeline was run. The one moment that would have
+cost quota (clicking Approve on a paused gate to prove the button works) was
+deliberately not taken; interactivity was verified through Request changes
+instead, which opens the feedback input without calling a model.
+
+**What got the token treatment.** Everything the eye actually lands on: the
+shell, projects list, project detail, live feed, all four gates, file browser,
+metrics panel, timeline, error cards, lifecycle dialogs and both forms. The
+audit for hardcoded palette classes (`bg-gray-*`, `text-blue-*`, …) went from
+several hundred to **zero**. Dark and light are two variable blocks in
+`index.css` and there is not a single `dark:` variant in the codebase.
+
+**The design rule.** Filled accent means one thing: the line has stopped and
+needs a human. Outline accent means an action is available. Everything the
+pipeline does unattended is neutral. This was not decoration — the first pass
+put gold on the New project button, the active filter chip and every gate
+action at once, and a waiting gate stopped being findable in a 52-row list.
+Rationing it fixed that. `rate_limited` deliberately takes the muted warn tone:
+waiting on a provider is not waiting on you.
+
+**Three planned approaches were rejected on inspection**, each recorded in its
+commit:
+- framer-motion was not installed. Its distinctive value is exit animation and
+  nothing here exits. Decisively, the global `prefers-reduced-motion` block
+  covers CSS but would NOT have reached a JS library's inline styles — staying
+  in CSS made accessibility automatic. Verified empirically: animations drop
+  0.18s → 0.00001s and transitions 0.15s → 0.00001s under emulated reduce.
+- The split-pane was achieved by giving each gate's existing content and action
+  blocks explicit grid placement, rather than restructuring 2,770 lines of gate
+  JSX for the same visual result.
+- "Make it all responsive" was scoped down to the one journey that matters.
+
+**Responsive scope decision.** The approve-from-phone path is fully mobile:
+drawer nav, progressively hidden table columns, single-column gates, and a
+pinned 2×2 action grid. Four surfaces deliberately refuse to render below `lg`
+and say so — the file browser, the per-agent metrics table, architecture
+diagrams and diffs. Shrinking those to 375px looks broken and invites decisions
+on evidence you cannot read. That boundary is stated in the UI, not hidden.
+
+**Real bugs found while restyling**, all pre-existing:
+- `--accent-ink` was written as an 8-digit hex, i.e. 33% alpha, washing the
+  approve label out against its own fill.
+- The `prose prose-sm` classes on every markdown block were **inert** — the
+  Tailwind typography plugin was never installed, so agent output had been
+  rendering unstyled since the markdown was added. Replaced with real
+  theme-aware styling.
+- `Layout.jsx` carried its own status-dot colour map that had already drifted
+  from `lib/status.js`, the file written specifically to stop that drift.
+- The code viewer was hardcoded to a light Prism theme.
+
+**No fixture was missing.** Every visual state had a persisted project to design
+against: all four gates paused, completed, error_paused, cancelled and
+interrupted. Day 24's cold-resume made this the cheapest day of the build.
+
+**Left deliberately.** Rarely-seen surfaces keep their own local palette objects
+(ErrorCard's severity map, Gate3's complexity badges) — they now resolve to
+tokens but were not restructured. `ProjectDetailPage` still holds a
+`react-hooks/exhaustive-deps` warning that predates today. No behavioural
+change: all nine offline backend suites still pass, and restart, delete,
+feedback and resume were each exercised in the browser.

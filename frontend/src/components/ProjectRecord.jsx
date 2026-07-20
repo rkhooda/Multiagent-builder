@@ -96,7 +96,7 @@ export default function ProjectRecord({ projectId, projectState }) {
               Generated Files ({fileList.length})
             </h4>
           </div>
-          <ul className="divide-y divide-gray-50">
+          <ul className="divide-y divide-line">
             {shown.map((file) => (
               <li key={file.path} className="flex items-center justify-between px-4 py-1.5">
                 <span className="truncate font-mono text-xs text-ink">{file.path}</span>
