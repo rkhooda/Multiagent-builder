@@ -9,7 +9,7 @@ from litellm import completion
 import litellm.exceptions as llm_exc
 
 from app.exceptions import LLMAuthError, LLMError, LLMRateLimitError, LLMTimeoutError
-from app.observability import metrics_store
+from app.observability import llm_cache, metrics_store
 
 # Load environment variables from the parent directory of backend/app (i.e. backend/.env)
 load_dotenv(dotenv_path=os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env"))
@@ -497,7 +497,8 @@ def _log_attempt(agent_type: str, model: str, attempt: int, outcome: str, starte
 
 
 def call_llm(messages: list, agent_type: str, max_tokens=4000, timeout=None,
-             project_id: str = None, label: str = None, fast_mode: bool = False) -> str:
+             project_id: str = None, label: str = None, fast_mode: bool = False,
+             use_cache: bool = True) -> str:
     """LLM call with a classified-error retry policy over the provider chain.
 
     Per model: one same-model retry on 429 (after a per-tier wait) or timeout;
@@ -520,6 +521,19 @@ def call_llm(messages: list, agent_type: str, max_tokens=4000, timeout=None,
         chain.append(ollama)
     timeout = timeout or AGENT_TIMEOUT_SECONDS.get(agent_type, DEFAULT_TIMEOUT_SECONDS)
     max_tokens = resolve_max_tokens(agent_type, max_tokens, fast_mode)
+
+    # Checked before the chain, not per tier: the cached value is the answer to
+    # the question, so which tier would have produced it is irrelevant. Recorded
+    # as an attempt with zero tokens so hit-rate and the tokens the cache SAVED
+    # are both visible in the same table as everything else.
+    cache_key = llm_cache.make_key(agent_type, messages, max_tokens) if use_cache else None
+    if cache_key:
+        hit = llm_cache.get(cache_key)
+        if hit is not None:
+            _log_attempt(agent_type, "cache", 1, "ok", time.monotonic(),
+                         project_id=project_id, label=label,
+                         context_chars=context_chars, cache="hit")
+            return hit
 
     auth_failures = 0
     last_error = None
@@ -576,11 +590,18 @@ def call_llm(messages: list, agent_type: str, max_tokens=4000, timeout=None,
                 # that under-report usage.
                 usage = _extract_usage(resp, model)
                 _spend(model, usage)
+                content = resp.choices[0].message.content or ""
+                truncated = _finish_reason(resp) == "length"
+                # A truncated completion is not cached: it would make one cut-off
+                # document permanent and hide the defect behind a cache hit.
+                if cache_key and not truncated:
+                    llm_cache.put(cache_key, agent_type, content, project_id)
                 _log_attempt(agent_type, model, attempt, "ok", started,
                              usage=usage, project_id=project_id,
                              label=label, context_chars=context_chars,
-                             truncated=_finish_reason(resp) == "length")
-                return resp.choices[0].message.content or ""
+                             truncated=truncated,
+                             cache="miss" if cache_key else None)
+                return content
             except llm_exc.Timeout:
                 last_error = LLMTimeoutError(
                     f"{model} timed out after {timeout}s", agent_type, model)

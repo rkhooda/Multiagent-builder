@@ -157,17 +157,24 @@ def latency_percentiles_by_agent(project_id: str = None) -> list:
     by_agent: dict = {}
     for r in rows:
         by_agent.setdefault(r["agent"], []).append(r["latency_ms"])
+    grand_total = sum(sum(v) for v in by_agent.values()) or 1
     out = []
     for agent, lats in by_agent.items():
         lats.sort()
+        total = sum(lats)
         out.append({
             "agent": agent,
             "calls": len(lats),
             "p50_ms": lats[len(lats) // 2],
             "p95_ms": lats[min(int(len(lats) * 0.95), len(lats) - 1)],
             "max_ms": lats[-1],
+            # Total, not just percentiles: the question "where did the minutes
+            # go" is answered by summed time, and a fast agent called 43 times
+            # can cost more wall-clock than a slow one called twice.
+            "total_ms": total,
+            "pct_of_total": round(total / grand_total * 100, 1),
         })
-    return sorted(out, key=lambda r: r["p50_ms"], reverse=True)
+    return sorted(out, key=lambda r: r["total_ms"], reverse=True)
 
 
 def slowest_agents(n: int = 2, project_id: str = None) -> list:
@@ -226,6 +233,10 @@ def tokens_used_today(provider: str = None) -> dict:
     out: dict = {}
     for r in rows:
         p = (r["model"] or "").split("/", 1)[0].lower()
+        # Cache hits are recorded with model='cache' so they show up in the
+        # attempt table; they are not a provider and spend no allowance.
+        if p in ("", "cache"):
+            continue
         entry = out.setdefault(p, {"tokens": 0, "calls": 0})
         entry["tokens"] += r["tokens"] or 0
         entry["calls"] += r["calls"] or 0
@@ -257,6 +268,8 @@ def run_summary(project_id: str) -> dict:
         "has_metrics": attempts > 0,          # False for pre-Day-23 projects
         "by_agent": avg_tokens_by_agent(project_id),
         "latency_by_agent": latency_percentiles_by_agent(project_id),
+        "cache": cache_stats(project_id),
+        "truncations": truncations(project_id),
     }
 
 

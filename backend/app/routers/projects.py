@@ -25,7 +25,7 @@ from app.core.database import (
 )
 from app.models import status as status_vocab
 from app.utils.file_writer import OUTPUTS_ROOT
-from app.observability import metrics_store
+from app.observability import llm_cache, metrics_store
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
 
@@ -1134,6 +1134,12 @@ Apply the requested fix. Output ONLY the complete corrected file content — no 
             [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_content}],
             agent_type,
             max_tokens=4000,
+            project_id=project_id,
+            label=filepath,
+            # Never cached. Re-requesting a fix with the SAME instruction means
+            # "that did not work, try again" — replaying the previous answer is
+            # the one thing the user is certain not to want.
+            use_cache=False,
         ))
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Fix generation failed: {e}")
@@ -1233,8 +1239,36 @@ def get_project_metrics(project_id: str):
     Projects created before Day 23 have no rows; run_summary returns
     has_metrics=False with zeroed totals so the UI renders an explanation
     instead of an error.
+
+    Provider budgets are process-wide rather than per-project: quota is shared
+    across every run, so "how much is left today" is the same question whichever
+    project asks it.
     """
-    return metrics_store.run_summary(project_id)
+    from app.llm_router import daily_budget_report
+
+    summary = metrics_store.run_summary(project_id)
+    summary["providers"] = daily_budget_report()
+    try:
+        values = graph.get_state({"configurable": {"thread_id": project_id}}).values
+        summary["fast_mode"] = bool((values or {}).get("fast_mode"))
+    except Exception:                           # noqa: BLE001 — a panel detail
+        summary["fast_mode"] = False
+    return summary
+
+
+@router.delete("/{project_id}/cache")
+def clear_project_cache(project_id: str):
+    """Drop this project's cached responses so the next run regenerates.
+
+    The escape hatch for when a user genuinely wants fresh output rather than a
+    faithful replay — the cache is otherwise deliberately sticky.
+    """
+    return {"cleared": llm_cache.clear(project_id), "scope": project_id}
+
+
+@router.delete("/cache/all")
+def clear_all_cache():
+    return {"cleared": llm_cache.clear(), "scope": "global"}
 
 
 @router.get("/{project_id}/files")
