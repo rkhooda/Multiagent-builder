@@ -82,12 +82,47 @@ def _dep_edges(tasks: list, implicit_deps) -> tuple:
         t = {**t, "id": tid}
         by_id[tid] = t
     ids = set(by_id)
-    edges = {}
+
+    # Explicit edges first: these are the planner's intent, validated at Gate 3.
+    edges = {tid: {d for d in (t.get("requires") or []) if d in ids and d != tid}
+             for tid, t in by_id.items()}
+
+    if not implicit_deps:
+        return by_id, edges
+
+    def depends_on(start: str, target: str) -> bool:
+        """Does `start` transitively wait for `target` under current edges?"""
+        seen, stack = set(), [start]
+        while stack:
+            node = stack.pop()
+            if node == target:
+                return True
+            if node in seen:
+                continue
+            seen.add(node)
+            stack.extend(edges.get(node, ()))
+        return False
+
+    # Implicit edges are a HEURISTIC we add (Day 19 layering: everything waits on
+    # the shared API client). They can contradict an explicit edge, and when they
+    # do the result is a false cycle that blocks the entire phase:
+    #
+    #   utils/api.js explicitly requires config.js  (the client reads config)
+    #   implicit layering makes config.js wait on utils/api.js (it is a non-lib)
+    #   -> 2-cycle, and since every other file waits on the client, NOTHING runs.
+    #
+    # That is not a bad plan — the plan is correct and acyclic. So the heuristic
+    # yields to the planner, never the reverse: an implicit edge is added only
+    # when it does not close a cycle. Dropping one is always safe, because the
+    # dependency it encodes is an optimisation of generation ORDER, not a
+    # correctness requirement.
     for tid, t in by_id.items():
-        deps = set(t.get("requires") or [])
-        if implicit_deps:
-            deps |= set(implicit_deps(t, by_id) or [])
-        edges[tid] = {d for d in deps if d in ids and d != tid}
+        for d in (implicit_deps(t, by_id) or []):
+            if d not in ids or d == tid or d in edges[tid]:
+                continue
+            if depends_on(d, tid):
+                continue  # would close a cycle against an explicit edge
+            edges[tid].add(d)
     return by_id, edges
 
 
@@ -111,11 +146,31 @@ def _kahn_order(by_id: dict, edges: dict) -> list:
                 ready.append(dep)
         ready.sort()
     if len(order) < len(by_id):
-        cyclic = sorted(set(by_id) - set(order))
+        stuck = set(by_id) - set(order)
+        # Report the tasks actually IN a cycle, not everything left unscheduled.
+        # Those are two very different sets: one blocked pair upstream of a
+        # fan-out strands every dependent, so the naive set names the whole
+        # phase and buries the two ids that matter.
+        in_cycle = sorted(t for t in stuck if _reaches_itself(t, edges, stuck))
+        detail = f"cycle: {in_cycle}" if in_cycle else f"unschedulable: {sorted(stuck)}"
         raise ValueError(
-            f"Dependency cycle among tasks {cyclic} — cannot schedule. "
-            f"(Gate 3 plan validation should reject cyclic `requires`.)")
+            f"Dependency cycle among tasks — cannot schedule. {detail}"
+            f" ({len(stuck)} task(s) stranded in total.)")
     return order
+
+
+def _reaches_itself(start: str, edges: dict, scope: set) -> bool:
+    """True when `start` is reachable from itself — i.e. genuinely in a cycle."""
+    seen, stack = set(), list(edges.get(start, ()))
+    while stack:
+        node = stack.pop()
+        if node == start:
+            return True
+        if node in seen or node not in scope:
+            continue
+        seen.add(node)
+        stack.extend(edges.get(node, ()))
+    return False
 
 
 async def run_tasks_parallel(tasks, state, *, generate, build_context, stub_for,

@@ -242,8 +242,63 @@ def test_cycle_detection():
     raise AssertionError("expected a ValueError on a dependency cycle")
 
 
+def test_implicit_dep_never_contradicts_explicit():
+    """An implicit layering edge must yield to an explicit one — Day 25.
+
+    The real failure this reproduces: `utils/api.js` (a lib) explicitly requires
+    `config.js`, while the frontend coder's layering makes every non-lib —
+    including `config.js` — wait on the lib. That is a 2-cycle over a perfectly
+    valid plan, and because every other file waits on the lib, the WHOLE phase
+    was stranded (47/47 tasks unschedulable on the Day 25 simple run).
+
+    Dropping the implicit edge is always safe: it encodes generation order, not
+    correctness. Dropping the explicit one would defy the validated plan.
+    """
+    from app.agents.parallel_runner import _dep_edges, _kahn_order
+
+    tasks = [
+        {"id": "config", "filepath": "frontend/src/config.js", "requires": []},
+        {"id": "api", "filepath": "frontend/src/utils/api.js", "requires": ["config"]},
+        {"id": "page", "filepath": "frontend/src/pages/Home.jsx", "requires": []},
+    ]
+    libs = ["api"]
+
+    def implicit(task, by_id):
+        return [] if task["filepath"].endswith("api.js") else libs
+
+    by_id, edges = _dep_edges(tasks, implicit)
+    order = _kahn_order(by_id, edges)
+
+    assert len(order) == 3, f"whole phase stranded: {order}"
+    # The explicit edge survives; the contradicting implicit one was dropped.
+    assert order.index("config") < order.index("api"), order
+    # The non-contradicting implicit edge is kept: a page still waits on the client.
+    assert "api" in edges["page"], edges
+    assert order.index("api") < order.index("page"), order
+
+
+def test_real_cycle_message_names_only_the_cycle():
+    """A stranded fan-out must not bury the two ids that actually cycle."""
+    from app.agents.parallel_runner import _dep_edges, _kahn_order
+
+    tasks = [{"id": "a", "requires": ["b"]}, {"id": "b", "requires": ["a"]}] + [
+        {"id": f"d{i}", "requires": ["a"]} for i in range(6)
+    ]
+    by_id, edges = _dep_edges(tasks, None)
+    try:
+        _kahn_order(by_id, edges)
+    except ValueError as e:
+        msg = str(e)
+        assert "cycle: ['a', 'b']" in msg, msg
+        assert "8 task(s) stranded" in msg, msg
+        return
+    raise AssertionError("expected a ValueError on a real cycle")
+
+
 TESTS = [
     ("diamond ordering + content injection", test_diamond_ordering_and_content_injection),
+    ("implicit dep yields to explicit (no false cycle)", test_implicit_dep_never_contradicts_explicit),
+    ("cycle message names only the cycle", test_real_cycle_message_names_only_the_cycle),
     ("no lost updates (20 @ 3)", test_no_lost_updates),
     ("failure blocks dependents {2,1,1}", test_failure_blocks_dependents),
     ("transitive blocking chain", test_transitive_blocking_chain),
