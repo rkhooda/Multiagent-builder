@@ -449,6 +449,44 @@ LOCAL_FALLBACKS.update({agent: _LOCAL_PROSE for agent in
 # "fail" on every long document while it was in fact working correctly.
 OLLAMA_TIMEOUT_FLOOR_SECONDS = 900
 
+# Ollama defaults every model to a 4,096-token context REGARDLESS of what the
+# model supports, and then silently truncates anything that does not fit:
+#
+#   msg="truncating input prompt" limit=2050 prompt=4375 keep=4 new=2050
+#
+# Measured on Day 30. The available input budget is num_ctx MINUS the requested
+# output, so a 4k context asked for ~2k tokens leaves ~2k for the prompt — and
+# this pipeline sends 11-15k characters (3-4.5k tokens) to every agent. More
+# than half of each prompt was being discarded, keeping only the first 4 tokens.
+#
+# The call still returns 200 with plausible-looking prose, so nothing surfaces
+# it: no error, no finish_reason, no metric. It presents as "local models are
+# weak" when the model never saw the question. This is the real root cause
+# behind the Day 29 conclusion that local output is thin and that planning
+# cannot emit a valid plan.
+#
+# So size the window to the actual request instead of accepting the default.
+# CHARS_PER_TOKEN is deliberately pessimistic (ollama's tokenizer counted 3.3
+# chars/token on this pipeline's prompts where litellm reported 4.9) because
+# under-estimating silently truncates again, while over-estimating only costs
+# KV-cache memory.
+OLLAMA_CHARS_PER_TOKEN = 3.0
+OLLAMA_MIN_CONTEXT_TOKENS = 4096
+# A ceiling, because the KV cache is real memory on the one machine this shares
+# with everything else — an 8GB box cannot hold a 32k window for a 4B model on
+# top of the weights. Raise it on a machine with headroom.
+OLLAMA_MAX_CONTEXT_TOKENS = int(os.getenv("OLLAMA_MAX_CONTEXT_TOKENS", "16384"))
+
+
+def ollama_num_ctx(context_chars: int, max_tokens: int) -> int:
+    """Context window sized to this request, clamped to what the box can hold."""
+    needed = int(context_chars / OLLAMA_CHARS_PER_TOKEN) + max_tokens
+    # Round up to a 1,024 multiple so near-identical prompts reuse one cache
+    # size instead of forcing a reallocation per call.
+    rounded = -(-needed // 1024) * 1024
+    return max(OLLAMA_MIN_CONTEXT_TOKENS,
+               min(rounded, OLLAMA_MAX_CONTEXT_TOKENS))
+
 # Local models share ONE machine's RAM and GPU. Past a small number of
 # concurrent requests they do not degrade gracefully like a cloud endpoint —
 # they contend for the same weights and get SLOWER than running serially, and on
@@ -728,7 +766,11 @@ def call_llm(messages: list, agent_type: str, max_tokens=4000, timeout=None,
                         # so host (localhost) and the compose profile service
                         # (http://ollama:11434) both work off one env var
                         # instead of litellm's own hardcoded default.
-                        **({"api_base": OLLAMA_URL} if is_local else {}),
+                        # num_ctx is what stops ollama silently truncating the
+                        # prompt to fit its 4k default — see ollama_num_ctx.
+                        **({"api_base": OLLAMA_URL,
+                            "num_ctx": ollama_num_ctx(context_chars, max_tokens)}
+                           if is_local else {}),
                         # Filterable in the dashboard by project, agent and attempt.
                         # Ignored by the passthrough when tracing is off.
                         **({"langsmith_extra": {
