@@ -1,0 +1,32 @@
+# Context root for the BACKEND image (see backend/Dockerfile — its context is
+# the repo root so it can reach prompts/). The frontend build has its own
+# context and its own frontend/.dockerignore.
+#
+# Unlike .gitignore, these patterns do not match at every depth on their own,
+# hence the explicit **/.
+
+.git/
+.DS_Store
+**/__pycache__/
+**/*.pyc
+
+# The frontend is a separate image; none of it belongs in the backend context.
+frontend/
+
+venv/
+.venv/
+backend/scripts/node_modules/
+
+# Secrets must never enter an image layer: deleting a file in a later layer
+# leaves it readable in the build history.
+.env
+**/.env
+
+# Runtime data. These are bind-mounted at run time; baking a copy in would both
+# bloat the image and ship stale databases.
+data/
+outputs/
+**/*.db
+**/*.db-wal
+**/*.db-shm
+backend/server.log

@@ -3,7 +3,11 @@
 
 services:
   backend:
-    build: ./backend
+    # Context is the repo root, not ./backend: the agents load their prompts
+    # from /prompts, a sibling of /app, so the build has to reach prompts/.
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
     env_file: ./backend/.env
     environment:
       # Moves projects.db and metrics.db out of /app, where the application
@@ -33,7 +37,9 @@ services:
   frontend:
     build: ./frontend
     ports:
-      - "3000:80"
+      # 3000 is a crowded default — set FRONTEND_PORT=3001 if another dev server
+      # already holds it. Host-side only; nginx still listens on 80 inside.
+      - "${FRONTEND_PORT:-3000}:80"
     # Not for readiness — for DNS. nginx resolves `backend` in proxy_pass once,
     # at startup, and exits with "host not found in upstream" if the name does
     # not resolve yet. This guarantees the container exists by then. A backend

@@ -4,9 +4,13 @@
 # @babel/parser only, installed from the lockfile. Day 22 chose Babel over
 # esbuild precisely because it is pure JS with no per-arch native binary, which
 # is what makes this stage deterministic and architecture-independent.
+# The build context is the REPO ROOT, not backend/, because the nine agent
+# modules load their system prompts from `parents[3]/"prompts"` — which resolves
+# to /prompts in the image, a sibling of /app rather than a child. Prompts are
+# source, not data: they belong in the image, so the context has to reach them.
 FROM node:20-slim AS jsdeps
 WORKDIR /scripts
-COPY scripts/package.json scripts/package-lock.json ./
+COPY backend/scripts/package.json backend/scripts/package-lock.json ./
 RUN npm ci
 
 # ── Stage 2: runtime ─────────────────────────────────────────────────────────
@@ -29,10 +33,13 @@ WORKDIR /app
 # Dependency layer first, alone: editing an agent must not re-run pip install.
 # The npm side is isolated in its own stage and cached independently, so the
 # two installs never invalidate each other.
-COPY requirements.txt .
+COPY backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY . .
+COPY backend/ .
+
+# Sibling of /app, matching what parents[3] computes at runtime.
+COPY prompts/ /prompts
 # After COPY . . so node_modules wins regardless of build context contents.
 # Re-copying 5MB from a cached stage is free; getting the order wrong is not.
 COPY --from=jsdeps /scripts/node_modules ./scripts/node_modules
