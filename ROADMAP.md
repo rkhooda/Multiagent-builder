@@ -101,6 +101,16 @@ this demonstrably works best.
 
 ### 5. Local models do not currently replace cloud
 
+> **Day 30 correction.** A large part of what Day 29 attributed to weak local
+> models was actually a silent prompt-truncation bug. Ollama defaults every
+> model to a 4,096-token context and discards the overflow —
+> `truncating input prompt limit=2050 prompt=4375 keep=4` — so with 11–15k
+> character prompts, **more than half of every local prompt was being thrown
+> away**, keeping only the first 4 tokens, while the call returned 200 with
+> plausible prose. The model was never shown the question. Fixed in `d7f2578`
+> by sizing `num_ctx` per request. **The measurements below predate the fix and
+> should be treated as a lower bound on local quality, not a verdict on it.**
+
 Ollama removes the quota ceiling and costs nothing, and it genuinely keeps a
 run moving. But on an 8GB machine it has **never completed a full run** (Day
 29, two attempts, two different failure modes):
@@ -135,6 +145,14 @@ live `/api/v1/models` before assuming a logic bug.
 - **The download ZIP silently skips non-UTF-8 files.** Logged server-side only.
 - **`LLM_MODE` is process-wide**, not per project. Concurrent runs cannot use
   different tiers.
+- **No progress feedback within a stage.** Events are emitted when a *node*
+  completes, so a long first stage shows "No events streamed yet" for its whole
+  duration. Barely noticeable on cloud (seconds); on local a stage takes 5+
+  minutes and the UI looks hung when it is working normally.
+- **Deleting a running project cannot interrupt the call already in flight.**
+  Fixed so no *further* calls are made (`a5a8ce7`), but a blocking provider
+  request cannot be cancelled cleanly, so one call per in-flight worker still
+  completes and is billed against quota.
 
 ---
 
@@ -162,6 +180,22 @@ above; the old error message already claimed to do this.* Small and cheap.
 **A live model-availability check at startup.** *Evidence: slug delisting broke
 the pipeline twice (Days 23, 25).* Probe `MODELS` against the provider's live
 list on boot and warn, instead of discovering it as a 404 mid-run.
+
+**Re-measure the local tier now that prompts are no longer truncated.**
+*Evidence: the Day 29 verdict on local quality was measured while >50% of every
+prompt was silently discarded (see the correction in §5).* Every local
+conclusion in this repo — thin output, invalid plans, "not worth the wait" —
+needs re-running against `d7f2578` before it can be trusted. Cheap: local costs
+nothing but time.
+
+**Surface truncation and context limits as metrics.** *Evidence: the
+truncation above was invisible for two days because it produced a 200 with
+plausible prose — no error, no `finish_reason`, no metric.* Anything that
+silently discards input should be as visible as a rate limit already is.
+
+**Emit progress events within a stage, not only at node boundaries.**
+*Evidence: a local stage takes 5+ minutes during which the UI reads "No events
+streamed yet" and looks hung.*
 
 ### Medium-term — raise output quality
 
