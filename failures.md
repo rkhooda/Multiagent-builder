@@ -1521,3 +1521,118 @@ frontend 97.4MB. The backend is worth revisiting if it ever ships anywhere.
 **Port 3000 was already held** by an unrelated Next.js dev server, so the host
 port is now `${FRONTEND_PORT:-3000}` and the test ran on 3001. Host-side only —
 nginx still listens on 80 inside, so the proxy path tested is the real one.
+
+## Day 29 observations
+
+Ollama activated as a genuine tier-3 fallback. Cloud was disabled for every test
+by marking the daily budgets spent, so the day's testing cost **zero cloud
+calls** — no keys were broken and no request left the machine.
+
+**Hardware forced the model set, and the prompt's recommended one did not fit.**
+This is an 8GB M1. `qwen3:14b` needs ~16GB and was never attempted. `phi4-mini`
+(3.8B, Q4_K_M, 2.5GB) pulled and served fine. `qwen2.5-coder:7b` (4.7GB) was
+abandoned mid-download — see the thrashing note below. The system adapted
+correctly without being told: the probe enumerated one model and every agent
+degraded to it through the preference lists, which is exactly the
+ideal-absent-so-take-next-best path working.
+
+**Pulling a model while generating makes an 8GB machine unusable.** Mid-run:
+swap at 10.85GB of 12GB, 1.3M pageouts, 15% memory free, and `llama-server`
+sitting at **6.8% CPU** — blocked on paging, not computing. Killing the download
+recovered it. Two consequences: the 7B coder model is not viable on this machine
+alongside anything else, and `OLLAMA_MAX_CONCURRENT=1` is not conservatism, it
+is the difference between working and swapping.
+
+**The probe's 1s timeout made the local tier vanish under its own load.** Found
+by the harness, not by reading. A re-probe (60s TTL) landed during a 101s local
+completion, `/api/tags` did not answer within 1s, the model list came back
+empty, and the next agent skipped a *working* Ollama and raised instead of
+falling back. Fixed: 3s timeout, and a failed re-probe now retains the last
+known models. Once the daemon has been seen serving, a failure means "busy" far
+more often than "gone". An absent daemon is unaffected — nothing listening is a
+connection refusal, not a timeout.
+
+**The rate limiter already did the proactive routing.** Day 26 checks
+`budget_exhausted` at the top of each tier and `continue`s before building a
+request, so an exhausted allowance already fell through to whatever tier came
+next. Ollama just became that tier. Confirmed in the logs: both cloud tiers log
+`budget_exhausted` at `latency_ms: 0` and no request is sent. Nothing needed
+building here — it needed verifying.
+
+**Every agent has a cross-provider fallback pair, so one exhausted provider
+never reaches local.** `research` is gemini+groq, `architecture` is groq+gemini,
+and so on — no agent has both tiers on one provider. Exhausting a single
+provider therefore just moves work to the other cloud provider; local is only
+reached on near-total cloud exhaustion. That is the correct ordering (local IS a
+last resort), but it means the "provider X is spent so X's agents go local"
+scenario does not exist in this codebase. The only true mixed case is
+gemini+groq spent with openrouter alive, which keeps `requirements` on cloud
+(its fallback is openrouter) and sends the other eight local.
+
+**Per-agent routing, cloud fully disabled — 9/9 agents served locally**, 304s
+total, 34s average on short prompts:
+
+| agent | s | agent | s | agent | s |
+|---|---|---|---|---|---|
+| research | 37.5 | requirements | 13.1 | architecture | 12.9 |
+| planning | 16.0 | frontend_code | 74.4 | backend_code | 43.8 |
+| database | 60.9 | qa | ~24 | devops | 44.3 |
+
+**LiteLLM does report usage for Ollama.** `prompt_tokens` and
+`completion_tokens` both populated on every local call, so Day 23's null-safe
+handling needed no special case for the local tier.
+
+**Local output is far shorter than cloud output, and that is the quality story.**
+Completion tokens on the full pipeline run against the cloud averages recorded
+on Day 25:
+
+| agent | cloud avg | local | ratio |
+|---|---|---|---|
+| research | 4.1k | 1,145 | 28% |
+| requirements | 4.5k | 1,556 | 35% |
+| architecture | 10.6k | 1,250 | 12% |
+| planning | 21.5k | 718 | **3%** |
+
+**Planning is the agent that degrades badly, and the validators caught it.**
+phi4-mini emitted a structurally invalid plan: 6 tasks against a minimum of 8,
+two tasks with empty `filepath`, and 27 required files missing. At 718 completion
+tokens against a cloud average of 21.5k there was not enough output for a valid
+plan to exist. The Day 22 validation and repair layer rejected it and re-ran —
+which is the argument against a pause-for-cloud whitelist: the schema validator
+already refuses to build on a too-weak result, without a policy table to keep in
+sync. Planning is the one agent where local is more expensive than it looks,
+because each repair is another multi-minute local call.
+
+**Stage timings, full pipeline, cloud disabled** (phi4-mini, 8GB M1):
+research 201.7s, requirements 208.7s, architecture 160.1s, planning 324.3s.
+Roughly 30-50x the cloud equivalents — gemini does research in ~8s. Local is not
+a performance option, it is an availability option.
+
+**Design decisions taken and why** (recorded at the ponytail passes):
+- Two local preference lists (code vs prose), not nine per-agent entries. On one
+  machine the binding cost is the ~5GB model swap, not model capability, so
+  alternating models per stage costs more than capability-matching gains.
+- No pause-for-cloud agent whitelist. Every high-stakes artifact already sits
+  behind a human gate, and the plan additionally behind a schema validator. A
+  refusal table would guard a failure those already catch. `LLM_MODE=cloud-only`
+  gives the same protection as a per-run choice with nothing to keep in sync.
+- The local concurrency cap lives in `call_llm`, not the Day 20 parallel runner.
+  The runner cannot know which tier a call will land on; the tier is only known
+  at the call. Three workers still get admitted and only those reaching local
+  serialise.
+- No `tier` column in metrics. `ollama/qwen3:4b` already encodes it and every
+  attempt passes one logging choke point.
+- Per-project `LLM_MODE` not plumbed through state. Single-user tool, sequential
+  runs, and the `mode` parameter on `call_llm` already exists — so per-project
+  becomes additive the day two concurrent projects need different tiers.
+
+**Full end-to-end local run: reached gate 3, not yet completed.** Research →
+requirements → architecture → planning all succeeded locally through gates 1 and
+2, with every cloud tier skipped at `latency_ms: 0`. The run then sat in the
+planning repair loop: each repair is another ~5 minute local call, and the
+machine was in sustained swap (9.5GB of 10GB, 14% memory free, `llama-server`
+at 2.3% CPU — stalled on paging rather than computing). The routing claim is
+proven — 100% of calls served locally, zero cloud requests, attribution correct
+in metrics — but "completes end-to-end" is **not** demonstrated on this
+hardware, and should not be claimed until it is. On 8GB the honest summary is
+that local models keep the pipeline *alive*, not that they get it *finished*.
