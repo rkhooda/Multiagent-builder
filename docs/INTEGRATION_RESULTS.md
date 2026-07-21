@@ -264,3 +264,115 @@ tokens, latency, outcome and `context_chars`, and the exact prompt any agent
 received is reconstructible offline from the persisted state plus the prompt
 templates. This is weaker than a trace for seeing *what the model saw*, and that
 limitation is noted wherever it affected a fix decision below.
+
+---
+
+# Day 30 — Capstone run: the complexity ceiling, honestly
+
+The deliberately-hard brief, run through the **containerised stack** (the
+artifact a user actually gets), to find the honest edge.
+
+**Brief:** a real-time collaborative code editor — live cursor sharing, multiple
+file tabs, terminal access, shareable URLs. Written to the Day 30 template
+standard (target users, 7 features, constraints, 8 explicit out-of-scope items)
+so the variable under test is *complexity*, not brief quality. This is at or
+past the ceiling Day 25 predicted, by design.
+
+## Result: the run did not reach Gate 1. That is the measurement.
+
+| | |
+|---|---|
+| Project | `3e7892ea` CollabEditor |
+| Stack | containerised (`docker compose`, nginx), host Ollama |
+| Reached | research stage only — **no gate reached** |
+| LLM attempts | 37 — **3 ok, 33 failed, 1 skipped** |
+| Tokens | 13,902 (5,645 prompt / 8,257 completion) |
+| LLM wall-clock | 891.8s |
+| Cloud calls that succeeded | **0** |
+| Local calls that succeeded | 2 (`qwen3:4b`) |
+| % usable | **n/a — no files were generated** |
+
+**Scoring `score_project.py` was not applicable**: the run never reached a
+code-generating stage, so there is nothing to score. Recording a 0% would imply
+the coders performed badly, which is precisely the misattribution Day 25 warns
+against. The pipeline never got that far.
+
+### Why: the cloud was already spent before the run began
+
+| Provider | State at run time |
+|---|---|
+| Gemini 2.5 Flash | daily quota exhausted (429 on every call) |
+| Groq llama-3.3-70b | **97,734–100,799 / 100,000 tokens per day** |
+| OpenRouter free | unused, but no viable slug for these agents |
+
+Every one of the 33 failures was a rate limit, not a model failing at the task.
+**No model ever saw a well-formed problem and answered it badly.** The complexity
+of the brief was therefore never actually tested — the run was starved before
+complexity could become the binding constraint.
+
+This is the same wall as Day 25, and it is the honest headline: on free tiers,
+**provider quota — not model capability, and not project complexity — remains
+the thing that stops this pipeline.** Two days of measurement designed to find
+the complexity ceiling have both been stopped by the throughput ceiling first.
+
+### What the run *did* prove
+
+The resilience path works end to end, and was exercised for real rather than
+simulated:
+
+1. **Clean pause, not a crash.** Chain exhausted → `rate_limited`,
+   `failed_agent: research`, checkpoint intact, nothing corrupted.
+2. **Recovery works.** `POST /recover {"action":"retry"}` restarted the failed
+   agent from the checkpoint.
+3. **Degradation works — once provisioned.** With Ollama running, the chain
+   resolved `ollama/qwen3:4b` for every agent type and research **completed on
+   local** where cloud could not serve it at all (284.8s, 3,757 completion
+   tokens).
+4. **Survives a full stack restart.** `docker compose down`/`up` mid-run; the
+   project came back flagged `interrupted`, and `POST /resume` continued from
+   the checkpoint.
+
+So "never fully fails" holds in the sense that matters — the pipeline keeps
+making progress and loses nothing — **but not in the sense of finishing a
+project.** On this hardware, with cloud spent, it does not.
+
+### Two defects found, both fixed
+
+Neither was visible to any test suite; both needed a real run.
+
+| Defect | Impact | Fix |
+|---|---|---|
+| **Ollama silently truncated >50% of every prompt** | `truncating input prompt limit=2050 prompt=4375 keep=4` — a 4,096-token default context minus the requested output left ~2k for prompts of 3–4.4k tokens. Returned 200 with plausible prose: no error, no `finish_reason`, no metric | `d7f2578` — size `num_ctx` per request. Verified live on the identical prompt: `n_ctx_slot` 4,096 → 12,288, accepted tokens 2,050 → **4,375 (full)** |
+| **Deleting a running project did not stop its workers** | `task.cancel()` cannot reach an `asyncio.to_thread` worker; a deleted project kept calling providers for minutes and regrew its metrics rows 0 → 5 while `GET` returned 404 | `a5a8ce7` — guard at the `call_llm` choke point |
+
+**The truncation finding invalidates Day 29's local-quality verdict.** Day 29
+concluded local output was thin and that planning could not emit a valid plan.
+Both measurements were taken while more than half of every prompt was being
+discarded — the model was never shown the question. Every local-quality number
+in this repository is therefore a **lower bound taken under truncation**, not a
+verdict on local models. Re-measuring is now a roadmap item.
+
+### The hardware finding stands, and got sharper
+
+Fixing truncation costs memory this machine does not have. With `num_ctx` at
+12,288, `llama-server` sat at **50.4% memory and 4.7% CPU** — paging, not
+computing — and decode fell from ~14 to ~9 tokens/sec mid-generation. A single
+research stage took **4.7 minutes**; a full pipeline needs dozens of such calls.
+
+The two constraints are therefore coupled, which is the real lesson: **a bigger
+context window is what makes local output correct, and it is also what an 8GB
+machine cannot afford.** 16GB+ is not a nice-to-have for the local tier, it is
+the condition under which the tier is usable at all.
+
+### Honest bottom line
+
+The capstone did not produce a scored project, and inventing one would have been
+worse than reporting none. What it produced instead is more useful: the
+resilience path verified under genuinely adverse conditions, two real defects
+fixed, and the discovery that a headline conclusion from the previous day was
+measured through a bug.
+
+The complexity ceiling this day set out to measure **remains unmeasured** — for
+the second time, and for the same reason. It cannot be measured on free tiers.
+That is now stated as the top outstanding measurement in `ROADMAP.md` rather
+than estimated here.
