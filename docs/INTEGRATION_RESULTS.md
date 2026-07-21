@@ -285,12 +285,40 @@ past the ceiling Day 25 predicted, by design.
 | Project | `3e7892ea` CollabEditor |
 | Stack | containerised (`docker compose`, nginx), host Ollama |
 | Reached | research stage only — **no gate reached** |
-| LLM attempts | 37 — **3 ok, 33 failed, 1 skipped** |
-| Tokens | 13,902 (5,645 prompt / 8,257 completion) |
-| LLM wall-clock | 891.8s |
+| Final state | `error_paused`, `failed_agent: research`, `recoverable: true` |
+| Halted by | **output validation**, after 3 auto-retry cycles + 1 repair attempt |
+| LLM attempts | 38 — **4 ok, 33 failed, 1 skipped** |
+| Tokens | 21,856 (10,020 prompt / 11,836 completion) |
+| LLM wall-clock | 1,415s (23.6 min) |
 | Cloud calls that succeeded | **0** |
-| Local calls that succeeded | 2 (`qwen3:4b`) |
+| Local calls that succeeded | 3 (`qwen3:4b`), avg 3,945 completion tokens |
 | % usable | **n/a — no files were generated** |
+
+### How it ended is the most informative part
+
+Not at the quota wall. After the truncation fix, the local model received the
+**full** prompt and produced full-length output — 3,579 completion tokens from a
+21,940-character prompt in 523s. The run still stopped, because that output was
+**structurally wrong**:
+
+```
+Output failed validation after one repair attempt:
+Missing required section: Problem Space; Missing required section: Technical
+Landscape; Missing required section: Recommended Approach; Missing required
+section: Research Confidence Score
+```
+
+Every safety layer did its job, in order: the section validator rejected the
+document, one repair attempt ran and also failed, three auto-retry cycles were
+spent, and the pipeline then paused as `error_paused` with `recoverable: true`
+rather than passing a malformed research report to requirements. **Nothing
+downstream was built on bad output, and nothing was lost.**
+
+That is a genuinely different and more useful failure than "ran out of quota".
+It is the first clean measurement of what a 4B local model does on a hard brief
+when it can actually see the whole prompt: it generates plenty of text, and the
+text does not obey the required structure. Prose fluency is not the constraint;
+instruction-following on a rigid output contract is.
 
 **Scoring `score_project.py` was not applicable**: the run never reached a
 code-generating stage, so there is nothing to score. Recording a 0% would imply
@@ -305,10 +333,10 @@ against. The pipeline never got that far.
 | Groq llama-3.3-70b | **97,734–100,799 / 100,000 tokens per day** |
 | OpenRouter free | unused, but no viable slug for these agents |
 
-Every one of the 33 failures was a rate limit, not a model failing at the task.
-**No model ever saw a well-formed problem and answered it badly.** The complexity
-of the brief was therefore never actually tested — the run was starved before
-complexity could become the binding constraint.
+All 33 failures were rate limits — **not one cloud call succeeded all run.** So
+the brief's complexity was never tested against a capable model; the cloud tier
+was starved before complexity could become the binding constraint, and the only
+model that answered at all was a 4B local one.
 
 This is the same wall as Day 25, and it is the honest headline: on free tiers,
 **provider quota — not model capability, and not project complexity — remains
@@ -331,10 +359,14 @@ simulated:
 4. **Survives a full stack restart.** `docker compose down`/`up` mid-run; the
    project came back flagged `interrupted`, and `POST /resume` continued from
    the checkpoint.
+5. **Refuses to build on bad output.** The final halt was the section validator
+   rejecting a structurally-invalid research report, then a repair attempt, then
+   a clean `error_paused` — not a malformed document handed to the next agent.
 
 So "never fully fails" holds in the sense that matters — the pipeline keeps
-making progress and loses nothing — **but not in the sense of finishing a
-project.** On this hardware, with cloud spent, it does not.
+making progress, loses nothing, and stops rather than corrupting itself —
+**but not in the sense of finishing a project.** On this hardware, with cloud
+spent, it does not.
 
 ### Two defects found, both fixed
 
@@ -376,3 +408,19 @@ The complexity ceiling this day set out to measure **remains unmeasured** — fo
 the second time, and for the same reason. It cannot be measured on free tiers.
 That is now stated as the top outstanding measurement in `ROADMAP.md` rather
 than estimated here.
+
+### One number this run *does* establish
+
+With the truncation fixed, `qwen3:4b` on a hard brief:
+
+| | |
+|---|---|
+| Output volume | 3,579 completion tokens — **not truncated, not thin** |
+| Latency | 523s for one research call |
+| Structural validity | **failed** — 4 of the required sections absent, and the repair attempt did not recover them |
+
+So the local tier's limitation at 4B is **instruction-following against a rigid
+output contract**, not fluency or length. That is a sharper and more actionable
+statement than Day 29's "local output is thin", which was an artifact of the
+truncation bug. Whether a larger local model clears the contract is the obvious
+next experiment, and it costs nothing but time and RAM.

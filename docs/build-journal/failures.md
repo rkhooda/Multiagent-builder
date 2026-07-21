@@ -1805,3 +1805,28 @@ describing the output as a "60–80% complete scaffold", but the only scored run
 in this repo measured **21.9%**, under quota starvation, and no run has ever
 been measured unconstrained. Shipping the higher number would have been the one
 overclaim in 30 days of honest measurement. The docs say 21.9% with its caveat.
+
+**The capstone's actual ending, recorded after the fact.** The run was written
+up as "stopped by quota" while still in flight. It then ended differently and
+better: post-truncation-fix, `qwen3:4b` received the FULL 21,940-character
+prompt and produced 3,579 completion tokens in 523s — plenty of text — and the
+research agent's section validator rejected it for missing four required
+sections. One repair attempt failed, three auto-retry cycles were spent, and
+the pipeline paused as `error_paused` / `recoverable: true` rather than handing
+a malformed research report to requirements.
+
+Final tally: 38 attempts, 4 ok, 33 rate-limited, 1 skipped; 21,856 tokens;
+1,415s of LLM wall-clock; **zero successful cloud calls all run**.
+
+This is the better result to have. It means the day's last measurement is not
+another quota anecdote but a real quality boundary: at 4B, with the whole
+prompt visible, the local tier writes fluent prose and does **not** obey a rigid
+output contract. Day 29's "local output is thin" was an artifact of truncation;
+the true limitation is instruction-following on structured formats. That also
+explains the Day 29 planning failure more precisely than Day 29 could — a plan
+is the most rigidly structured artifact in the pipeline.
+
+And it is the safety layers earning their keep in the one place it counts.
+Every mechanism built across Days 17, 22 and 24 fired in sequence — validate,
+repair, retry, pause, preserve — and the thing that did NOT happen is the
+important one: no bad artifact moved downstream.
