@@ -37,7 +37,7 @@ with recorded evidence, or FAIL and carried into
 
 ## 1. Automated regression gate
 
-`cd backend && ./venv/bin/python tests/run_all.py` — **14/14 green in ~43s.**
+`cd backend && ./venv/bin/python tests/run_all.py` — **15/15 green** (14 at the start of the day, plus test_abandoned_projects.py added by finding 4 below).
 
 | Suite | Result |
 |---|---|
@@ -55,6 +55,7 @@ with recorded evidence, or FAIL and carried into
 | `test_token_budgets.py` | PASS — 9 passed |
 | `test_validation.py` (Day 22 crafted-breakage) | PASS — 20 passed |
 | `test_validation_pass.py` | PASS — 14 passed |
+| `test_abandoned_projects.py` (added Day 30) | PASS — 7 passed |
 
 The 12 **live** suites (`--live`) are excluded from the gate by design: they
 issue real provider requests, so under exhausted quota they fail on 429s rather
@@ -92,6 +93,21 @@ a quota statement, not a regression.
 | 3.11 | Recover guard on a running project | **PASS** | → **409** `"Project is 'running', not in a recoverable error state"` |
 | 3.12 | Delete cascade | **PASS** | → `cancelled_run: true, metrics_rows_deleted: 106, checkpoint_deleted: true, files_deleted: true, row_deleted: true`; output dir gone from disk; subsequent `GET` → 404 |
 | 3.13 | Delete is idempotent | **PASS** | re-DELETE → 404, no error |
+| 3.14 | Invalid gate decision rejected | **PASS** | `{"decision":"bogus"}` at `human_gate_1` → **400** `"must be one of ['approve','back','edit','reject']"` |
+| 3.15 | Non-editable field rejected | **PASS** | `PATCH /state {"field":"research_report"}` → **400**, allowed list returned |
+| 3.16 | Gate reject cancels the run | **PASS** | `{"decision":"reject"}` at gate 1 → project `cancelled`; all prior artifacts retained (research 9,741 chars, requirements 7,117 chars) and restartable |
+
+## 3b. Container restart / persistence
+
+`docker compose down` → `up --build`, with two projects in flight.
+
+| # | Check | Result | Evidence |
+|---|---|---|---|
+| 3b.1 | Projects survive a full stack restart | **PASS** | both projects present after `down`/`up`; bind mounts under `./data` intact |
+| 3b.2 | An interrupted run is detected as such | **PASS** | the running project returned `status: running, interrupted: true` — the derived field correctly distinguishes it from a live run |
+| 3b.3 | Resume from checkpoint after restart | **PASS** | `POST /resume` → `{"status":"resumed_from_checkpoint","resuming_at":"research"}` |
+| 3b.4 | Deletion is durable across restart | **PASS** | deleted project still 404 after rebuild |
+| 3b.5 | Gate-paused project holds its gate | **PASS** | second project still at `human_gate_1` after restart |
 
 ## 4. Pipeline behaviour (live)
 
@@ -125,6 +141,22 @@ Three things this check surfaced that were **not** visible to any test suite:
 3. **`.env.example` documented the wrong path.** It told the user to copy to a
    root `.env`; compose reads `backend/.env`. Fixed in `71c4911` — a first-run
    blocker that no test could have caught.
+4. **Deleting a running project did not stop its workers.** `task.cancel()`
+   cannot reach a thread dispatched by `asyncio.to_thread`, so a deleted
+   project kept issuing provider calls for minutes and regrew its own metrics
+   rows from 0 to 5 while `GET` returned 404 — spending the scarcest resource
+   in the system on files nobody could download. **Fixed** at the `call_llm`
+   choke point (`a5a8ce7`) with 7 new assertions; verified after redeploy as
+   **zero** orphan calls following a restart.
+
+### A tester error worth recording
+
+The check for "invalid gate decision" was run twice. The second attempt used
+`reject`, which **is** valid at gate 1, and therefore cancelled a persisted
+test project rather than being refused. The system behaved correctly; the test
+was wrong. Recorded because the release log should show what actually happened,
+and because it independently confirmed 3.16 — cancel retains every prior
+artifact and leaves the project restartable.
 
 ## 6. Not verified
 
@@ -138,8 +170,8 @@ Stated rather than quietly omitted:
 - **LangSmith trace visibility.** Tracing is off in this deployment
   (`LANGCHAIN_TRACING_V2=false`, placeholder key). Local metrics — the always-on
   path — are verified above.
-- **Docker down/up persistence.** Not run during the check because a restart
-  would have killed the in-flight capstone run. The mechanism (bind mounts to
-  `./data`, WAL-mode SQLite) is unchanged since Day 28, where it was verified.
 - **Cache hit path end-to-end.** `test_llm_cache.py` (13 assertions) covers it
   offline; a live hit needs a repeated call the quota did not allow.
+
+*(Docker down/up persistence moved to §3b — it was verified after all, when
+redeploying the orphan-worker fix made a restart necessary anyway.)*
