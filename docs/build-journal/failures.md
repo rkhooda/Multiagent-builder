@@ -1702,3 +1702,106 @@ demonstrated in the sense that the pipeline keeps making progress instead of
 dying at a 429. It is not demonstrated in the sense of a finished project. The
 right hardware claim is: this needs 16GB+ to be a practical local pipeline, and
 on 8GB it is a working fallback for individual stages rather than whole runs.
+
+---
+
+## Day 30 observations — ship day
+
+Release day: regression gate, capstone run, documentation, health check, v1.0.
+
+**The regression gate had no single entry point.** 26 test files, each a
+standalone script with its own exit code, and no way to say "all suites green"
+except running them by hand. Added `backend/tests/run_all.py` — a subprocess
+loop, not a framework. The split that mattered was OFFLINE vs LIVE: 12 suites
+issue real provider requests and fail on quota rather than on code, so a red one
+proves nothing. LIVE is the hardcoded list precisely so a NEW suite defaults to
+offline and actually runs; the opposite default lets a new test be skipped
+forever.
+
+**`.env.example` told first-time users to copy it to the wrong path.** The
+header said root `.env`; `docker-compose.yml` names `env_file: ./backend/.env`.
+Following the instruction produced a stack with no provider keys. A first-run
+blocker that no test could catch, and only visible by reading the two files
+against each other.
+
+**The capstone brief never got to be the variable under test.** Cloud quota was
+already spent when the run started — Gemini exhausted, Groq at 97.7k/100k TPD —
+so all 33 failures were rate limits and zero cloud calls succeeded. For the
+second time (Day 25 was the first), a day designed to measure the complexity
+ceiling was stopped by the throughput ceiling first. The honest conclusion is
+that the complexity ceiling **cannot be measured on free tiers**, and estimating
+it would be inventing data.
+
+**A 5-token probe is not a quota check.** Mid-morning a bare
+`litellm.completion(max_tokens=5)` against Groq returned OK, which read as "the
+daily budget reset". It had not: ~2k tokens remained of 100k, enough for the
+probe and nothing else. The real signal is the 429 body, which states
+`Used 97734, Requested 6876`. Probing with a request unlike the real workload
+measures nothing about whether the real workload will fit.
+
+**Deleting a running project did not stop it.** `task.cancel()` cancels the
+coroutine awaiting `asyncio.to_thread`, but cannot touch the thread already
+running. Measured: a deleted project kept issuing provider calls for minutes
+and regrew its own metrics rows from 0 to 5 while `GET` returned 404 — spending
+the scarcest resource in the system on files nobody could ever download. Fixed
+at the `call_llm` choke point rather than in the runner, so every caller is
+covered by one guard. The call already in flight still completes; a blocking
+provider request cannot be interrupted cleanly, so this bounds the waste at one
+call per worker instead of a whole phase.
+
+**The headline finding: Ollama was silently discarding half of every prompt.**
+
+```
+msg="truncating input prompt" limit=2050 prompt=4375 keep=4 new=2050
+```
+
+Ollama gives every model a 4,096-token context regardless of what the model
+supports. The input budget is `num_ctx` minus the requested output, so a 4k
+window asked for ~2k tokens leaves ~2k for the prompt — and every agent here
+sends 11–15k characters (3–4.5k tokens). More than half of each prompt was
+being thrown away, keeping only the first 4 tokens.
+
+What makes this the nastiest bug of the whole build is that it is **completely
+invisible**: the call returns 200, with plausible prose, in a normal amount of
+time. No error, no `finish_reason: length`, no metric, nothing in the app. It
+presents exactly as "local models are weak".
+
+Fixed by sizing `num_ctx` to the actual request. Verified live on the identical
+prompt: `n_ctx_slot` 4,096 → 12,288, accepted prompt tokens 2,050 → 4,375.
+
+**This invalidates Day 29's central quality claim.** Day 29 concluded local
+output was thin, that phi4-mini could not emit a valid plan, and that the local
+tier was not worth the wait. Every one of those measurements was taken through
+this bug — the models were never shown the question. Those numbers are a lower
+bound taken under truncation, not a verdict on local models. Re-measuring is
+now a roadmap item, and it is cheap: local costs nothing but time.
+
+The general lesson, which is the one worth promoting out of this repo: **a
+silent truncation is worse than a crash.** Two days of conclusions were built on
+output from a prompt the model never fully received, and nothing in the system
+could have told us. Anything that silently discards input needs to be as loud as
+a rate limit already is.
+
+**The two constraints turn out to be coupled.** Fixing truncation costs memory
+this machine does not have: at `num_ctx` 12,288, `llama-server` sat at 50.4%
+memory and 4.7% CPU — paging, not computing — and decode fell from ~14 to ~9
+tokens/sec mid-generation. So a bigger context is simultaneously what makes
+local output correct and what an 8GB box cannot afford. 16GB+ is not a
+nice-to-have for the local tier; it is the condition under which it works at
+all. Day 29's hardware conclusion stands, with a sharper reason attached.
+
+**A tester error worth recording.** The "invalid gate decision" check was run
+with `reject` — which IS valid at gate 1 — and therefore cancelled a persisted
+test project instead of being refused. The system was right; the test was
+wrong. Recorded because a release log that only contains what went well is not
+a release log. It did independently confirm that cancel retains every prior
+artifact and leaves the project restartable.
+
+**Documentation was half the day, deliberately.** README front door, USAGE,
+ARCHITECTURE, ROADMAP, RELEASE_CHECKLIST, CHANGELOG — and the build journal
+(this file, 106KB) moved off the front path into `docs/build-journal/`. The
+hardest editorial decision was the honesty one: the day's framing suggested
+describing the output as a "60–80% complete scaffold", but the only scored run
+in this repo measured **21.9%**, under quota starvation, and no run has ever
+been measured unconstrained. Shipping the higher number would have been the one
+overclaim in 30 days of honest measurement. The docs say 21.9% with its caveat.
