@@ -138,6 +138,7 @@ is spent, not as a replacement. Details in [docs/USAGE.md](docs/USAGE.md).
 | [docs/INTEGRATION_RESULTS.md](docs/INTEGRATION_RESULTS.md) | Measured quality baselines and known limits |
 | [docs/QUALITY_BASELINE.md](docs/QUALITY_BASELINE.md) | Defect taxonomy and layer attribution |
 | [ROADMAP.md](ROADMAP.md) | Current limitations and where this goes next |
+| [docs/RELEASE_CHECKLIST.md](docs/RELEASE_CHECKLIST.md) | The v1.0 health check — per-subsystem pass/fail evidence |
 | [docs/build-journal/](docs/build-journal/) | The 30-day build log, kept for history |
 
 ## Repository layout
@@ -160,7 +161,7 @@ covered in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). The short version:
 
 ```bash
 cd backend && python -m venv venv && ./venv/bin/pip install -r requirements.txt
-./venv/bin/python tests/run_all.py        # 14 offline suites, ~45s, no API calls
+./venv/bin/python tests/run_all.py        # 15 offline suites, ~60s, no API calls
 ```
 
 ## Status

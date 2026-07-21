@@ -193,7 +193,7 @@ After any prompt edit: `python backend/tests/test_prompt_regression.py`
 
 ```bash
 cd backend
-./venv/bin/python tests/run_all.py          # 14 offline suites, ~45s, no API calls
+./venv/bin/python tests/run_all.py          # 15 offline suites, ~60s, no API calls
 ./venv/bin/python tests/run_all.py --live   # adds live-provider smokes; needs quota
 ```
 
