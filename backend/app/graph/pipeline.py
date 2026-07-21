@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from typing import Dict
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.sqlite import SqliteSaver
+from app.core.paths import data_path
 from app.exceptions import AgentError, LLMError
 from app.graph.state import ProjectState
 from app.agents.research_agent import research_agent
@@ -295,9 +296,7 @@ workflow.add_conditional_edges(
 )
 
 # 3. Setup SQLite checkpointer
-# Determine path to projects.db in the backend root folder
-backend_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-db_path = os.path.join(backend_dir, "projects.db")
+db_path = data_path("projects.db")
 
 conn = sqlite3.connect(db_path, check_same_thread=False)
 # Enable WAL (Write-Ahead Logging) mode and optimize concurrency pragmas

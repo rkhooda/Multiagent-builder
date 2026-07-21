@@ -1,13 +1,12 @@
 import json
 import sqlite3
-import os
 from datetime import datetime
 
 from app.models import status
 
-# Path to projects.db in the backend root folder
-backend_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-db_path = os.path.join(backend_dir, "projects.db")
+from app.core.paths import data_path
+
+db_path = data_path("projects.db")
 
 def get_db_connection():
     conn = sqlite3.connect(db_path, check_same_thread=False)

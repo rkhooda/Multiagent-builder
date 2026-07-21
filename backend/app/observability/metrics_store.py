@@ -18,8 +18,9 @@ import os
 import sqlite3
 from datetime import datetime, timezone
 
-backend_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-db_path = os.path.join(backend_dir, "metrics.db")
+from app.core.paths import data_path
+
+db_path = data_path("metrics.db")
 
 # Columns Day 26 groups and averages by. `label` carries the per-file identity
 # for coder attempts (which file this call generated) and is NULL elsewhere.

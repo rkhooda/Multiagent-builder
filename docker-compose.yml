@@ -1,0 +1,59 @@
+# Everything irreplaceable lives under ./data on the host — one directory to
+# back up, and the only thing `make clean` is forbidden to touch.
+
+services:
+  backend:
+    build: ./backend
+    env_file: ./backend/.env
+    environment:
+      # Moves projects.db and metrics.db out of /app, where the application
+      # code lives — a mount there would shadow the code itself.
+      DATA_DIR: /data
+    ports:
+      - "8000:8000"
+    volumes:
+      # Directories, never files. A sqlite database in WAL mode is really three
+      # files (db, -wal, -shm) that must live together; mounting just the .db
+      # leaves its siblings in the container's throwaway layer, and a commit
+      # still sitting in the WAL at shutdown disappears without an error.
+      - ./data/db:/data
+      # OUTPUTS_ROOT already resolves to /outputs in the image (it is computed
+      # relative to the source tree, which lands at /app), so generated projects
+      # need no code change to persist — only this mount.
+      - ./data/outputs:/outputs
+    healthcheck:
+      # python is guaranteed present in this image; curl and wget are not.
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "3000:80"
+    # Not for readiness — for DNS. nginx resolves `backend` in proxy_pass once,
+    # at startup, and exits with "host not found in upstream" if the name does
+    # not resolve yet. This guarantees the container exists by then. A backend
+    # that is up but not yet listening only costs a few seconds of 502s.
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+  # Absent unless explicitly asked for: `docker compose --profile ollama up`.
+  # Day 29 owns local models; the two-service stack above runs without it.
+  ollama:
+    profiles: [ollama]
+    image: ollama/ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      # A named volume, unlike the app data above, precisely because model
+      # weights are opaque multi-gigabyte blobs nobody opens in an editor.
+      - ollama_models:/root/.ollama
+    restart: unless-stopped
+
+volumes:
+  ollama_models:
