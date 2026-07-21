@@ -1,5 +1,8 @@
 """Day 29: local-tier detection, per-agent model choice, chain placement and the
 local concurrency cap. Zero API calls — the probe is stubbed, never dialled."""
+import contextlib
+import io
+import json
 import os
 import sys
 import threading
@@ -40,21 +43,61 @@ def test_probe_returns_empty_when_daemon_absent():
         _reset()
 
 
-def test_probe_caches_then_reprobes_after_ttl():
-    """A model pulled mid-session must become usable without a restart, which is
-    the whole reason the probe is not a one-shot startup check."""
+def _expire():
+    R._ollama_cache["checked_at"] = time.monotonic() - R.OLLAMA_PROBE_TTL_SECONDS - 1
+
+
+@contextlib.contextmanager
+def _daemon_returning(payload):
+    """Stub the HTTP probe without opening a socket."""
+    original = R.urllib.request.urlopen
+
+    @contextlib.contextmanager
+    def fake(url, timeout=None):
+        yield io.BytesIO(json.dumps(payload).encode())
+
+    R.urllib.request.urlopen = fake
+    try:
+        yield
+    finally:
+        R.urllib.request.urlopen = original
+
+
+def test_probe_picks_up_a_model_pulled_mid_session():
+    """The reason the probe is not a one-shot startup check: pulling a model
+    while the server runs must make it usable without a restart."""
+    _reset()
+    with _daemon_returning({"models": [{"name": "phi4-mini:latest"}]}):
+        assert R.ollama_models() == ["phi4-mini:latest"]
+        _expire()
+        with _daemon_returning({"models": [{"name": "phi4-mini:latest"},
+                                           {"name": "qwen3:4b"}]}):
+            assert R.ollama_models() == ["phi4-mini:latest", "qwen3:4b"]
+    _reset()
+
+
+def test_probe_retains_known_models_when_a_reprobe_fails():
+    """Regression, Day 29: a 1s probe timeout made the tier vanish under its own
+    load. A re-probe landing during a 101s local completion timed out, the model
+    list came back empty, and the next agent skipped a working Ollama entirely
+    and raised. A failed re-probe must mean "busy", not "gone"."""
     _reset()
     _serving("phi4-mini:latest")
-    assert R.ollama_models() == ["phi4-mini:latest"]   # served from cache
-    # Expire the cache and point at a dead URL: a re-probe must actually happen.
-    R._ollama_cache["checked_at"] = time.monotonic() - R.OLLAMA_PROBE_TTL_SECONDS - 1
+    _expire()
     original = R.OLLAMA_URL
-    R.OLLAMA_URL = "http://127.0.0.1:1"
+    R.OLLAMA_URL = "http://127.0.0.1:1"          # probe cannot succeed
     try:
-        assert R.ollama_models() == [], "TTL expiry did not force a re-probe"
+        assert R.ollama_models() == ["phi4-mini:latest"], \
+            "a failed re-probe erased a known-good local tier"
+        assert R.get_ollama_model("database") == "ollama/phi4-mini:latest"
     finally:
         R.OLLAMA_URL = original
         _reset()
+
+
+def test_probe_timeout_survives_a_busy_daemon():
+    """The floor exists because the probe competes with our own generation."""
+    assert R.OLLAMA_PROBE_TIMEOUT_SECONDS >= 3
 
 
 # ── per-agent assignment ─────────────────────────────────────────────────────

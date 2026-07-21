@@ -353,6 +353,13 @@ def daily_budget_report() -> list:
 # which is why this is env-driven rather than a constant.
 OLLAMA_URL = (os.getenv("OLLAMA_BASE_URL") or "http://localhost:11434").rstrip("/")
 OLLAMA_PROBE_TTL_SECONDS = 60
+# Generous enough to survive a daemon that is busy generating. Measured: a 1s
+# timeout made the tier DISAPPEAR under its own load — a re-probe landing during
+# a 101s local completion timed out, the model list came back empty, and the
+# next agent skipped straight past a working Ollama to a pause. An absent daemon
+# still fails fast regardless of this value, because nothing listening means a
+# connection refusal rather than a timeout.
+OLLAMA_PROBE_TIMEOUT_SECONDS = 3
 _ollama_cache = {"models": [], "checked_at": 0.0}
 
 
@@ -371,10 +378,17 @@ def ollama_models() -> list:
     if _ollama_cache["checked_at"] and now - _ollama_cache["checked_at"] < OLLAMA_PROBE_TTL_SECONDS:
         return _ollama_cache["models"]
     try:
-        with urllib.request.urlopen(f"{OLLAMA_URL}/api/tags", timeout=1) as resp:
+        with urllib.request.urlopen(f"{OLLAMA_URL}/api/tags",
+                                    timeout=OLLAMA_PROBE_TIMEOUT_SECONDS) as resp:
             names = sorted(m["name"] for m in json.load(resp).get("models", []) if m.get("name"))
     except Exception:                           # noqa: BLE001 — absence is normal
-        names = []
+        # A failed re-probe keeps the last known models rather than erasing them.
+        # Once the daemon has been seen serving, a failure means "busy" far more
+        # often than "gone", and treating it as "gone" removes the fallback at
+        # the exact moment it is under load and most needed. If it really has
+        # stopped, the next call fails over and the chain still pauses safely —
+        # a recoverable cost, unlike silently losing the tier mid-run.
+        names = _ollama_cache["models"]
     _ollama_cache.update(models=names, checked_at=now)
     return names
 
