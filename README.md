@@ -60,6 +60,11 @@ curl http://localhost:3000/api/health
 
 Everything you generate persists in `./data` — one directory to back up.
 
+> **Port 3000 already in use?** It is a crowded default. Run
+> `FRONTEND_PORT=3001 make start`, or put `FRONTEND_PORT=3001` in a `.env` at
+> the repo root (that root file is read by Compose itself, and is separate from
+> `backend/.env` where your API keys go).
+
 ## Your first brief
 
 1. Click **New Project**.
