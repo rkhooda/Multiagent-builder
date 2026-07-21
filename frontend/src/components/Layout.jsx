@@ -38,6 +38,7 @@ export default function Layout({ children }) {
 
   const [projects, setProjects] = useState([])
   const [health, setHealth] = useState('checking')   // checking | up | down
+  const [local, setLocal] = useState(null)           // null until health replies
   const [navOpen, setNavOpen] = useState(false)
 
   const title =
@@ -50,7 +51,9 @@ export default function Layout({ children }) {
     const check = async () => {
       try {
         const res = await fetch(`${API}/health`)
-        if (!cancelled) setHealth(res.ok ? 'up' : 'down')
+        if (cancelled) return
+        setHealth(res.ok ? 'up' : 'down')
+        if (res.ok) setLocal(await res.json().catch(() => null))
       } catch {
         if (!cancelled) setHealth('down')
       }
@@ -173,6 +176,27 @@ export default function Layout({ children }) {
                 {health === 'checking' ? 'Connecting' : health === 'up' ? 'Connected' : 'Offline'}
               </span>
             </span>
+            {/* Answers the question a failed run raises: was there a local tier
+                to fall back to at all? Shown only once health has replied, so a
+                slow first poll does not flash "unavailable" at a machine that
+                has Ollama running. */}
+            {local && (
+              <span
+                className="hidden items-center gap-1.5 sm:inline-flex"
+                title={
+                  local.local_models?.length
+                    ? `Local fallback available: ${local.local_models.join(', ')}. `
+                      + `Mode: ${local.llm_mode}.`
+                    : 'No local models detected — the pipeline pauses instead of '
+                      + 'falling back when cloud providers are exhausted.'
+                }
+              >
+                <Dot tone={local.local_models?.length ? 'ok' : 'idle'} />
+                <span className="eyebrow">
+                  {local.local_models?.length ? 'Local' : 'Cloud only'}
+                </span>
+              </span>
+            )}
             <ThemeToggle />
           </div>
         </header>

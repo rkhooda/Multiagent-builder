@@ -99,6 +99,12 @@ export default function MetricsPanel({ projectId, compact = false }) {
   // as a phantom "cache" stage worth 0% of the time. Excluded from the breakdown.
   const timeRows = (data.latency_by_agent || []).filter((r) => r.total_ms > 0).slice(0, 8)
   const providers = (data.providers || []).filter((p) => p.tracked)
+  // Local models are weaker than the cloud ones. A run that quietly fell back to
+  // them produces worse output with no visible reason, so the share is stated
+  // rather than left to be discovered — but only when it actually happened, so
+  // an all-cloud run carries no banner at all.
+  const local = data.local || {}
+  const localPct = local.calls ? Math.round((local.local_calls / local.calls) * 100) : 0
 
   return (
     <div className="rounded-lg border border-line bg-raised p-4">
@@ -200,6 +206,19 @@ export default function MetricsPanel({ projectId, compact = false }) {
         </div>
       )}
 
+      {local.local_calls > 0 && (
+        <p className="mt-3 rounded border-l-4 border-warn bg-warn/10 px-3 py-2 text-[11px] text-warn">
+          <span className="font-semibold">
+            {local.local_calls} of {local.calls} call{local.calls === 1 ? '' : 's'} ran on local
+            models
+          </span>{' '}
+          ({localPct}%{local.models?.length ? ` · ${local.models.join(', ')}` : ''}). Local models
+          are smaller than the cloud ones, so output quality may be reduced — this run cost $0 and
+          consumed no quota. Re-run with <code className="font-mono">LLM_MODE=cloud-only</code> for
+          the best results.
+        </p>
+      )}
+
       {(data.truncations || []).length > 0 && (
         <p className="mt-3 rounded border-l-4 border-warn bg-warn/10 px-3 py-2 text-[11px] text-warn">
           <span className="font-semibold">
@@ -242,7 +261,20 @@ export default function MetricsPanel({ projectId, compact = false }) {
             <tbody className="text-ink">
               {rows.map((r) => (
                 <tr key={r.agent} className="border-b border-line last:border-0">
-                  <td className="py-1.5 pr-3 font-mono text-[11px]">{r.agent}</td>
+                  <td className="py-1.5 pr-3 font-mono text-[11px]">
+                    {r.agent}
+                    {/* Per-agent, because "the run used local models" does not
+                        tell you WHICH artifact to distrust. Architecture having
+                        run locally is the fact worth surfacing. */}
+                    {local.agents?.[r.agent] > 0 && (
+                      <span
+                        className="ml-1.5 rounded bg-warn/10 px-1 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-warn"
+                        title={`${local.agents[r.agent]} of this agent's calls ran on a local model`}
+                      >
+                        local
+                      </span>
+                    )}
+                  </td>
                   <td className="py-1.5 pr-3">{r.calls}</td>
                   <td className={`py-1.5 pr-3 ${r.attempts > r.calls ? 'font-semibold text-warn' : ''}`}>
                     {r.attempts ?? '—'}

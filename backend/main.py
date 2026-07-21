@@ -52,6 +52,15 @@ app.include_router(ws_router)
 @app.get("/health")
 @app.get("/api/health")
 def health_check():
-    return {"status": "ok", "version": "0.1", "js_validation": not _js_unavailable}
+    # Local-model availability rides along here rather than on its own endpoint:
+    # the header already polls health and already renders a status dot, and this
+    # is the same class of fact — what capacity the backend currently has. The
+    # probe is cached with a short TTL, so polling it costs nothing.
+    from app.llm_router import llm_mode, ollama_models
+
+    local = ollama_models()
+    return {"status": "ok", "version": "0.1", "js_validation": not _js_unavailable,
+            "llm_mode": llm_mode(),
+            "local_models": [m.split(":")[0] if m.endswith(":latest") else m for m in local]}
 
 

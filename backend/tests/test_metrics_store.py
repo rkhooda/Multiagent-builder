@@ -112,6 +112,24 @@ check("disabled store writes nothing", ms.run_summary("p2")["attempts"] == befor
 os.environ["OBSERVABILITY_ENABLED"] = "true"
 check("switch re-enables", ms.is_enabled() is True)
 
+# ── local-tier attribution (Day 29) ─────────────────────────────────────────
+# The denominator decides whether the honesty banner tells the truth: a failed
+# cloud attempt that was retried locally must not inflate the total, and a cache
+# hit did not run on any tier at all.
+rec(agent="architecture", model="ollama/qwen3:4b", project_id="p3")
+rec(agent="devops", model="ollama/qwen2.5-coder:7b", project_id="p3")
+rec(agent="research", model="gemini/gemini-2.5-flash", project_id="p3")
+rec(agent="research", model="groq/llama-3.3-70b-versatile", outcome="rate_limit", project_id="p3")
+rec(agent="research", model="cache", project_id="p3")
+u = ms.local_tier_usage("p3")
+check("counts local calls", u["local_calls"] == 2)
+check("failed attempts excluded from denominator", u["calls"] == 3)
+check("cache hits excluded from denominator", u["calls"] == 3)
+check("per-agent attribution names the agent", u["agents"] == {"architecture": 1, "devops": 1})
+check("reports which local models ran", u["models"] == ["qwen2.5-coder:7b", "qwen3:4b"])
+check("all-cloud run reports no local usage", ms.local_tier_usage("p1")["local_calls"] == 0)
+check("local usage rides on run_summary", ms.run_summary("p3")["local"]["local_calls"] == 2)
+
 # ── deletion hook (Day 24) ──────────────────────────────────────────────────
 n = ms.delete_project_metrics("p2")
 check("delete removes only that project's rows", n == before)

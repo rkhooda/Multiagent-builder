@@ -244,6 +244,38 @@ def tokens_used_today(provider: str = None) -> dict:
     return out.get(provider, {"tokens": 0, "calls": 0}) if provider else out
 
 
+def local_tier_usage(project_id: str) -> dict:
+    """How much of this run was served by local models, per agent and overall.
+
+    WHY there is no `tier` column. The model name already encodes it —
+    `ollama/qwen3:4b` is not ambiguous — and every attempt already flows through
+    one logging choke point, so the attribution was recorded from the moment
+    local calls started happening. Adding a column would duplicate a fact the
+    table already stores and leave two things to keep in agreement.
+
+    Counts SUCCESSFUL attempts only, and excludes cache hits: the denominator
+    that makes "N of M calls ran locally" honest is calls that actually produced
+    the output being judged, not failed attempts that were retried elsewhere.
+    """
+    rows = _query(
+        "SELECT agent,"
+        " SUM(CASE WHEN model LIKE 'ollama/%' THEN 1 ELSE 0 END) AS local_calls,"
+        " COUNT(*) AS calls"
+        " FROM agent_runs"
+        " WHERE project_id = ? AND outcome = 'ok' AND COALESCE(model, '') != 'cache'"
+        " GROUP BY agent", (project_id,))
+    models = _query(
+        "SELECT DISTINCT model FROM agent_runs"
+        " WHERE project_id = ? AND outcome = 'ok' AND model LIKE 'ollama/%'", (project_id,))
+    return {
+        "local_calls": sum(r.get("local_calls") or 0 for r in rows),
+        "calls": sum(r.get("calls") or 0 for r in rows),
+        "agents": {r["agent"]: r.get("local_calls") or 0
+                   for r in rows if (r.get("local_calls") or 0) > 0},
+        "models": sorted(m["model"].split("/", 1)[-1] for m in models if m.get("model")),
+    }
+
+
 def run_summary(project_id: str) -> dict:
     """Per-run rollup for the UI panel. Cost is $0 on free tiers — tokens are
     the real budget line, so they are what this returns."""
@@ -271,6 +303,7 @@ def run_summary(project_id: str) -> dict:
         "latency_by_agent": latency_percentiles_by_agent(project_id),
         "cache": cache_stats(project_id),
         "truncations": truncations(project_id),
+        "local": local_tier_usage(project_id),
     }
 
 
