@@ -1337,7 +1337,7 @@ QA never ran, so QA-issue and repair-spend columns are empty rather than zero.
 
 ## Day 26 observations
 
-Optimisation day. Full ledger in `docs/OPTIMISATION_TARGETS.md`; this is the
+Optimisation day. Full ledger in `docs/build-journal/OPTIMISATION_TARGETS.md`; this is the
 summary and the corrections.
 
 **The day's plan was wrong on three counts, and the data said so before any

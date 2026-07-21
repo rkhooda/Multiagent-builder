@@ -103,7 +103,7 @@ regeneration. Guard warns at 25, stops at 30.
      `no_css_import` 3/3. So the measured value of this change is entirely on
      *phantom package imports*, not on the CSS rule. The recurring defect is
      broader than Day 18 recorded: A invented `luxon` (×2) and `date-fns` (×1)
-     for `formatDate.js`, none of which appear in `failures.md`. `intl` was one
+     for `formatDate.js`, none of which appear in `build-journal/failures.md`. `intl` was one
      instance of a general class: **the model reaches for a date library**.
   2. **Negative examples can be echoed.** B's single failure imported `intl`
      *and* `intl-datetimeformat` — the exact two strings written in the WRONG
@@ -127,7 +127,7 @@ regeneration. Guard warns at 25, stops at 30.
   `onCreated=` to a `NoteForm` that accepts `onCreate`, and `count=` to a `Header`
   that accepts `noteCount`. Severity **breaks-feature** (note creation silently
   no-ops).
-- **Attribution**: **CONTEXT BUILDER / PLANNER — not the prompt.** `failures.md`
+- **Attribution**: **CONTEXT BUILDER / PLANNER — not the prompt.** `build-journal/failures.md`
   Day 18 blamed the exports extractor for dropping prop names. Re-running it
   proves otherwise: it emits `export default function NoteForm({ onCreate }) {`
   verbatim, and `Header.jsx` (448 chars) fell under the full-injection threshold

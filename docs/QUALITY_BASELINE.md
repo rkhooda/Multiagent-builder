@@ -1,6 +1,6 @@
 # Quality Baseline — Generated-Code Defect Taxonomy (Day 21)
 
-Consolidates every recorded defect from `failures.md` Days 12–20, the import-fixer
+Consolidates every recorded defect from `build-journal/failures.md` Days 12–20, the import-fixer
 warnings and QA reports stored in checkpoint state, and a fresh full review of 27
 generated files from the Day 18–20 output folders. Each defect class is attributed
 to the **layer that actually caused it**, with the forensic evidence line recorded.
@@ -114,7 +114,7 @@ files, far too few to surface new classes.
 
 ### 3.1 D2 — prop/interface mismatch — **overturns the Day 18 hypothesis**
 
-`failures.md` Day 18 recorded this root cause:
+`build-journal/failures.md` Day 18 recorded this root cause:
 
 > the dependency summary injected into `NotesPage` shows `export default function NoteForm`
 > but NOT its prop names (props are function parameters, not exports), so the consumer

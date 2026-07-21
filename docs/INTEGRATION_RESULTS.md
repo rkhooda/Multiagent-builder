@@ -232,7 +232,7 @@ file, inflating the run from a true 21.9% to a flattering 43.8%.
 - **QA primary model is dead.** `openrouter/nvidia/nemotron-3-nano-omni-...:free`
   returns an upstream error on every call; its fallback is Gemini, which is
   exhausted, so QA cannot run at all. This is the Day 23 delisting failure mode
-  recurring — `failures.md` already warns these free slugs vanish without notice.
+  recurring — `build-journal/failures.md` already warns these free slugs vanish without notice.
 - **Gate 3 plan validation accepts cyclic `requires`.** Defect 2 was fixed in the
   scheduler, which is the right place for robustness, but validation still does
   not reject cycles — the old error message even asserted that it should. Low

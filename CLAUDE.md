@@ -37,7 +37,7 @@ Two persistence layers exist side by side and both matter when debugging state i
 - **LangGraph checkpoint** (`backend/projects.db`, via `SqliteSaver`) — the authoritative `ProjectState`, keyed by `thread_id = project_id`.
 - **Plain SQLite `projects` table** (`app/core/database.py`) — a thin status/stage mirror used for the projects list and fast status reads. Keep both in sync when changing status semantics.
 
-**Pipeline shape** (`backend/app/graph/pipeline.py`): `research → requirements → human_gate_1 → architecture → human_gate_2 → planning → human_gate_3 → frontend_code → backend_code → database → qa → devops → human_gate_4 → END`. Gate routing is a decision→target map (`GATE_ROUTES` in `pipeline.py`). Gates 1–3 all support `edit` (regenerate the gate's own document) and `back` (regenerate the previous stage, then flow forward and re-pause at the SAME gate — gate 2's back skips gate 1 via `skip_gate_1`, gate 3's skips gate 2 via `replan_after_architecture`); gate 4 supports approve/reject (allowed decisions per gate are derived from `GATE_ROUTES` in the resume endpoint — no separate constant). Every edit/back resume runs `invalidate_downstream` (in `pipeline.py`): everything produced after the re-run target is snapshotted into `previous_versions` (last snapshot only) and cleared. Feedback detection is one shared helper (`regeneration_target` in `agents/utils.py`); snapshotting, feedback-field clearing, and `stage_history` recording live in the `stage_node` wrapper, not in individual agents. `retry_counts` (per target stage, plus `file_fix:{path}` mirrors) drives the soft-cap-of-3 amber warnings in the UI and never resets. A resume against a non-gate `next` node (crash/error mid-run) restarts streaming from the checkpoint. Gate 3 is a full plan editor: the frontend PATCHes the edited `implementation_plan` (validated server-side: task schema, unique ids, in-plan dependencies → 422) before resuming, and cut tasks are archived in `excluded_tasks`. Gate 4 is the final review screen: file browser + QA panel + ZIP download (`GET /files`, `/files/content`, `/download` read from `outputs/{project_id}/` on disk), plus per-file AI fixes (`POST /files/fix`) that run as a standalone `call_llm` + `graph.update_state()` while the gate stays paused — capped at 3 per file via `fix_counts`. A fence-cleanup pass at the end of the devops node (`code_cleaner.clean_project_files`) keeps state, disk, and the ZIP identical; `strip_code_fences` lives in `app/utils/code_cleaner.py` and is the only copy.
+**Pipeline shape** (`backend/app/graph/pipeline.py`): `research → requirements → human_gate_1 → architecture → human_gate_2 → planning → human_gate_3 → frontend_code → database → backend_code → validation → qa → devops → human_gate_4 → END`, plus a `cancelled` terminal node every gate can route to. Two orderings are load-bearing: `database` sits BETWEEN the coders so ORM model files exist when the backend coder writes routers that import them (Day 19 reorder), and the `validation` node (Day 22, no LLM) runs after the last file-producing agent so no broken file reaches QA or the download ZIP. Gate routing is a decision→target map (`GATE_ROUTES` in `pipeline.py`). Gates 1–3 all support `edit` (regenerate the gate's own document) and `back` (regenerate the previous stage, then flow forward and re-pause at the SAME gate — gate 2's back skips gate 1 via `skip_gate_1`, gate 3's skips gate 2 via `replan_after_architecture`); gate 4 supports approve/reject (allowed decisions per gate are derived from `GATE_ROUTES` in the resume endpoint — no separate constant). Every edit/back resume runs `invalidate_downstream` (in `pipeline.py`): everything produced after the re-run target is snapshotted into `previous_versions` (last snapshot only) and cleared. Feedback detection is one shared helper (`regeneration_target` in `agents/utils.py`); snapshotting, feedback-field clearing, and `stage_history` recording live in the `stage_node` wrapper, not in individual agents. `retry_counts` (per target stage, plus `file_fix:{path}` mirrors) drives the soft-cap-of-3 amber warnings in the UI and never resets. A resume against a non-gate `next` node (crash/error mid-run) restarts streaming from the checkpoint. Gate 3 is a full plan editor: the frontend PATCHes the edited `implementation_plan` (validated server-side: task schema, unique ids, in-plan dependencies → 422) before resuming, and cut tasks are archived in `excluded_tasks`. Gate 4 is the final review screen: file browser + QA panel + ZIP download (`GET /files`, `/files/content`, `/download` read from `outputs/{project_id}/` on disk), plus per-file AI fixes (`POST /files/fix`) that run as a standalone `call_llm` + `graph.update_state()` while the gate stays paused — capped at 3 per file via `fix_counts`. A fence-cleanup pass at the end of the devops node (`code_cleaner.clean_project_files`) keeps state, disk, and the ZIP identical; `strip_code_fences` lives in `app/utils/code_cleaner.py` and is the only copy.
 
 **Tech stack**: FastAPI + LangGraph (Python) backend, React 19 + Vite + Tailwind 4 frontend, litellm as the LLM abstraction layer (Gemini / Groq / OpenRouter free-tier models per agent, see `llm_router.py` `MODELS` dict).
 
@@ -45,10 +45,10 @@ Two persistence layers exist side by side and both matter when debugging state i
 
 ## Current Development Status
 
-- **Real agents (generate actual output/files)**: research, requirements, architecture, planning, database, devops, qa.
-- **Stub nodes**: `frontend_code` and `backend_code` in `pipeline.py` only append a log line — they do not call an LLM or write files, even though the planning agent plans files under these phases and prompt files already exist for them (`prompts/frontend_coder_agent.md`, `prompts/backend_coder_agent.md`). This is the single biggest gap between a plan and a generated project today. Wiring these up is the natural next milestone — mirror `database_agent.py`'s pattern (per-file LLM generation + `write_project_file` + per-file broadcast + `_agent_event: True` on the final return).
-- **Free-tier LLM routing is fragile**: OpenRouter's free model slugs disappear/change without notice (already happened once — see `failures.md`). If an agent starts silently falling back or erroring with 404s, check `llm_router.py`'s `MODELS` dict against OpenRouter's live `/api/v1/models` list before assuming a logic bug.
-- `failures.md` at the repo root is a running log of full-pipeline-test observations (root causes, severity, fixes applied). Read it before re-running a full end-to-end test — it documents known rate-limit and routing failure modes so they aren't re-discovered from scratch.
+- **All nine agents are real** — research, requirements, architecture, planning, frontend_code, database, backend_code, qa, devops — plus a non-LLM `validation` node. The coder agents were built on Days 18–21 (focused context + tuned few-shot prompts) and generate files in parallel with dependency-aware scheduling (Day 20, `agents/parallel_runner.py`). There are no stub nodes left.
+- **The binding constraint is provider quota, not capability.** Free tiers cannot reliably complete one project per day: a single simple project issued 233 LLM attempts against a Gemini allowance of ~20 requests/day and a Groq ceiling of 100k tokens/day. Read `docs/INTEGRATION_RESULTS.md` "Provider ceiling" before attributing a thin result to model quality — under starvation, "never generated" and "stub" defects look exactly like bad code.
+- **Free-tier LLM routing is fragile**: OpenRouter's free model slugs disappear/change without notice (already happened once — see `docs/build-journal/failures.md`). If an agent starts silently falling back or erroring with 404s, check `llm_router.py`'s `MODELS` dict against OpenRouter's live `/api/v1/models` list before assuming a logic bug.
+- `docs/build-journal/failures.md` is a running log of full-pipeline-test observations (root causes, severity, fixes applied). Read it before re-running a full end-to-end test — it documents known rate-limit and routing failure modes so they aren't re-discovered from scratch.
 
 ---
 
@@ -66,18 +66,20 @@ Two persistence layers exist side by side and both matter when debugging state i
 
 ## Prompt-Change Discipline
 
-**Never edit a file in `prompts/` without a `PROMPT_CHANGELOG.md` entry and an A/B run.**
+**Never edit a file in `prompts/` without a `docs/PROMPT_CHANGELOG.md` entry and an A/B run.**
 The protocol (attribute the defect to its layer → write the hypothesis first →
 change one thing → A/B with `backend/scripts/ab_prompt_test.py` → keep or revert
 by the stated rule → record the verdict either way) is documented at the top of
-`PROMPT_CHANGELOG.md`. Run `python3 backend/tests/test_prompt_regression.py`
+`docs/PROMPT_CHANGELOG.md`. Run `python3 backend/tests/test_prompt_regression.py`
 (zero API cost) after any prompt edit. Layer attribution and the current defect
 taxonomy live in `docs/QUALITY_BASELINE.md`.
 
 ## Documentation Rules
 
-- `failures.md` (repo root) — append-only log of full-pipeline-test runs: what broke, root cause, fix, severity. Add an entry after any full end-to-end test, not after every small fix.
-- `docs/` — currently empty (placeholder only); use it if/when architecture docs, roadmap, or ADRs are needed. Don't create docs speculatively.
+- `docs/build-journal/failures.md` — append-only log of full-pipeline-test runs: what broke, root cause, fix, severity. Add an entry after any full end-to-end test, not after every small fix.
+- `README.md` / `docs/USAGE.md` / `docs/ARCHITECTURE.md` are the shipped, user-and-contributor-facing docs — the front path. Keep them true; they are the only docs a new reader is expected to open.
+- `docs/` also holds the measured-evidence docs (`INTEGRATION_RESULTS.md`, `QUALITY_BASELINE.md`, `OBSERVABILITY.md`, `PROMPT_CHANGELOG.md`). These are dated records — extend them, don't rewrite history in them.
+- `docs/build-journal/` is the internal build log, kept for history and off the user's front path. Don't create docs speculatively.
 - Prompt files (`prompts/*.md`) are living specs for agent behavior — when an agent's output quality or format changes, the prompt file is the fix, not a post-processing hack in the agent's Python code.
 
 ---
@@ -90,6 +92,6 @@ Promote to Developer Brain only patterns with value beyond this repo — e.g. "L
 
 ## Session Startup
 
-1. Read this file and `failures.md`.
+1. Read this file and `docs/build-journal/failures.md`.
 2. Check `git log --oneline -15` for the most recent work — this project moves in daily increments (commit messages are dated "Day N" in intent even when not in text).
 3. If touching the pipeline or an agent, read `backend/app/graph/pipeline.py` and the specific agent file before changing either — the state contract is implicit in the return dicts, not documented separately.
