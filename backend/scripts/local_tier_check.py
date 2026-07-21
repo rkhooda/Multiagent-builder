@@ -22,6 +22,7 @@ os.environ["LLM_CACHE"] = "false"          # a cache hit would prove nothing
 from app import llm_router as R            # noqa: E402
 
 CLOUD_PROVIDERS = ("gemini", "groq", "openrouter")
+OUT_DIR = os.getenv("LOCAL_CHECK_OUT_DIR")     # set to keep the generated text
 
 
 def exhaust_cloud_budgets():
@@ -98,6 +99,12 @@ def main(agents):
             elapsed = time.monotonic() - started
             model = served_by(agent)
             ok = bool(out and out.strip()) and model.startswith("ollama/")
+            if OUT_DIR:
+                # Routing correctness is not usability. Which agents produce
+                # something worth keeping on a small local model is a judgement
+                # that needs the actual text in front of you.
+                with open(os.path.join(OUT_DIR, f"{agent}.txt"), "w") as fh:
+                    fh.write(f"# {agent} via {model} in {elapsed:.1f}s\n\n{out or ''}")
             results.append((agent, model, elapsed, len(out or ""), ok))
             print(f"  {'ok  ' if ok else 'BAD '} {agent:<14} {model:<28} "
                   f"{elapsed:6.1f}s  {len(out or ''):>5} chars")
