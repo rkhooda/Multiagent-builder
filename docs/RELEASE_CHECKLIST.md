@@ -37,7 +37,7 @@ with recorded evidence, or FAIL and carried into
 
 ## 1. Automated regression gate
 
-`cd backend && ./venv/bin/python tests/run_all.py` — **15/15 green** (14 at the start of the day, plus test_abandoned_projects.py added by finding 4 below).
+`cd backend && ./venv/bin/python tests/run_all.py` — **16/16 green** (14 at the start of the day; test_abandoned_projects.py and test_ollama_context.py were added by findings 2 and 4 below).
 
 | Suite | Result |
 |---|---|
@@ -56,6 +56,7 @@ with recorded evidence, or FAIL and carried into
 | `test_validation.py` (Day 22 crafted-breakage) | PASS — 20 passed |
 | `test_validation_pass.py` | PASS — 14 passed |
 | `test_abandoned_projects.py` (added Day 30) | PASS — 7 passed |
+| `test_ollama_context.py` (added Day 30) | PASS — 7 passed |
 
 The 12 **live** suites (`--live`) are excluded from the gate by design: they
 issue real provider requests, so under exhausted quota they fail on 429s rather
@@ -132,12 +133,34 @@ Three things this check surfaced that were **not** visible to any test suite:
    exhaustion is a hard pause, not a graceful degradation. The claim "the
    pipeline degrades instead of failing" is only true once Ollama is actually
    running with a model. Now stated plainly in the README and ROADMAP.
-2. **The local context window silently truncates.** `qwen3:4b` runs a 4k
-   context; the research prompt is ~12,800 characters, and the Ollama server
-   logs `slot context shift … n_discard = 2045` — it is *discarding earlier
-   prompt content* to fit. Output is produced, so nothing errors, but the model
-   never saw the whole prompt. This is a quality trap distinct from the Day 29
-   thinking-token finding and is carried into the roadmap.
+2. **The local tier was silently discarding half of every prompt.** The
+   headline finding of the day. Ollama defaults every model to a 4,096-token
+   context regardless of what the model supports, and truncates the overflow:
+
+   ```
+   msg="truncating input prompt" limit=2050 prompt=4375 keep=4 new=2050
+   ```
+
+   The input budget is `num_ctx` minus the requested output, so a 4k window
+   asked for ~2k tokens leaves ~2k for the prompt — and every agent here sends
+   11–15k characters. **More than half of each prompt was discarded, keeping
+   only the first 4 tokens**, while the call returned 200 with plausible prose:
+   no error, no `finish_reason`, no metric. It presented as "local models are
+   weak" when the model had never seen the question.
+
+   This is the real root cause behind the Day 29 conclusion that local output
+   is thin and that planning cannot emit a valid plan. **Fixed** in `d7f2578`
+   by sizing `num_ctx` per request, with 7 new assertions. Verified in the
+   live pipeline on the identical prompt:
+
+   | | `n_ctx_slot` | prompt tokens accepted |
+   |---|---|---|
+   | before | 4,096 | 2,050 (truncated from 4,375) |
+   | after | 12,288 | **4,375 (full)** |
+
+   Consequence for this repo: every prior local-quality measurement is a lower
+   bound taken under truncation, not a verdict. Re-measuring is now a named
+   roadmap item.
 3. **`.env.example` documented the wrong path.** It told the user to copy to a
    root `.env`; compose reads `backend/.env`. Fixed in `71c4911` — a first-run
    blocker that no test could have caught.
