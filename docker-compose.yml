@@ -13,6 +13,14 @@ services:
       # Moves projects.db and metrics.db out of /app, where the application
       # code lives — a mount there would shadow the code itself.
       DATA_DIR: /data
+      # backend/.env carries the host default (localhost:11434), which inside a
+      # container points at the backend itself. The service name is right here,
+      # and overriding it in `environment` beats the env_file value. Set
+      # OLLAMA_BASE_URL in the root .env to reach an Ollama running on the host
+      # instead (host.docker.internal:11434 on Docker Desktop). When the profile
+      # is off the name simply does not resolve, the probe fails, and the chain
+      # behaves exactly as it did before local models existed.
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://ollama:11434}
     ports:
       - "8000:8000"
     volumes:

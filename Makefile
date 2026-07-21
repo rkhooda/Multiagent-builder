@@ -45,6 +45,9 @@ logs:
 ollama: dirs backend/.env
 	docker compose --profile ollama up --build -d
 	@echo "Running at http://localhost:3000 (ollama on :11434)"
+	@echo "The service starts with NO models — the local tier stays inactive"
+	@echo "until at least one is pulled into the volume:"
+	@echo "  docker compose exec ollama ollama pull phi4-mini"
 
 # --rmi local removes the images this project built. There is deliberately no
 # -v anywhere in this file: -v deletes named volumes, which would wipe the
