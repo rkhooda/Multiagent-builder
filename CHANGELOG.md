@@ -61,11 +61,22 @@ green, plus per-item pass/fail across the REST surface, the container boundary
 and the live pipeline, with the four items that were *not* verified stated
 rather than omitted.
 
+### Fixed on Day 30 (both found by running the real thing)
+
+- **Ollama silently discarded more than half of every prompt.** Its 4,096-token
+  default context minus the requested output left ~2k for prompts of 3–4.5k
+  tokens, keeping only the first 4 — and returned 200 with plausible prose, so
+  nothing surfaced it. Now sized per request. This invalidates the previous
+  day's verdict on local model quality: those measurements were taken through
+  the bug.
+- **Deleting a running project did not stop its workers**, which kept spending
+  provider quota on a project that no longer existed.
+
 ### Added on Day 30
 
 - `README.md` front door, `docs/USAGE.md`, `docs/ARCHITECTURE.md`
 - Three brief templates and a Brief Best Practices panel in the New Project form
-- `backend/tests/run_all.py` — single-command regression gate
+- `backend/tests/run_all.py` — single-command regression gate (16 offline suites)
 - `ROADMAP.md`, `docs/RELEASE_CHECKLIST.md`, this changelog
 - Build journal archived to `docs/build-journal/`
 - Fixed: `.env.example` documented the wrong env file path (a first-run blocker)

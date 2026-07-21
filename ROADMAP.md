@@ -123,8 +123,26 @@ run moving. But on an 8GB machine it has **never completed a full run** (Day
   array at 600 tokens, `qwen3:4b` returned an **empty string**. **Fast Mode
   plus a local reasoning model produces empty files.**
 
+**What the Day 30 capstone measured once truncation was fixed** — the first
+clean look at local quality:
+
+| | |
+|---|---|
+| Output volume | 3,579 completion tokens — not thin, not truncated |
+| Latency | 523s for one research call |
+| Structural validity | **failed** — 4 required sections absent; repair did not recover them |
+
+So the real limitation at 4B is **instruction-following against a rigid output
+contract**, not fluency or length. That also explains the planning failure
+above more precisely than Day 29 could: a task plan is the most rigidly
+structured artifact in the pipeline, so it is the first thing to break.
+
 Local is a per-stage fallback on this hardware, not a way to run the pipeline.
-16GB+ is where it plausibly becomes practical.
+16GB+ is where it plausibly becomes practical — and note the two constraints
+are **coupled**: a context window large enough to avoid truncation is exactly
+what an 8GB machine cannot afford (at `num_ctx` 12,288, `llama-server` sat at
+50.4% memory and 4.7% CPU — paging, not computing, with decode falling from ~14
+to ~8 tokens/sec).
 
 ### 6. Free model slugs vanish without notice
 
@@ -181,12 +199,17 @@ above; the old error message already claimed to do this.* Small and cheap.
 the pipeline twice (Days 23, 25).* Probe `MODELS` against the provider's live
 list on boot and warn, instead of discovering it as a 404 mid-run.
 
-**Re-measure the local tier now that prompts are no longer truncated.**
+**Try a larger local model against the output contracts.** *Evidence: with the
+full prompt visible, `qwen3:4b` produced 3,579 tokens of fluent research that
+still missed 4 required sections (Day 30). The failure is instruction-following
+on structured output, not capacity.* A 7–14B model on 16GB+ is the direct test,
+and it costs nothing but time and RAM.
+
+**Re-measure the rest of the local tier now that prompts are not truncated.**
 *Evidence: the Day 29 verdict on local quality was measured while >50% of every
 prompt was silently discarded (see the correction in §5).* Every local
 conclusion in this repo — thin output, invalid plans, "not worth the wait" —
-needs re-running against `d7f2578` before it can be trusted. Cheap: local costs
-nothing but time.
+needs re-running against `d7f2578` before it can be trusted.
 
 **Surface truncation and context limits as metrics.** *Evidence: the
 truncation above was invisible for two days because it produced a 200 with
