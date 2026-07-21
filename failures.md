@@ -1459,3 +1459,65 @@ tokens but were not restructured. `ProjectDetailPage` still holds a
 `react-hooks/exhaustive-deps` warning that predates today. No behavioural
 change: all nine offline backend suites still pass, and restart, delete,
 feedback and resume were each exercised in the browser.
+
+## Day 28 observations
+
+Docker packaging. Two images, nginx in front, one command to start. The only
+LLM spend was a single end-to-end run through the containerised stack.
+
+**The WebSocket through nginx — the thing the day was actually about — worked.**
+`101 Switching Protocols` on the handshake, then real `agent_complete` frames
+arriving over the proxied socket. The three lines that matter are
+`proxy_http_version 1.1` plus re-setting `Upgrade` and `Connection`: nginx talks
+HTTP/1.0 upstream by default and strips both headers as hop-by-hop, so omitting
+any one yields a page that loads, an API that works, and a feed that is silently
+dead. Worth testing the handshake with `curl` BEFORE spending any quota — it
+costs nothing and would have caught a misconfiguration for free.
+
+**Mounting the database directory rather than the file was not theoretical.**
+Mid-run the host showed `projects.db-wal` at 144KB beside `projects.db`. A
+single-file bind mount leaves those siblings in the container's writable layer,
+so every transaction still in that WAL at shutdown would have vanished — no
+crash, no error, just a project that was there yesterday. Mount directories.
+
+**WAL over a macOS bind mount works.** This was the one design decision taken on
+faith. VirtioFS handled it: no `database is locked`, no `disk I/O error`, and
+full state (94 log lines, 41 files) survived `down`/`up` intact. The fallback if
+it had misbehaved was cheap — the backend is the only writer, so `journal_mode=
+DELETE` would have cost almost nothing.
+
+**One real bug, found only because the smoke test ran.** The backend crash-looped
+on first start: `FileNotFoundError: /prompts/research_agent.md`. Nine agent
+modules resolve their system prompt via `parents[3]/"prompts"`, which lands at
+`/prompts` — a SIBLING of `/app`, outside a `./backend` build context. Prompts
+are source, not data, so the fix was widening the build context to the repo root
+rather than mounting them. Any fresh clone would have hit this.
+
+**Node survived into the image.** `COPY --from=node:20-slim /usr/local/bin/node`
+works because both bases are bookworm; `RUN node --version` in the Dockerfile
+turns a broken copy into a build failure instead of a silent downgrade to
+brace-counting. Container reports v20.20.2 and logs `JS deep validation ready`.
+
+**The run halted at `backend_code` — quota, not packaging.** Groq's daily budget
+was already at 104.8% before the day started; every `backend_code` attempt
+returned `rate_limit` and the pipeline paused itself at 10/12 files failed.
+Correct behaviour, and orthogonal to Docker. Not retried, per the one-spend rule.
+Gates 1-3 all approved through nginx, 41 files written, ZIP verified (56 files,
+valid content) both before and after a restart.
+
+**Pre-existing quirks surfaced, not fixed today:**
+- `status`/`current_stage` lag the checkpoint — the API read `backend_code` while
+  the log showed `database_agent` already finished. The two-persistence-layer
+  split in CLAUDE.md, visible in practice. It made a naive wait-loop give up.
+- The project list returns `project_name: None` while the detail endpoint returns
+  it correctly.
+- Naming the project "Day28 Smoke" sent the research agent off writing about
+  smoking cessation instead of the habit tracker in the brief. The project name
+  steers generation more than expected — relevant to prompt work, not to Docker.
+
+**Image sizes:** backend 1.24GB (litellm + langchain + google deps dominate),
+frontend 97.4MB. The backend is worth revisiting if it ever ships anywhere.
+
+**Port 3000 was already held** by an unrelated Next.js dev server, so the host
+port is now `${FRONTEND_PORT:-3000}` and the test ran on 3001. Host-side only —
+nginx still listens on 80 inside, so the proxy path tested is the real one.
