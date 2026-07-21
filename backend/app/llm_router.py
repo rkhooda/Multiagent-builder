@@ -347,32 +347,76 @@ def daily_budget_report() -> list:
 
 
 # ── Ollama tier-3 detection ──────────────────────────────────────────────────
-OLLAMA_URL = "http://localhost:11434"
+# The URL differs by deployment and both are real: host Ollama during dev
+# (localhost) and the docker-compose `ollama` profile service (http://ollama:11434),
+# which is why this is env-driven rather than a constant.
+OLLAMA_URL = (os.getenv("OLLAMA_BASE_URL") or "http://localhost:11434").rstrip("/")
 OLLAMA_PROBE_TTL_SECONDS = 60
-_ollama_cache = {"model": None, "checked_at": 0.0}
+_ollama_cache = {"models": [], "checked_at": 0.0}
 
 
-def get_ollama_model():
-    """Tier-3 local fallback: first available model from a running Ollama.
+def ollama_models() -> list:
+    """Model names a running Ollama is actually serving; [] when it is not.
 
-    Probed with a 1s timeout and cached for a short TTL. Returns None silently
-    when Ollama is absent — the chain simply ends before it.
+    Enumerating rather than answering a yes/no, because "the daemon is up" and
+    "the model I want is pulled" are different facts and only the second one
+    makes a tier usable. Probed with a 1s timeout — the daemon is either local
+    or on the compose network, so a slow reply means something is wrong and
+    waiting on it would stall every call behind a tier that is meant to be the
+    cheap escape hatch. Re-probed on a short TTL so a model pulled mid-session
+    becomes usable without restarting the process.
     """
     now = time.monotonic()
-    if now - _ollama_cache["checked_at"] < OLLAMA_PROBE_TTL_SECONDS:
-        return _ollama_cache["model"]
-    model = None
+    if _ollama_cache["checked_at"] and now - _ollama_cache["checked_at"] < OLLAMA_PROBE_TTL_SECONDS:
+        return _ollama_cache["models"]
     try:
         with urllib.request.urlopen(f"{OLLAMA_URL}/api/tags", timeout=1) as resp:
-            tags = json.load(resp)
-        names = [m.get("name") for m in tags.get("models", []) if m.get("name")]
-        if names:
-            preferred = next((n for n in names if n.startswith("qwen3:14b")), names[0])
-            model = f"ollama/{preferred}"
-    except Exception:
-        model = None
-    _ollama_cache.update(model=model, checked_at=now)
-    return model
+            names = sorted(m["name"] for m in json.load(resp).get("models", []) if m.get("name"))
+    except Exception:                           # noqa: BLE001 — absence is normal
+        names = []
+    _ollama_cache.update(models=names, checked_at=now)
+    return names
+
+
+# Per-agent local preference, resolved against what is ACTUALLY pulled.
+#
+# WHY two lists and not nine. The temptation is a bespoke model per agent, but
+# on a single 8GB machine the binding cost is not capability, it is the MODEL
+# SWAP: switching between two ~5GB models unloads and reloads weights, and a
+# pipeline that alternates per stage pays that on every transition. Fewer
+# distinct models is both simpler and measurably faster here.
+#
+# So the split is the one that actually earns its reload: a coding-tuned model
+# for the agents emitting source files, a general model for the agents emitting
+# prose and JSON. phi4-mini is nobody's first choice — it is the floor that
+# keeps the tier alive on hardware that cannot hold anything larger.
+#
+# Prefixes, not exact tags, because Ollama names carry tags (`qwen3:4b`,
+# `phi4-mini:latest`) that vary with what was pulled.
+_LOCAL_CODE = ["qwen2.5-coder", "qwen3", "phi4-mini"]
+_LOCAL_PROSE = ["qwen3", "qwen2.5-coder", "phi4-mini"]
+LOCAL_FALLBACKS = {agent: _LOCAL_CODE for agent in
+                   ("frontend_code", "backend_code", "database", "devops")}
+LOCAL_FALLBACKS.update({agent: _LOCAL_PROSE for agent in
+                        ("research", "requirements", "architecture", "planning", "qa")})
+
+
+def get_ollama_model(agent_type: str = None):
+    """Best pulled local model for this agent, as a litellm `ollama/…` string.
+
+    Degrades rather than errors: preferred model absent -> next in the list ->
+    whatever IS pulled. Routing to an unpulled model would make Ollama's own
+    404 the last error of the chain, which reads as "local tier broken" when the
+    truth is "that one model was never downloaded". Returns None when nothing is
+    served at all, and the chain simply ends before this tier.
+    """
+    available = ollama_models()
+    if not available:
+        return None
+    prefs = LOCAL_FALLBACKS.get(agent_type, _LOCAL_PROSE)
+    pick = next((name for pref in prefs for name in available
+                 if name.startswith(pref)), available[0])
+    return f"ollama/{pick}"
 
 
 # ── Fault injection (sabotage/regression testing) ────────────────────────────
