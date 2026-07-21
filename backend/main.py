@@ -5,7 +5,7 @@ from app.routers.projects import router as projects_router
 from app.routers.ws import router as ws_router
 from app.validation.syntax import js_tool_status
 
-app = FastAPI(title="Multi-Agent AI Product Builder API", version="0.1")
+app = FastAPI(title="Multi-Agent AI Product Builder API", version="1.0.0")
 
 # Day 22's JS deep validation needs node + @babel/parser. Both are baked into
 # the container image, but if either goes missing the validator falls back to
@@ -59,7 +59,7 @@ def health_check():
     from app.llm_router import llm_mode, ollama_models
 
     local = ollama_models()
-    return {"status": "ok", "version": "0.1", "js_validation": not _js_unavailable,
+    return {"status": "ok", "version": "1.0.0", "js_validation": not _js_unavailable,
             "llm_mode": llm_mode(),
             "local_models": [m.split(":")[0] if m.endswith(":latest") else m for m in local]}
 

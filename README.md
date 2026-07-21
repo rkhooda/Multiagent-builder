@@ -47,7 +47,7 @@ Open **http://localhost:3000**. Check it is alive:
 
 ```bash
 curl http://localhost:3000/api/health
-# {"status":"ok","version":"0.1","js_validation":true}
+# {"status":"ok","version":"1.0.0","js_validation":true}
 ```
 
 | Command | What it does |
@@ -161,7 +161,7 @@ covered in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). The short version:
 
 ```bash
 cd backend && python -m venv venv && ./venv/bin/pip install -r requirements.txt
-./venv/bin/python tests/run_all.py        # 15 offline suites, ~60s, no API calls
+./venv/bin/python tests/run_all.py        # 16 offline suites, ~60s, no API calls
 ```
 
 ## Status
