@@ -123,6 +123,10 @@ export default function MetricsPanel({ projectId, compact = false }) {
         <span className="text-[10px] text-ink-3">
           {data.attempts} attempt{data.attempts === 1 ? '' : 's'}
           {data.failed_attempts > 0 && ` · ${data.failed_attempts} failed`}
+          {/* Distinct from failed: a tier passed over because its daily budget
+              was gone, with no request sent. Every local call skips both cloud
+              tiers, so lumping these in read as a broken run. */}
+          {data.skipped_attempts > 0 && ` · ${data.skipped_attempts} skipped`}
         </span>
       </div>
 

@@ -130,6 +130,18 @@ check("reports which local models ran", u["models"] == ["qwen2.5-coder:7b", "qwe
 check("all-cloud run reports no local usage", ms.local_tier_usage("p1")["local_calls"] == 0)
 check("local usage rides on run_summary", ms.run_summary("p3")["local"]["local_calls"] == 2)
 
+# A skipped tier is a decision, not a failure. Every local call skips both cloud
+# tiers, so counting skips as failures made a clean run look broken.
+rec(agent="qa", model="groq/llama-3.3-70b-versatile", outcome="budget_exhausted",
+    project_id="p4")
+rec(agent="qa", model="gemini/gemini-2.5-flash", outcome="budget_exhausted", project_id="p4")
+rec(agent="qa", model="ollama/phi4-mini:latest", project_id="p4")
+rec(agent="qa", model="ollama/phi4-mini:latest", outcome="timeout", project_id="p4")
+s4 = ms.run_summary("p4")
+check("budget skips excluded from failures", s4["failed_attempts"] == 1)
+check("budget skips counted separately", s4["skipped_attempts"] == 2)
+check("real failures still counted", s4["ok_attempts"] == 1 and s4["attempts"] == 4)
+
 # ── deletion hook (Day 24) ──────────────────────────────────────────────────
 n = ms.delete_project_metrics("p2")
 check("delete removes only that project's rows", n == before)

@@ -282,7 +282,15 @@ def run_summary(project_id: str) -> dict:
     rows = _query(
         "SELECT COUNT(*) AS attempts,"
         " SUM(CASE WHEN outcome = 'ok' THEN 1 ELSE 0 END) AS ok_attempts,"
-        " SUM(CASE WHEN outcome != 'ok' THEN 1 ELSE 0 END) AS failed_attempts,"
+        # A budget skip is a decision, not a failure: the tier was passed over
+        # deliberately because its daily allowance was gone, and no request was
+        # sent. Counting it as failed was harmless while it was rare, but a
+        # local run skips every cloud tier on every call — a run where nothing
+        # went wrong reported "15 attempts, 10 failed", which is alarming and
+        # false. Skips are reported separately instead.
+        " SUM(CASE WHEN outcome NOT IN ('ok', 'budget_exhausted') THEN 1 ELSE 0 END)"
+        "   AS failed_attempts,"
+        " SUM(CASE WHEN outcome = 'budget_exhausted' THEN 1 ELSE 0 END) AS skipped_attempts,"
         " SUM(COALESCE(prompt_tokens, 0))     AS prompt_tokens,"
         " SUM(COALESCE(completion_tokens, 0)) AS completion_tokens,"
         " SUM(COALESCE(latency_ms, 0))        AS total_latency_ms"
@@ -293,6 +301,7 @@ def run_summary(project_id: str) -> dict:
         "attempts": attempts,
         "ok_attempts": s.get("ok_attempts") or 0,
         "failed_attempts": s.get("failed_attempts") or 0,
+        "skipped_attempts": s.get("skipped_attempts") or 0,
         "prompt_tokens": s.get("prompt_tokens") or 0,
         "completion_tokens": s.get("completion_tokens") or 0,
         "total_tokens": (s.get("prompt_tokens") or 0) + (s.get("completion_tokens") or 0),
