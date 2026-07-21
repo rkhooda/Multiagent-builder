@@ -604,6 +604,11 @@ async def delete_project(project_id: str):
     # unwind, so no node writes a checkpoint back after we have deleted it.
     cancelled_run = False
     cancel_auto_retry(project_id)
+    # Before cancelling: coder workers run in threads that task.cancel() cannot
+    # reach, so they must be told to stop at their next LLM call or they keep
+    # spending quota on a project that is about to stop existing.
+    from app.llm_router import abandon_project
+    abandon_project(project_id)
     task = _live_runs.get(project_id)
     if task:
         cancelled_run = True

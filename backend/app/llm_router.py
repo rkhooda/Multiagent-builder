@@ -307,6 +307,34 @@ def _seed_budget():
     _budget_day[0] = day
 
 
+# ── Abandoned projects ───────────────────────────────────────────────────────
+# Deleting or cancelling a RUNNING project cancels the asyncio task, but the
+# coder phase dispatches each file through asyncio.to_thread — and cancelling
+# the coroutine that awaits a thread does not stop the thread. Day 30 measured
+# the consequence: a deleted project kept issuing LLM calls for minutes
+# afterwards and regrew its own metrics rows (0 -> 5 after deletion), spending
+# the scarcest resource in this project on files nobody can ever download.
+#
+# Every request in the codebase goes through call_llm, so one check there stops
+# the cascade at the NEXT call. The call already in flight still completes —
+# a blocking provider request cannot be interrupted cleanly — so this bounds
+# the waste at one call per worker instead of a whole phase.
+#
+# ponytail: unbounded set of ids. ~36 bytes per deleted project on a
+# single-user tool; add eviction if this ever runs multi-tenant.
+_abandoned_projects: set = set()
+
+
+def abandon_project(project_id: str) -> None:
+    """Stop serving LLM calls for a project whose run was deleted/cancelled."""
+    if project_id:
+        _abandoned_projects.add(project_id)
+
+
+def is_abandoned(project_id: str) -> bool:
+    return bool(project_id) and project_id in _abandoned_projects
+
+
 def budget_exhausted(model: str) -> bool:
     provider = _provider_of(model)
     limit = daily_limit_for(provider)
@@ -630,6 +658,14 @@ def call_llm(messages: list, agent_type: str, max_tokens=4000, timeout=None,
         chain.insert(0, ollama) if mode == "prefer-local" else chain.append(ollama)
     base_timeout = timeout or AGENT_TIMEOUT_SECONDS.get(agent_type, DEFAULT_TIMEOUT_SECONDS)
     max_tokens = resolve_max_tokens(agent_type, max_tokens, fast_mode)
+
+    # Before the cache and before the chain: an abandoned project should not
+    # consume quota, a local slot, or a cache lookup. Raised (not returned
+    # empty) so the worker unwinds instead of writing a placeholder file for a
+    # project that no longer exists.
+    if is_abandoned(project_id):
+        raise LLMError(f"project {project_id} was cancelled or deleted "
+                       f"while this call was queued", agent_type, "none")
 
     # Checked before the chain, not per tier: the cached value is the answer to
     # the question, so which tier would have produced it is irrelevant. Recorded
