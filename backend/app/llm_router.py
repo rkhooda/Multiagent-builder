@@ -1,3 +1,4 @@
+import contextlib
 import json
 import os
 import threading
@@ -401,6 +402,33 @@ LOCAL_FALLBACKS.update({agent: _LOCAL_PROSE for agent in
                         ("research", "requirements", "architecture", "planning", "qa")})
 
 
+# Local generation is slow enough that the cloud timeouts are a guillotine: the
+# measured cloud budgets (90s default, 240s planning) assume a datacentre GPU,
+# and a 7B model on an M1 emits tens of tokens per second, so a document that
+# takes gemini 8s takes minutes here. Without a floor the local tier would
+# "fail" on every long document while it was in fact working correctly.
+OLLAMA_TIMEOUT_FLOOR_SECONDS = 900
+
+# Local models share ONE machine's RAM and GPU. Past a small number of
+# concurrent requests they do not degrade gracefully like a cloud endpoint —
+# they contend for the same weights and get SLOWER than running serially, and on
+# 8GB two ~5GB models cannot be resident at once at all, so the machine swaps.
+# Hence a cap distinct from the cloud concurrency: this is a hardware limit, not
+# a rate limit. Raise it on a machine with headroom.
+#
+# It lives HERE rather than in the parallel runner because the runner cannot know
+# which tier a call will land on — cloud may serve two files while a third falls
+# through to local. The tier is only known at the moment of the call.
+OLLAMA_MAX_CONCURRENT = int(os.getenv("OLLAMA_MAX_CONCURRENT") or 1)
+_ollama_sem = threading.Semaphore(max(1, OLLAMA_MAX_CONCURRENT))
+
+
+def llm_mode() -> str:
+    """auto (escalate cloud -> local) | cloud-only | prefer-local."""
+    mode = (os.getenv("LLM_MODE") or "auto").strip().lower()
+    return mode if mode in ("auto", "cloud-only", "prefer-local") else "auto"
+
+
 def get_ollama_model(agent_type: str = None):
     """Best pulled local model for this agent, as a litellm `ollama/…` string.
 
@@ -561,7 +589,7 @@ def _log_attempt(agent_type: str, model: str, attempt: int, outcome: str, starte
 
 def call_llm(messages: list, agent_type: str, max_tokens=4000, timeout=None,
              project_id: str = None, label: str = None, fast_mode: bool = False,
-             use_cache: bool = True) -> str:
+             use_cache: bool = True, mode: str = None) -> str:
     """LLM call with a classified-error retry policy over the provider chain.
 
     Per model: one same-model retry on 429 (after a per-tier wait) or timeout;
@@ -578,11 +606,17 @@ def call_llm(messages: list, agent_type: str, max_tokens=4000, timeout=None,
     """
     primary, fallback = MODELS.get(agent_type, MODELS["research"])
     context_chars = sum(len(m.get("content") or "") for m in messages)
+    mode = (mode or llm_mode())
+    # cloud-only omits the local tier entirely, so a run that must not be
+    # silently degraded pauses instead — that choice is the honest alternative
+    # to hardcoding which agents are "too important" for local models.
+    # prefer-local puts it first, making free unlimited iteration the default
+    # path and cloud the safety net rather than the other way round.
+    ollama = None if mode == "cloud-only" else get_ollama_model(agent_type)
     chain = [primary, fallback]
-    ollama = get_ollama_model()
     if ollama:
-        chain.append(ollama)
-    timeout = timeout or AGENT_TIMEOUT_SECONDS.get(agent_type, DEFAULT_TIMEOUT_SECONDS)
+        chain.insert(0, ollama) if mode == "prefer-local" else chain.append(ollama)
+    base_timeout = timeout or AGENT_TIMEOUT_SECONDS.get(agent_type, DEFAULT_TIMEOUT_SECONDS)
     max_tokens = resolve_max_tokens(agent_type, max_tokens, fast_mode)
 
     # Checked before the chain, not per tier: the cached value is the answer to
@@ -616,6 +650,9 @@ def call_llm(messages: list, agent_type: str, max_tokens=4000, timeout=None,
                          context_chars=context_chars)
             continue
 
+        is_local = _provider_of(model) == "ollama"
+        timeout = max(base_timeout, OLLAMA_TIMEOUT_FLOOR_SECONDS) if is_local else base_timeout
+
         for attempt in (1, 2):
             started = time.monotonic()
             try:
@@ -629,24 +666,33 @@ def call_llm(messages: list, agent_type: str, max_tokens=4000, timeout=None,
                                  context_chars=context_chars)
                     return injected
                 _pace(model)
-                resp = _traced_completion(
-                    model=model,
-                    messages=messages,
-                    max_tokens=max_tokens,
-                    temperature=0.3,
-                    timeout=timeout,
-                    # Filterable in the dashboard by project, agent and attempt.
-                    # Ignored by the passthrough when tracing is off.
-                    **({"langsmith_extra": {
-                        "name": f"{agent_type}:{model}",
-                        "tags": [f"agent:{agent_type}", f"model:{model}",
-                                 f"attempt:{attempt}"]
-                                + ([f"project:{project_id}"] if project_id else []),
-                        "metadata": {"agent": agent_type, "model": model,
-                                     "attempt": attempt, "project_id": project_id,
-                                     "label": label, "context_chars": context_chars},
-                    }} if _traced_completion is not _plain_completion else {}),
-                )
+                # Serialises local calls only. Cloud tiers pass straight through,
+                # so the Day 20 pool still runs 3 cloud files at once and only
+                # narrows to 1 for whichever workers fall through to Ollama.
+                with (_ollama_sem if is_local else contextlib.nullcontext()):
+                    resp = _traced_completion(
+                        model=model,
+                        messages=messages,
+                        max_tokens=max_tokens,
+                        temperature=0.3,
+                        timeout=timeout,
+                        # Sends local calls to the SAME daemon the probe found,
+                        # so host (localhost) and the compose profile service
+                        # (http://ollama:11434) both work off one env var
+                        # instead of litellm's own hardcoded default.
+                        **({"api_base": OLLAMA_URL} if is_local else {}),
+                        # Filterable in the dashboard by project, agent and attempt.
+                        # Ignored by the passthrough when tracing is off.
+                        **({"langsmith_extra": {
+                            "name": f"{agent_type}:{model}",
+                            "tags": [f"agent:{agent_type}", f"model:{model}",
+                                     f"attempt:{attempt}"]
+                                    + ([f"project:{project_id}"] if project_id else []),
+                            "metadata": {"agent": agent_type, "model": model,
+                                         "attempt": attempt, "project_id": project_id,
+                                         "label": label, "context_chars": context_chars},
+                        }} if _traced_completion is not _plain_completion else {}),
+                    )
                 # finish_reason is the provider's own statement that it stopped
                 # at the ceiling — exact, unlike comparing token counts to the
                 # budget, which needs a fudge factor and still misses providers

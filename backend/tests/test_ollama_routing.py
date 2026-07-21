@@ -1,7 +1,8 @@
-"""Day 29: local-tier detection and per-agent local model choice.
-Zero API calls — the probe is stubbed, never dialled."""
+"""Day 29: local-tier detection, per-agent model choice, chain placement and the
+local concurrency cap. Zero API calls — the probe is stubbed, never dialled."""
 import os
 import sys
+import threading
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -14,8 +15,13 @@ def _serving(*names):
     R._ollama_cache.update(models=sorted(names), checked_at=time.monotonic())
 
 
+def _absent():
+    R._ollama_cache.update(models=[], checked_at=time.monotonic())
+
+
 def _reset():
     R._ollama_cache.update(models=[], checked_at=0.0)
+    os.environ.pop("LLM_MODE", None)
 
 
 # ── probe ────────────────────────────────────────────────────────────────────
@@ -84,6 +90,105 @@ def test_unknown_model_still_used_rather_than_refusing():
     _serving("mistral:7b")
     assert R.get_ollama_model("backend_code") == "ollama/mistral:7b"
     _reset()
+
+
+# ── chain placement / LLM_MODE ───────────────────────────────────────────────
+
+def _chain_for(agent_type, mode):
+    """Rebuild the tier list exactly as call_llm does, without calling out."""
+    primary, fallback = R.MODELS[agent_type]
+    ollama = None if mode == "cloud-only" else R.get_ollama_model(agent_type)
+    chain = [primary, fallback]
+    if ollama:
+        chain.insert(0, ollama) if mode == "prefer-local" else chain.append(ollama)
+    return chain
+
+
+def test_auto_appends_local_as_last_resort():
+    _reset()
+    _serving("qwen3:4b")
+    assert _chain_for("research", "auto")[-1] == "ollama/qwen3:4b"
+    assert len(_chain_for("research", "auto")) == 3
+    _reset()
+
+
+def test_cloud_only_omits_local_even_when_available():
+    """The honest alternative to hardcoding which agents are 'too important' for
+    local: the user says so per run, and the chain pauses instead of degrading."""
+    _reset()
+    _serving("qwen3:4b", "qwen2.5-coder:7b")
+    chain = _chain_for("architecture", "cloud-only")
+    assert len(chain) == 2 and not any(m.startswith("ollama/") for m in chain)
+    _reset()
+
+
+def test_prefer_local_puts_local_first_with_cloud_still_behind_it():
+    _reset()
+    _serving("qwen2.5-coder:7b")
+    chain = _chain_for("backend_code", "prefer-local")
+    assert chain[0] == "ollama/qwen2.5-coder:7b"
+    assert len(chain) == 3, "cloud must remain as the safety net, not be removed"
+    _reset()
+
+
+def test_absent_ollama_leaves_the_pre_ollama_chain_untouched():
+    """Local is a new tier, not a replacement for the pause-as-last-resort."""
+    _reset()
+    _absent()
+    for mode in ("auto", "prefer-local", "cloud-only"):
+        assert _chain_for("qa", mode) == list(R.MODELS["qa"])
+    _reset()
+
+
+def test_llm_mode_rejects_junk_and_defaults_to_auto():
+    _reset()
+    os.environ["LLM_MODE"] = "banana"
+    assert R.llm_mode() == "auto"
+    os.environ["LLM_MODE"] = "PREFER-LOCAL"      # case/whitespace tolerant
+    assert R.llm_mode() == "prefer-local"
+    _reset()
+    assert R.llm_mode() == "auto"
+
+
+# ── local concurrency cap ────────────────────────────────────────────────────
+
+def test_local_semaphore_serialises_but_cloud_is_untouched():
+    """The cap is a hardware limit, not a rate limit: two 5GB models cannot be
+    resident at once on 8GB. Cloud calls must not pay for that."""
+    peak = [0]
+    live = [0]
+    lock = threading.Lock()
+
+    def work(is_local):
+        with (R._ollama_sem if is_local else __import__("contextlib").nullcontext()):
+            with lock:
+                live[0] += 1
+                peak[0] = max(peak[0], live[0])
+            time.sleep(0.05)
+            with lock:
+                live[0] -= 1
+
+    threads = [threading.Thread(target=work, args=(True,)) for _ in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert peak[0] <= R.OLLAMA_MAX_CONCURRENT, f"local peak {peak[0]} exceeded cap"
+
+    peak[0] = live[0] = 0
+    threads = [threading.Thread(target=work, args=(False,)) for _ in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert peak[0] == 4, "cloud calls were serialised by the local cap"
+
+
+def test_local_tier_gets_a_timeout_floor():
+    """A 7B model on an M1 emits tens of tokens/sec; the cloud budgets would
+    abort correct work in progress."""
+    assert R.OLLAMA_TIMEOUT_FLOOR_SECONDS > max(R.AGENT_TIMEOUT_SECONDS.values())
+    assert R.OLLAMA_TIMEOUT_FLOOR_SECONDS > R.DEFAULT_TIMEOUT_SECONDS
 
 
 def test_ollama_is_unmetered_and_unpaced():
