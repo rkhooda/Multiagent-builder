@@ -368,11 +368,9 @@ def ollama_models() -> list:
 
     Enumerating rather than answering a yes/no, because "the daemon is up" and
     "the model I want is pulled" are different facts and only the second one
-    makes a tier usable. Probed with a 1s timeout — the daemon is either local
-    or on the compose network, so a slow reply means something is wrong and
-    waiting on it would stall every call behind a tier that is meant to be the
-    cheap escape hatch. Re-probed on a short TTL so a model pulled mid-session
-    becomes usable without restarting the process.
+    makes a tier usable. Re-probed on a short TTL so a model pulled mid-session
+    becomes usable without restarting the process, and a failed re-probe keeps
+    what was last seen rather than declaring the tier gone.
     """
     now = time.monotonic()
     if _ollama_cache["checked_at"] and now - _ollama_cache["checked_at"] < OLLAMA_PROBE_TTL_SECONDS:
