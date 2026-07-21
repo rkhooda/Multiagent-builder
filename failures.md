@@ -1658,6 +1658,23 @@ the fix is not a hardcoded agent list but knowing that a tiny local model makes
 planning a coin flip — and `LLM_MODE=cloud-only` remains the lever. Revisit if a
 larger local model ever runs here.
 
+**qwen3:4b spends output budget on thinking, and a tight budget yields an EMPTY
+string.** Pulled after the phi4-mini failure (2.5GB, fits 8GB). Asked for a small
+JSON array at `max_tokens=600` it returned **0 characters** in 54s — the
+reasoning consumed the whole allowance before any content was emitted. The same
+request at `max_tokens=1500` returned clean valid JSON in **11.9s** using 166
+completion tokens. Same failure mode as the nemotron model demoted off `qa` on
+Day 26, and the same lesson: reasoning tokens are charged against `max_tokens`,
+so a local reasoning model needs headroom or it silently returns nothing. Note
+this cuts directly against fast mode, which HALVES budgets — fast mode plus a
+local reasoning model is a combination that produces empty files.
+
+Where it did have headroom, qwen3:4b was dramatically better than the floor
+model: 11.9s for the JSON phi4-mini could not produce in ~9 minutes across two
+attempts. The preference lists picked it up automatically on the next probe, no
+config change — which is the ideal-absent-then-present path working in the
+direction it was designed for.
+
 Structured JSON output is the sharp edge generally: prose agents degraded
 gracefully (shorter, shallower, still usable), while the one agent that must
 emit a machine-parseable schema failed outright.
