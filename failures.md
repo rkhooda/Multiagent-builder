@@ -1678,3 +1678,27 @@ direction it was designed for.
 Structured JSON output is the sharp edge generally: prose agents degraded
 gracefully (shorter, shallower, still usable), while the one agent that must
 emit a machine-parseable schema failed outright.
+
+**Second end-to-end attempt (qwen3:4b): started, not finished within the
+session.** Research completed locally in **403s** — twice phi4-mini's 202s for
+the same stage, because the thinking tokens are real time as well as real
+budget. So the better local model is also the slower one, and on this machine
+that trade is not obviously worth it outside the structured-output agents where
+phi4-mini simply cannot succeed.
+
+The limiting factor was never the router. It is that an 8GB M1 under sustained
+swap (6.9GB used, `llama-server` pinned at ~5% CPU — paging, not computing)
+cannot push this pipeline's prompt sizes through a local model at a useful rate.
+Each stage sends 11-15k characters of context; that is a fine ask of a
+datacentre GPU and a punishing one here.
+
+**Honest bottom line for the day.** The resilience mechanism is built, tested and
+proven: cloud exhaustion routes to local proactively with zero wasted requests,
+every agent resolves to a real pulled model, attribution is correct, and the run
+costs nothing. What is NOT proven is that a local run finishes — on this
+hardware it did not, twice, for two different reasons (phi4-mini cannot emit a
+valid plan; qwen3:4b can but is too slow here). "Never fully fails" is
+demonstrated in the sense that the pipeline keeps making progress instead of
+dying at a 429. It is not demonstrated in the sense of a finished project. The
+right hardware claim is: this needs 16GB+ to be a practical local pipeline, and
+on 8GB it is a working fallback for individual stages rather than whole runs.
