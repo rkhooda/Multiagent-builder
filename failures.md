@@ -1626,13 +1626,38 @@ a performance option, it is an availability option.
   runs, and the `mode` parameter on `call_llm` already exists — so per-project
   becomes additive the day two concurrent projects need different tiers.
 
-**Full end-to-end local run: reached gate 3, not yet completed.** Research →
-requirements → architecture → planning all succeeded locally through gates 1 and
-2, with every cloud tier skipped at `latency_ms: 0`. The run then sat in the
-planning repair loop: each repair is another ~5 minute local call, and the
-machine was in sustained swap (9.5GB of 10GB, 14% memory free, `llama-server`
-at 2.3% CPU — stalled on paging rather than computing). The routing claim is
-proven — 100% of calls served locally, zero cloud requests, attribution correct
-in metrics — but "completes end-to-end" is **not** demonstrated on this
-hardware, and should not be claimed until it is. On 8GB the honest summary is
-that local models keep the pipeline *alive*, not that they get it *finished*.
+**Full end-to-end local run: FAILED at planning. Not completed.** Research →
+requirements → architecture cleared gates 1 and 2 entirely on local models, with
+every cloud tier skipped at `latency_ms: 0`. Planning then failed hard:
+
+```
+LLMOutputError: Output failed validation after one repair attempt:
+No JSON array found in LLM response
+```
+
+phi4-mini spent 324s on the plan (718 completion tokens, 6 tasks, 2 with empty
+filepaths) and 232s on the repair (898 tokens) — about 9 minutes of local
+compute — and still produced no parseable JSON array. The validators behaved
+correctly throughout; nothing downstream was built on a bad plan. But the
+outcome is a hard stop, not a degraded success.
+
+So the day's central claim is **half proven**. Routing, attribution and cost are
+proven: 100% of calls served locally, zero cloud requests, correct per-agent
+attribution in metrics, $0. "The pipeline completes end-to-end on local models"
+is **not** proven and must not be claimed — on this hardware it does not.
+
+**This partly refutes the ponytail conclusion that no agent should prefer cloud.**
+The reasoning was that gates and schema validators already catch weak local
+output, so a pause-for-cloud whitelist guards nothing. The validators did catch
+it — but for planning specifically the local attempt has *negative* value: it
+costs ~9 minutes and then fails anyway, which is strictly worse than pausing
+immediately. The rejection of a whitelist still holds for the right reason
+though: this is a property of the MODEL, not the agent. A 3.8B floor model
+cannot emit a 30-task JSON plan; a 14B one on a 32GB machine plausibly can. So
+the fix is not a hardcoded agent list but knowing that a tiny local model makes
+planning a coin flip — and `LLM_MODE=cloud-only` remains the lever. Revisit if a
+larger local model ever runs here.
+
+Structured JSON output is the sharp edge generally: prose agents degraded
+gracefully (shorter, shallower, still usable), while the one agent that must
+emit a machine-parseable schema failed outright.
