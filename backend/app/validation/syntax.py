@@ -237,6 +237,20 @@ def _import_specifiers(content: str):
         yield m.group(1), content.count("\n", 0, m.start()) + 1
 
 
+def _resolve_relative(spec: str, from_path: str, tree: set):
+    """The generated file a relative specifier points at, or None.
+
+    Factored out of validate_js_imports so the composition check below resolves
+    imports the SAME way rather than growing a second, subtly different resolver.
+    """
+    base = PurePosixPath(from_path).parent
+    target = os.path.normpath(str(base / spec)).replace(os.sep, "/")
+    for ext in _JS_RESOLVE_ORDER:
+        if f"{target}{ext}" in tree:
+            return f"{target}{ext}"
+    return None
+
+
 def validate_js_imports(files: dict, package_json: str = None) -> dict:
     """FLAG unresolvable JS imports. Never rewrites — mirrors the Day 19 policy.
 
@@ -270,11 +284,9 @@ def validate_js_imports(files: dict, package_json: str = None) -> dict:
         if Path(path).suffix.lower() not in JS_EXTS or not content:
             continue
         issues = []
-        base = PurePosixPath(path).parent
         for spec, line in _import_specifiers(content):
             if spec.startswith("."):
-                target = os.path.normpath(str(base / spec)).replace(os.sep, "/")
-                if not any(f"{target}{ext}" in tree for ext in _JS_RESOLVE_ORDER):
+                if _resolve_relative(spec, path, tree) is None:
                     issues.append(SyntaxIssue(
                         path, line=line, kind="phantom_import",
                         message=f"imports '{spec}' which resolves to no generated file"))
@@ -289,6 +301,200 @@ def validate_js_imports(files: dict, package_json: str = None) -> dict:
                         message=f"imports package '{pkg_name}' which is not in package.json dependencies"))
         if issues:
             results[path] = issues
+    return results
+
+
+# ── Page composition coherence (Improvement 01, FLAG-only) ───────────────────
+#
+# The cheapest quality win of the whole change: it catches the main risk that
+# decomposition introduces, costs ZERO API calls, and reuses the resolver and the
+# Issue shape that already exist.
+#
+# Decomposition's real risk is not correctness, it is DRIFT and DISCONNECTION —
+# five sections that each parse, each import real files, and are collectively not
+# a page because the shell renders three of them. Every existing check passes on
+# that project. Only this one fails.
+#
+# FLAG-only, no auto-fix, stated plainly: `import_fixer` is Python-only by
+# construction (it returns any non-.py file untouched) and Day 22 deliberately
+# left JS import rewriting undone because JS specifiers are ambiguous across
+# extensions and index files. There is therefore no "safe class" of JS auto-fix
+# to reuse here, and inventing one would be exactly the duplication this change
+# is supposed to avoid. A missing section import is a real generation defect and
+# belongs in the report, not silently patched.
+
+_IMPORT_BINDING_RE = None
+
+
+def _import_bindings(content: str):
+    """Yield (specifier, default_name, {named}, line) for static ES imports.
+
+    ponytail: regex over the source, like _import_specifiers above and for the
+    same reason — the parse already happened in node, and shipping its AST back
+    to re-walk in Python costs more than "which names came from where" is worth.
+    Namespace imports (`import * as ns`) are yielded with no bindings, because
+    `ns.Anything` cannot be checked without scope analysis.
+    """
+    global _IMPORT_BINDING_RE
+    if _IMPORT_BINDING_RE is None:
+        import re
+        _IMPORT_BINDING_RE = re.compile(
+            r"""\bimport\s+(?!type\b)([^;'"]*?)\s*from\s*['"]([^'"]+)['"]""")
+    for m in _IMPORT_BINDING_RE.finditer(content):
+        clause, spec = m.group(1).strip(), m.group(2)
+        line = content.count("\n", 0, m.start()) + 1
+        if clause.startswith("*"):
+            yield spec, None, set(), line
+            continue
+        named = set()
+        default = None
+        brace = clause.find("{")
+        if brace != -1:
+            inner = clause[brace + 1:clause.find("}") if "}" in clause else len(clause)]
+            for part in inner.split(","):
+                part = part.strip()
+                if not part:
+                    continue
+                # `Foo as Bar` — the EXPORTED name is what must exist.
+                named.add(part.split(" as ")[0].strip())
+            head = clause[:brace].rstrip().rstrip(",").strip()
+        else:
+            head = clause
+        if head and head.replace("$", "").replace("_", "").isalnum():
+            default = head
+        yield spec, default, named, line
+
+
+_EXPORT_NAME_RE = None
+
+
+def _exported_names(content: str):
+    """(has_default, {named exports}) for a JS/JSX module.
+
+    Deliberately dumb and TOLERANT: an unrecognised export form yields nothing,
+    which makes this check silent rather than wrong. Same asymmetry that picked
+    the tolerant parser on Day 22 — a false "missing export" warning sends the
+    user hunting a defect that is not there, which is worse than a missed one.
+    """
+    global _EXPORT_NAME_RE
+    if _EXPORT_NAME_RE is None:
+        import re
+        _EXPORT_NAME_RE = re.compile(
+            r"^\s*export\s+(?:(default)\b|"
+            r"(?:async\s+)?(?:function|class|const|let|var)\s+([A-Za-z_$][\w$]*)|"
+            r"\{([^}]*)\})", re.MULTILINE)
+    has_default, named = False, set()
+    for m in _EXPORT_NAME_RE.finditer(content or ""):
+        if m.group(1):
+            has_default = True
+        elif m.group(2):
+            named.add(m.group(2))
+        elif m.group(3):
+            for part in m.group(3).split(","):
+                part = part.strip()
+                if not part:
+                    continue
+                # `foo as default` re-exports a default; `foo as bar` exports bar.
+                alias = part.split(" as ")[-1].strip() if " as " in part else part
+                if alias == "default":
+                    has_default = True
+                else:
+                    named.add(alias)
+    return has_default, named
+
+
+def validate_page_composition(files: dict, plan_tasks: list) -> dict:
+    """Deterministic composition checks over a decomposed frontend. Zero API cost.
+
+    Returns {filepath: [SyntaxIssue(kind='coherence_warning')]}. Returns {} when
+    nothing was decomposed, so an undecomposed run pays literally nothing.
+
+    Four questions, in the order a broken page actually fails:
+      1. does each page shell import every section it owns?
+      2. do the names it imports match what those sections really export?
+      3. is any generated section imported by nothing at all?
+      4. do sections import primitives that exist?  <- NOT re-implemented here:
+         validate_js_imports already answers it for every relative import in the
+         project, and a second copy would drift from the first.
+    """
+    sections_of, by_id = {}, {}
+    for task in plan_tasks or []:
+        if not isinstance(task, dict) or not task.get("id"):
+            continue
+        by_id[task["id"]] = task
+        if task.get("section_of"):
+            sections_of.setdefault(task["section_of"], []).append(task)
+    if not sections_of:
+        return {}
+
+    tree = set(files or {})
+    results = {}
+
+    def add(path, message, line=0):
+        results.setdefault(path, []).append(
+            SyntaxIssue(path, line=line, kind="coherence_warning", message=message))
+
+    # Who imports what, resolved once for the whole tree.
+    imported_by = {}
+    bindings_of = {}
+    for path, content in (files or {}).items():
+        if Path(path).suffix.lower() not in JS_EXTS or not content:
+            continue
+        for spec, default, named, line in _import_bindings(content):
+            if not spec.startswith("."):
+                continue
+            target = _resolve_relative(spec, path, tree)
+            if target is None:
+                continue        # already reported as phantom_import; not ours
+            imported_by.setdefault(target, set()).add(path)
+            bindings_of.setdefault((path, target), []).append((default, named, line))
+
+    for shell_id, sections in sorted(sections_of.items()):
+        shell = by_id.get(shell_id)
+        if not shell:
+            continue            # already reported by the plan validator
+        shell_path = shell.get("filepath", "")
+        shell_content = (files or {}).get(shell_path)
+        if not shell_content:
+            continue            # shell never generated; the stub already says so
+
+        for section in sorted(sections, key=lambda s: s.get("filepath", "")):
+            section_path = section.get("filepath", "")
+            if section_path not in tree:
+                continue        # never generated; counted as missing, not incoherent
+
+            # 1. the shell must actually compose the section it owns
+            binds = bindings_of.get((shell_path, section_path))
+            if not binds:
+                add(shell_path,
+                    f"page shell does not import its section {section_path} "
+                    f"({section.get('id')}) — the section is generated but never rendered")
+                continue
+
+            # 2. the names it imports must exist in the section
+            has_default, named = _exported_names(files[section_path])
+            for default_name, named_imports, line in binds:
+                if default_name and not has_default:
+                    add(shell_path,
+                        f"imports {default_name} as the default export of {section_path}, "
+                        f"which has no default export", line)
+                missing = sorted(n for n in named_imports if n not in named)
+                # Silent only when extraction recognised NOTHING in the module —
+                # then the failure is ours, not the code's. A module with a
+                # default export and no named ones is a real finding: importing
+                # `{ Hero }` from it parses, resolves, and renders undefined.
+                if missing and (named or has_default):
+                    add(shell_path,
+                        f"imports {missing} from {section_path}, which exports "
+                        f"{sorted(named) if named else 'only a default'}", line)
+
+    # 3. a generated section nothing imports
+    for sections in sections_of.values():
+        for section in sections:
+            path = section.get("filepath", "")
+            if path in tree and not imported_by.get(path):
+                add(path, f"section {section.get('id')} is generated but imported by "
+                          f"no file — nothing renders it")
     return results
 
 

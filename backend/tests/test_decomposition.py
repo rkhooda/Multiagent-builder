@@ -292,6 +292,121 @@ def test_sections_appear_in_the_folder_map():
     assert "Hero.jsx" in context and "PricingTable.jsx" in context, context[-1500:]
 
 
+# ── Page composition coherence (Task 4) — deterministic, zero API cost ──────
+
+from app.validation.syntax import (  # noqa: E402
+    _exported_names, validate_page_composition,
+)
+
+SECTION = "export default function Hero() {\n  return <div className=\"p-6\">Hi</div>;\n}\n"
+SHELL = (
+    "import Hero from '../components/Landing/Hero';\n"
+    "import FeatureGrid from '../components/Landing/FeatureGrid';\n"
+    "import PricingTable from '../components/Landing/PricingTable';\n"
+    "import Footer from '../components/Landing/Footer';\n"
+    "export default function LandingPage() {\n"
+    "  return <div><Hero /><FeatureGrid /><PricingTable /><Footer /></div>;\n"
+    "}\n"
+)
+
+
+def _coherent_files(**overrides):
+    files = {t["filepath"]: SECTION for t in GOOD_PLAN if t.get("section_of")}
+    files["frontend/src/pages/LandingPage.jsx"] = SHELL
+    files["frontend/src/lib/api.js"] = "export default {};\n"
+    files.update(overrides)
+    return files
+
+
+def test_a_coherent_page_produces_no_warnings():
+    """False positives here are the expensive direction: they send the user
+    hunting a defect that is not there."""
+    assert validate_page_composition(_coherent_files(), GOOD_PLAN) == {}
+
+
+def test_undecomposed_project_costs_nothing():
+    plain = [_task("fe_002", "frontend/src/pages/HomePage.jsx")]
+    assert validate_page_composition({"frontend/src/pages/HomePage.jsx": SHELL}, plain) == {}
+
+
+def test_shell_that_forgets_a_section_is_flagged():
+    """THE defect decomposition introduces: every other check passes on this
+    project — the sections parse, the imports resolve, the shell renders. It is
+    simply not the page that was planned."""
+    forgetful = SHELL.replace("import PricingTable from '../components/Landing/PricingTable';\n", "")
+    results = validate_page_composition(
+        _coherent_files(**{"frontend/src/pages/LandingPage.jsx": forgetful}), GOOD_PLAN)
+    messages = [i.message for issues in results.values() for i in issues]
+    assert any("does not import its section" in m and "PricingTable" in m
+               for m in messages), messages
+    assert any("imported by\nno file" in m or "imported by" in m for m in messages), messages
+
+
+def test_orphan_section_is_flagged_on_the_section_itself():
+    """A generated file nothing renders is a wasted generation call."""
+    orphan = _task("fe_015", "frontend/src/components/Landing/Extra.jsx", section_of="fe_014")
+    plan = GOOD_PLAN + [orphan]
+    files = _coherent_files(**{orphan["filepath"]: SECTION})
+    results = validate_page_composition(files, plan)
+    assert orphan["filepath"] in results, results.keys()
+    assert any("imported by no file" in i.message for i in results[orphan["filepath"]])
+
+
+def test_default_import_of_a_named_only_export_is_flagged():
+    """Parses fine, resolves fine, renders `undefined` at runtime."""
+    named_only = "export function Hero() { return null; }\n"
+    results = validate_page_composition(
+        _coherent_files(**{"frontend/src/components/Landing/Hero.jsx": named_only}), GOOD_PLAN)
+    messages = [i.message for issues in results.values() for i in issues]
+    assert any("no default export" in m for m in messages), messages
+
+
+def test_named_import_that_does_not_exist_is_flagged():
+    shell = SHELL.replace("import Hero from", "import { Hero, Missing } from")
+    results = validate_page_composition(
+        _coherent_files(**{"frontend/src/pages/LandingPage.jsx": shell}), GOOD_PLAN)
+    messages = [i.message for issues in results.values() for i in issues]
+    assert any("Missing" in m for m in messages), messages
+
+
+def test_sections_never_generated_are_not_called_incoherent():
+    """A file that failed generation is already counted as missing; reporting it
+    again as a coherence defect would double-count one failure."""
+    files = _coherent_files()
+    del files["frontend/src/components/Landing/Footer.jsx"]
+    results = validate_page_composition(files, GOOD_PLAN)
+    messages = [i.message for issues in results.values() for i in issues]
+    assert not any("Footer" in m for m in messages), messages
+
+
+def test_export_extraction_is_tolerant_not_wrong():
+    """Unrecognised export forms yield nothing, making the check silent rather
+    than wrong — same asymmetry that picked the tolerant parser on Day 22."""
+    has_default, named = _exported_names(
+        "export default function A(){}\nexport const b = 1;\nexport { c, d as e };\n")
+    assert has_default and named == {"b", "c", "e"}, named
+    assert _exported_names("const x = 1;\n") == (False, set())
+    assert _exported_names("") == (False, set())
+
+
+def test_warnings_do_not_move_the_quality_threshold():
+    """The A/B's own instrument must not respond to the change under test."""
+    from app.validation.report import UNRESOLVED_KINDS, aggregate
+    from app.validation.syntax import SyntaxIssue
+    assert "coherence_warning" not in UNRESOLVED_KINDS
+    report = aggregate(
+        [SyntaxIssue("a.jsx", kind="coherence_warning", message="x")],
+        files_checked=10, repaired=[], repair_failed=[], retry_counts={},
+        degraded_tools=[], budget_exhausted=False)
+    assert report["coherence_warnings"] == 1
+    assert report["failure_rate"] == 0.0 and not report["below_threshold"]
+
+
+def test_warnings_never_trigger_a_paid_repair():
+    from app.agents.validation_pass import REPAIRABLE_KINDS
+    assert "coherence_warning" not in REPAIRABLE_KINDS
+
+
 def _check(name, cond, detail=""):
     print(f"  {'ok  ' if cond else 'FAIL'} {name}{'' if cond else ' -> ' + detail}")
     return cond

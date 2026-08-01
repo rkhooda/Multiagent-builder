@@ -16,6 +16,8 @@ Repairs run sequentially. ponytail: the run ceiling is 10 and realistic runs
 spend 0-3, so routing them through parallel_runner would add a scheduler for
 work that does not measurably benefit. Revisit if the ceiling ever rises.
 """
+import json
+
 from ..core.connection_manager import manager
 from ..llm_router import call_llm
 from ..utils.code_cleaner import strip_code_fences
@@ -23,7 +25,7 @@ from ..utils.file_writer import write_project_file
 from ..validation import report as vreport
 from ..validation.syntax import (
     JsToolUnavailable, js_syntax_heuristic, validate_artifact, validate_content,
-    validate_js_batch, validate_js_imports,
+    validate_js_batch, validate_js_imports, validate_page_composition,
 )
 
 # Kinds worth spending an LLM call on. Import warnings are FLAG-only: a phantom
@@ -238,6 +240,20 @@ def validation_pass(state: dict) -> dict:
     for path, issues in validate_js_imports(generated_files, package_json).items():
         issues_by_file.setdefault(path, []).extend(issues)
 
+    # ── 3b. Page composition coherence (Improvement 01) — deterministic, free ──
+    # Right here beside the import check because it is the same KIND of question
+    # (whole-tree, cross-file, cannot be answered one file at a time) and it
+    # reuses the same resolver. Returns {} when nothing was decomposed, so an
+    # undecomposed run pays nothing. coherence_warning is not in UNRESOLVED_KINDS
+    # or REPAIRABLE_KINDS, so these never move the quality threshold and never
+    # trigger a paid repair — they are information for the human at Gate 4.
+    try:
+        plan_tasks = json.loads(state.get("implementation_plan") or "[]")
+    except (json.JSONDecodeError, TypeError):
+        plan_tasks = []
+    for path, issues in validate_page_composition(generated_files, plan_tasks).items():
+        issues_by_file.setdefault(path, []).extend(issues)
+
     # ── 4. Bounded repair of syntax/artifact defects ────────────────────────
     repaired, repair_failed = [], []
     budget_exhausted = False
@@ -307,6 +323,7 @@ def validation_pass(state: dict) -> dict:
         f"{report['syntax_errors_found']} unresolved syntax, "
         f"{report['auto_repaired']} repaired, "
         f"{report['phantom_imports'] + report['missing_packages']} import warnings, "
+        f"{report.get('coherence_warnings', 0)} coherence warnings, "
         f"{report['repair_calls_spent']}/{report['repair_ceiling']} repair calls spent")
     print(f"[Validation] Done. {vreport.render_summary(report)}", flush=True)
 
@@ -319,6 +336,7 @@ def validation_pass(state: dict) -> dict:
         "auto_repaired": report["auto_repaired"],
         "import_warnings": report["phantom_imports"] + report["missing_packages"],
         "artifact_errors": report["artifact_errors"],
+        "coherence_warnings": report.get("coherence_warnings", 0),
         "repair_calls_spent": report["repair_calls_spent"],
         "repair_ceiling": report["repair_ceiling"],
         "below_threshold": report["below_threshold"],

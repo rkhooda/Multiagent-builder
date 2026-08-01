@@ -152,6 +152,11 @@ def aggregate(issues: list, *, files_checked: int, repaired: list, repair_failed
         "phantom_imports": len(by_kind.get("phantom_import", [])),
         "missing_packages": len(by_kind.get("missing_package", [])),
         "artifact_errors": len(by_kind.get("artifact", [])),
+        # Improvement 01. Reported but NOT in UNRESOLVED_KINDS: a shell that
+        # forgets a section is a real defect, but it is not a mechanical failure
+        # of the file, and letting it move the quality threshold would make the
+        # A/B's own instrument respond to the change under test.
+        "coherence_warnings": len(by_kind.get("coherence_warning", [])),
         "generation_failed": len(failed_files),
         "repair_calls_spent": repairs_spent_total(retry_counts),
         "repair_ceiling": REPAIR_CEILING_PER_RUN,
@@ -179,6 +184,8 @@ def render_summary(report: dict) -> str:
     ]
     if report["artifact_errors"]:
         parts.append(f"{report['artifact_errors']} invalid JSON/YAML artifacts")
+    if report.get("coherence_warnings"):
+        parts.append(f"{report['coherence_warnings']} page-composition warnings")
     if report["generation_failed"]:
         parts.append(f"{report['generation_failed']} files failed generation")
 
