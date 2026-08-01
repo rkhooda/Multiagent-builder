@@ -29,6 +29,22 @@ MODELS = {
     "architecture": ("groq/llama-3.3-70b-versatile", "gemini/gemini-2.5-flash"),
     "planning":     ("gemini/gemini-2.5-flash", "groq/llama-3.3-70b-versatile"),
     "frontend_code":("groq/llama-3.3-70b-versatile", "gemini/gemini-2.5-flash"),
+    # Improvement 01, ponytail #2 — routed deliberately OFF the coders' primary.
+    #
+    # The brief's premise was that OpenRouter (~50 req/day) is the pinch point.
+    # That stopped being true on Day 23: qwen3-coder:free was delisted and both
+    # coders moved to groq primary, so the only OpenRouter slug left in this
+    # table is requirements' fallback. The scarce pool TODAY is groq's daily
+    # TOKEN allowance — measured refusal at 95,966 of 100,000 — and that is the
+    # coders' primary. So the reviewer takes gemini first: 1M tracked daily
+    # tokens, and because gemini is the coder's FALLBACK, review only contends
+    # with generation once groq is already dead, at which point nothing is
+    # generating anyway.
+    #
+    # Judgement over code-generation strength is the right axis here: a critic
+    # emits a short structured verdict, not source. gemini-2.5-flash already
+    # serves the pipeline's other two judgement/strict-JSON agents (planning, qa).
+    "frontend_review": ("gemini/gemini-2.5-flash", "groq/llama-3.3-70b-versatile"),
     "backend_code": ("groq/llama-3.3-70b-versatile", "gemini/gemini-2.5-flash"),
     "database":     ("groq/llama-3.3-70b-versatile", "gemini/gemini-2.5-flash"),
     # Day 26: the nemotron reasoning model was demoted OFF this slot. It does not
@@ -439,7 +455,9 @@ _LOCAL_PROSE = ["qwen3", "qwen2.5-coder", "phi4-mini"]
 LOCAL_FALLBACKS = {agent: _LOCAL_CODE for agent in
                    ("frontend_code", "backend_code", "database", "devops")}
 LOCAL_FALLBACKS.update({agent: _LOCAL_PROSE for agent in
-                        ("research", "requirements", "architecture", "planning", "qa")})
+                        ("research", "requirements", "architecture", "planning", "qa",
+                         # Reviewing is judgement + strict JSON, not code emission.
+                         "frontend_review")})
 
 
 # Local generation is slow enough that the cloud timeouts are a guillotine: the

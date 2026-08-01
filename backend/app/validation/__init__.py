@@ -253,6 +253,61 @@ def _valid_plan(text, state):
     return errors
 
 
+def _valid_verdict(text, state):
+    """Improvement 01: the reviewer's JSON verdict, checked structurally.
+
+    Registry validator, so a malformed verdict gets the SAME one-shot repair
+    every other agent gets (Day 10/22) rather than new parsing machinery. If the
+    repair also fails, call_validated raises and the caller fails OPEN — a broken
+    reviewer must never block a file from being written.
+
+    Deliberately strict about shape and lax about content: an issue list this
+    module cannot read is useless to the revision prompt, but judging whether the
+    reviewer was RIGHT is not something a validator can do.
+    """
+    from app.agents.frontend_reviewer import extract_verdict_json
+
+    data, error = extract_verdict_json(text)
+    if data is None:
+        return [error or "Response is not a JSON object"]
+
+    problems = []
+    if data.get("verdict") not in ("pass", "revise"):
+        problems.append(
+            f"`verdict` must be exactly \"pass\" or \"revise\", got {data.get('verdict')!r}")
+    issues = data.get("issues")
+    if not isinstance(issues, list):
+        problems.append("`issues` must be an array (use [] when there are none)")
+        issues = []
+    for i, issue in enumerate(issues[:10]):
+        if not isinstance(issue, dict):
+            problems.append(f"issues[{i}] must be an object")
+            continue
+        if issue.get("severity") not in ("critical", "major", "minor"):
+            problems.append(
+                f"issues[{i}].severity must be \"critical\", \"major\" or \"minor\"")
+        if not str(issue.get("problem") or "").strip():
+            problems.append(f"issues[{i}].problem must be a non-empty sentence")
+    if not isinstance(data.get("coherence_notes", ""), str):
+        problems.append("`coherence_notes` must be a string (use \"\" when there is nothing)")
+
+    # The prompt defines the verdict as a FUNCTION of the issues. Enforcing it
+    # here stops the two most expensive drifts in both directions: "revise" with
+    # nothing actionable burns a revision call on no information, and a critical
+    # issue filed under "pass" silently ships the defect the review was for.
+    severities = {i.get("severity") for i in issues if isinstance(i, dict)}
+    blocking = bool(severities & {"critical", "major"})
+    if data.get("verdict") == "revise" and not blocking:
+        problems.append(
+            "verdict is \"revise\" but no issue is critical or major. Either raise the "
+            "severity of the issue that actually blocks, or return \"pass\".")
+    if data.get("verdict") == "pass" and blocking:
+        problems.append(
+            "verdict is \"pass\" but an issue is critical or major. Either return "
+            "\"revise\", or lower the severity to minor.")
+    return problems
+
+
 VALIDATORS = {
     "research": [min_length(500), _research_quality],
     "requirements": [min_length(500), _requirements_sections],
@@ -260,6 +315,7 @@ VALIDATORS = {
     "planning": [_valid_plan],
     "frontend_code": [min_code_lines(5)],
     "backend_code": [min_code_lines(5)],
+    "frontend_review": [_valid_verdict],
 }
 
 REPAIR_PROMPT = (

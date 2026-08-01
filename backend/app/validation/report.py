@@ -11,12 +11,30 @@ diagnostic signal that the generator is misaimed — raising the ceiling to make
 the symptom go away is the exact anti-pattern Day 21 exists to prevent.
 """
 import os
+import threading
 
 # Env-configurable with sane defaults. Day 25 (three full integration projects)
 # is the real evidence base for tuning these — resist retuning on one run.
 QUALITY_THRESHOLD = float(os.getenv("QUALITY_THRESHOLD", "0.2"))
 REPAIR_CAP_PER_FILE = int(os.getenv("REPAIR_CAP_PER_FILE", "2"))
-REPAIR_CEILING_PER_RUN = int(os.getenv("REPAIR_CEILING_PER_RUN", "10"))
+
+# Raised 10 -> 14 for Improvement 01, deliberately and once.
+#
+# The ceiling now covers THREE kinds of LLM spend, not two: Day 22's write-time
+# repairs, Day 22's validation-pass repairs, and Improvement 01's reviewer
+# revisions. Those revisions land EARLY (inside the coder phase), so leaving the
+# ceiling at 10 would let a review-heavy frontend phase exhaust the budget before
+# the validation pass runs at all — converting "some files got a second opinion"
+# into "no syntax error anywhere in the project got repaired". That is a strictly
+# worse trade, and it would have been silent.
+#
+# +4 is sized against the selective trigger, not picked round: it fires on ~12-18
+# of a ~50-file frontend phase, and measured runs spend 0-3 repairs. It is NOT
+# licence for more repairing — the Day 22 reasoning stands unchanged: a project
+# needing this many repairs has a PROMPT or ARCHITECTURE problem, and exhaustion
+# is the diagnostic signal that says so. Raising it again to silence a symptom is
+# the exact anti-pattern Day 21 exists to prevent.
+REPAIR_CEILING_PER_RUN = int(os.getenv("REPAIR_CEILING_PER_RUN", "14"))
 
 REPAIR_PREFIX = "repair:"
 
@@ -60,6 +78,35 @@ def record_repair(retry_counts: dict, filepath: str) -> dict:
     key = repair_key(filepath)
     retry_counts[key] = int(retry_counts.get(key, 0)) + 1
     return retry_counts
+
+
+# Guards try_reserve_repair only. The sequential callers (validation_pass,
+# validate_devops_artifacts) do not need it; Improvement 01's reviewer decides
+# mid-worker, and the coder workers are a THREAD POOL, so check-then-charge as
+# two statements would let three concurrent workers all read "9 spent" and each
+# charge a tenth — three revisions issued against a ceiling of one.
+_reserve_lock = threading.Lock()
+
+
+def try_reserve_repair(retry_counts: dict, filepath: str) -> tuple:
+    """Atomically may_repair + record_repair. Returns (allowed, reason).
+
+    This is the ONE account (Improvement 01, ponytail #2). A reviewer revision is
+    an LLM call that fixes a generated file, which is exactly what a Day 22
+    repair is, so it charges the identical `repair:{path}` key and obeys the
+    identical per-file cap and per-run ceiling. There is deliberately no separate
+    review ledger and no REVIEW_CEILING: two counters over one budget is how a
+    file quietly ends up spending 2 repairs plus 2 revisions.
+
+    Charges only on success, so a denied request costs nothing — unlike the
+    sequential callers, which charge before calling because there a crashed call
+    must still consume its slot.
+    """
+    with _reserve_lock:
+        allowed, reason = may_repair(retry_counts, filepath)
+        if allowed:
+            record_repair(retry_counts, filepath)
+        return allowed, reason
 
 
 def failed_generation_files(state: dict) -> set:
