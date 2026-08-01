@@ -29,10 +29,26 @@ from app.validation import call_validated
 SYSTEM_PROMPT = (Path(__file__).resolve().parents[3] / "prompts"
                  / "frontend_reviewer_agent.md").read_text(encoding="utf-8")
 
-# The verdict is a short JSON object. Small on purpose: this is the call that
-# has to stay cheap for the whole feature to be affordable, and a reviewer given
-# room to ramble writes an essay instead of a verdict.
-REVIEW_MAX_TOKENS = 700
+# MEASURED, not guessed. The first cut was 700 on the reasoning that a verdict is
+# a short JSON object — and it broke the reviewer completely: 10 of 14
+# calibration reviews failed, every gemini attempt stopping at exactly 696
+# completion tokens with finish_reason=length. gemini-2.5-flash is a THINKING
+# model, so the budget is consumed by reasoning before a single character of JSON
+# is emitted, and the "repair" attempt then truncated the same way.
+#
+# This is Day 21 Entry 4's lesson restated: an output requirement and its token
+# ceiling ship together. Sizing a budget from how long the ANSWER looks is wrong
+# whenever the model thinks before answering.
+#
+# The groq fallback needs 36-95 completion tokens for the identical verdict at
+# ~0.5s, versus gemini's ~10s — a real argument for flipping the routing, and it
+# loses anyway: groq's 100k tokens/DAY is the pool that actually halts this
+# pipeline and it is the coders' primary, so ~32 reviews would consume the entire
+# generation budget. Spending gemini's 1M/day headroom on reasoning tokens is the
+# cheaper mistake. Fail-open covered this defect exactly as designed — every
+# truncated review resolved to "pass" and no file was blocked — which is why it
+# showed up as a silent quality loss rather than a broken run.
+REVIEW_MAX_TOKENS = 2000
 
 # Reviewing a file needs the file. This bounds what a single pathological
 # generation can cost us in prompt tokens; real components are ~1-3k chars.
@@ -238,9 +254,14 @@ def build_revision_message(filepath: str, content: str, issues: list) -> str:
 # ── Triggering ───────────────────────────────────────────────────────────────
 
 def review_mode() -> str:
-    """off | selective | all. Default selective."""
-    mode = (os.getenv("REVIEW_MODE") or "selective").strip().lower()
-    return mode if mode in ("off", "selective", "all") else "selective"
+    """off | selective | all. Default OFF — same reason as decomposition_enabled:
+    the keep/revert rule was fixed in advance and requires a measured quality
+    gain, and the A/B could not run on free-tier quota. Calibration (Task 2 in
+    docs/IMPROVEMENT_01_RESULTS.md) shows the reviewer is well-behaved and finds
+    real endpoint hallucinations, but "the critic is sane" is not "the output is
+    better". Set REVIEW_MODE=selective to measure it."""
+    mode = (os.getenv("REVIEW_MODE") or "off").strip().lower()
+    return mode if mode in ("off", "selective", "all") else "off"
 
 
 def _is_shared_primitive(filepath: str, dependent_count: int) -> bool:

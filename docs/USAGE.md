@@ -268,15 +268,21 @@ is how you confirm what the stack actually sees.
 
 ### Frontend decomposition and review (server-wide, in `backend/.env`)
 
-Two independent switches that shape how frontend files are produced. Setting
-both to their v1.0 values — `REVIEW_MODE=off` and `DECOMPOSE_FRONTEND=false` —
-restores exact pre-improvement behaviour and is the supported rollback.
+Two independent switches that shape how frontend files are produced. **Both
+default to off**, so out of the box you get exact v1.0 behaviour.
 
 | Variable | Default | What it does |
 |---|---|---|
-| `DECOMPOSE_FRONTEND` | `true` | Split large pages into 2–5 section components plus a thin page shell, so each generation call gets a small precise job |
+| `DECOMPOSE_FRONTEND` | `false` | Split large pages into 2–5 section components plus a thin page shell, so each generation call gets a small precise job |
 | `DECOMPOSE_COMPLEXITY_THRESHOLD` | `high` | Minimum task complexity at which a **page** is worth splitting. `medium` decomposes more aggressively, and costs proportionally more calls |
-| `REVIEW_MODE` | `selective` | `off` \| `selective` \| `all`. A second model judges a generated file against its spec; a failing file gets **one** targeted revision |
+| `REVIEW_MODE` | `off` | `off` \| `selective` \| `all`. A second model judges a generated file against its spec; a failing file gets **one** targeted revision |
+
+> **Why off by default.** These are complete and tested, not doubtful — but the
+> A/B that would prove they raise quality needs about 460k tokens across two full
+> pipeline runs, against a free-tier allowance of 100k/day on the provider that
+> binds. It could not run. The keep/revert rule was fixed before any number was
+> seen and requires a measured gain, so the feature ships **unproven** and does
+> not become the default. See `docs/IMPROVEMENT_01_RESULTS.md`.
 
 `selective` reviews page shells, shared primitives, files that already produced
 validation warnings, and high-complexity tasks — roughly a quarter of a file

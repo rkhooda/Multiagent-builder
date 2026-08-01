@@ -179,8 +179,24 @@ def test_flag_off_stands_the_validator_down():
         assert off == [], off
     finally:
         restore()
-    on = [e for e in run_validators("planning", broken, state) if "section" in e.lower()]
-    assert on, "validator should fire again once the flag is restored"
+    # Explicitly ON, not "unset": the DEFAULT is off (the feature is unproven —
+    # see docs/IMPROVEMENT_01_RESULTS.md Task 6), so an unset var means off too.
+    restore = _with_env(DECOMPOSE_FRONTEND="true")
+    try:
+        on = [e for e in run_validators("planning", broken, state) if "section" in e.lower()]
+        assert on, "validator should fire when the flag is on"
+    finally:
+        restore()
+
+
+def test_both_features_default_to_off():
+    """The pre-registered keep/revert rule requires a measured quality gain that
+    the blocked A/B could not supply. Unproven must not mean on-by-default."""
+    from app.agents.frontend_reviewer import review_mode
+    for var in ("DECOMPOSE_FRONTEND", "REVIEW_MODE"):
+        os.environ.pop(var, None)
+    assert not decomposition_enabled()
+    assert review_mode() == "off"
 
 
 def test_flag_off_strips_the_prompt_section():
@@ -188,14 +204,18 @@ def test_flag_off_strips_the_prompt_section():
     from app.agents.planning_agent import SYSTEM_PROMPT, _system_prompt
     restore = _with_env(DECOMPOSE_FRONTEND="false")
     try:
-        stripped = _system_prompt()
+        stripped = _system_prompt()  # noqa: F841 — asserted below
         assert "Frontend Page Decomposition" not in stripped
         assert "section_of" not in stripped.split("## 5. Output Format")[1]
         assert "## 5. Output Format" in stripped
         assert len(stripped) < len(SYSTEM_PROMPT)
     finally:
         restore()
-    assert "Frontend Page Decomposition" in _system_prompt()
+    restore = _with_env(DECOMPOSE_FRONTEND="true")
+    try:
+        assert "Frontend Page Decomposition" in _system_prompt()
+    finally:
+        restore()
 
 
 def test_threshold_is_env_tunable():

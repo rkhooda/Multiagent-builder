@@ -159,6 +159,24 @@ def test_review_uses_the_non_scarce_provider_slot():
     assert fallback, "a single-tier reviewer has no recovery path"
 
 
+def test_review_budget_clears_the_measured_truncation_point():
+    """Regression guard for a defect that shipped and hid.
+
+    At REVIEW_MAX_TOKENS=700, calibration on 14 real files had 10 reviews fail:
+    every gemini attempt stopped at exactly 696 completion tokens with
+    finish_reason=length, because gemini-2.5-flash reasons before answering and
+    never reached the JSON. Fail-open turned all ten into "pass", so the reviewer
+    was silently doing nothing — a broken feature that looked like a working one.
+
+    Sizing a token budget from how long the ANSWER looks is wrong whenever the
+    model thinks first. Anyone lowering this to "a verdict is short" reintroduces
+    exactly that.
+    """
+    assert reviewer.REVIEW_MAX_TOKENS >= 1500, (
+        "measured truncation at 696 completion tokens on gemini-2.5-flash; "
+        "the budget must leave room for reasoning AND the verdict")
+
+
 def test_review_call_is_labelled_and_typed():
     fake = _FakeLLM(PASS_VERDICT)
     restore = _with_llm(fake)

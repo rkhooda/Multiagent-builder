@@ -326,3 +326,65 @@ regeneration. Guard warns at 25, stops at 30.
   arm, recorded in `docs/IMPROVEMENT_01_RESULTS.md` Task 6. Until that number
   exists this section is **unproven**, and `DECOMPOSE_FRONTEND=false` is the
   documented default position to fall back to.
+
+### Entry 2 — frontend reviewer: the "states" criterion was firing on files that fetch nothing
+
+- **Prompt file**: `prompts/frontend_reviewer_agent.md` (new this improvement),
+  criterion 5 only. One change.
+- **Defect**: measured, not suspected. Calibrating the reviewer on the 14 tier-4
+  frontend files of `2901fb46` — files `score_project.py` already scores as usable
+  — it returned `revise` on `Modal.jsx` and `TaskCard.jsx` for "does not handle
+  loading, error and empty states". **Neither file fetches anything.** A
+  presentational component that receives data as props is correct as written, so
+  this was pure false-positive spend: two revision calls out of a run ceiling of
+  14, buying nothing.
+- **Attribution**: **PROMPT**, unambiguously. The rule was already there — "Only
+  for a component that fetches ... do not ask for them" — but as a trailing
+  caveat on a paragraph whose first sentence asks the question unconditionally.
+  The context contained the file itself, so the truth was available; the model
+  simply applied the criterion before reaching its own exception.
+- **Change**: turn the exception into a **precondition applied first** — "does
+  this file contain an actual data fetch? if not, skip this criterion entirely" —
+  and state plainly that asking a props-driven component for a loading state is
+  asking it to do something it must not do.
+- **A/B** (real providers, `LLM_CACHE=false`, 14 real files; compared on the 8
+  that completed in both rounds, since round 3 hit the quota wall partway):
+
+  | | before | after |
+  |---|---|---|
+  | pass rate | 3/8 (38%) | 3/8 (38%) |
+  | total blocking issues | 9 | **7** |
+  | false "missing states" on non-fetching files | 2 | **0** |
+
+  Per file: `CategoryItem.jsx` 3 → 1 blocking, all others unchanged. `Modal.jsx`
+  kept one blocking issue but its reason changed from the false positive to a
+  contract-compliance point.
+- **VERDICT: KEEP.** Strictly better on the targeted criterion, no worse on any
+  other — which is the decision rule in the protocol above.
+- **The bigger finding came from the same run, and it was mine.** At the shipped
+  `REVIEW_MAX_TOKENS=700`, **10 of 14 reviews never completed**: every
+  `gemini-2.5-flash` attempt stopped at exactly 696 completion tokens with
+  `finish_reason=length`, because it reasons before answering and the budget was
+  gone before the JSON started. The one-shot repair truncated identically. Raised
+  to 2000, after which 14/14 completed.
+
+  This is **Day 21 Entry 4's lesson restated**: an output requirement and its
+  token ceiling ship together. Sizing a budget from how long the *answer* looks
+  is wrong whenever the model thinks first. `test_reviewer.py::
+  test_review_budget_clears_the_measured_truncation_point` records the measured
+  number so nobody re-lowers it on the reasoning that "a verdict is short".
+
+  Note what made it dangerous: **fail-open worked exactly as designed.** All ten
+  truncations resolved to "pass", so the reviewer was silently doing nothing while
+  the run looked healthy. Fail-open is still the right policy — a broken reviewer
+  must never block a file — but it converts reviewer defects into silent quality
+  loss, which is precisely why calibration on known-good files is not optional.
+- **Sample caveat, recorded because it cuts against the number.** The remaining
+  "does not follow the UI contract's token classes" flags on `Button.jsx` and
+  `Modal.jsx` are a measurement artifact: these files come from a run that
+  predates the UI contract and cannot possibly follow it. The reviewer is
+  literally correct and the sample is unfair on that criterion, so 38% is a
+  **lower bound** on the pass rate for contract-aware files.
+- **Not measured**: whether review improves final output quality. That needs a
+  full A/B, which could not run — see `docs/IMPROVEMENT_01_RESULTS.md` Task 6.
+  `REVIEW_MODE` therefore defaults to `off`.

@@ -21,8 +21,14 @@ MAX_SECTIONS_PER_PAGE = 5
 
 
 def decomposition_enabled() -> bool:
-    return (os.getenv("DECOMPOSE_FRONTEND") or "true").strip().lower() not in (
-        "false", "0", "no", "off")
+    """Default OFF. The keep/revert rule for Improvement 01 was fixed before any
+    number was seen and requires a measured frontend-quality gain; the A/B that
+    would supply it could not run (see docs/IMPROVEMENT_01_RESULTS.md Task 6), so
+    this is UNPROVEN, not proven-good. An unproven change does not get to be the
+    default behaviour — that is the whole point of pre-registering the rule.
+    Flip to true to measure it; flip the default here when a run says keep."""
+    return (os.getenv("DECOMPOSE_FRONTEND") or "false").strip().lower() in (
+        "true", "1", "yes", "on")
 
 
 def decompose_threshold() -> str:
