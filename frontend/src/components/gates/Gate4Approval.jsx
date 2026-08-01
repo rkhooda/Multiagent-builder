@@ -42,6 +42,7 @@ function QualityThresholdBanner({ report }) {
     ['Phantom imports', report.phantom_imports],
     ['Missing packages', report.missing_packages],
     ['Invalid JSON/YAML', report.artifact_errors],
+    ['Page composition warnings', report.coherence_warnings],
     ['Failed/blocked generation', report.generation_failed],
   ].filter(([, count]) => count > 0)
 
@@ -273,6 +274,21 @@ export default function Gate4Approval({ projectId, projectState, status, onResum
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [parsedReport, filesData])
 
+  // Improvement 01: reviewer outcome per file. Keys are already real filepaths
+  // (the coder wrote them), so unlike QA findings these need no path resolution.
+  const reviewByFile = useMemo(
+    () => new Map(Object.entries(projectState?.review_results || {})),
+    [projectState?.review_results],
+  )
+  const reviewStats = useMemo(() => {
+    let reviewed = 0, revised = 0
+    reviewByFile.forEach((r) => {
+      if (r?.reviewed) reviewed += 1
+      if (r?.revised) revised += 1
+    })
+    return { reviewed, revised }
+  }, [reviewByFile])
+
   const handleOpenFile = (findingPath) => {
     const resolved = resolveFilePath(findingPath)
     if (!resolved) return
@@ -468,6 +484,7 @@ export default function Gate4Approval({ projectId, projectState, status, onResum
             projectId={projectId}
             filesData={filesData}
             issueCountByFile={issueCountByFile}
+            reviewByFile={reviewByFile}
             selectedPath={selectedPath}
             onSelectPath={setSelectedPath}
             onRequestFix={(path) => {

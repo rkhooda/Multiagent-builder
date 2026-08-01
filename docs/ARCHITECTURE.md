@@ -58,6 +58,16 @@ There is also a `cancelled` terminal node — every gate can route to it.
 | `qa` | `agents/qa_agent.py` | QA report, issue count |
 | `devops` | `agents/devops_agent.py` | Dockerfiles, CI, README |
 
+`agents/frontend_reviewer.py` is the one agent that is **not** a node. It runs
+*inside* the `frontend_code` worker: generate → process → [selectively] review →
+at most one targeted revision, all under the permit that worker already holds.
+It has no place in the graph because it does not advance the pipeline — it is a
+second opinion on one file, and putting it in the graph would mean a second pass
+over the file set with its own commit and broadcast bookkeeping. Its verdict is
+strict JSON validated through the normal registry, it fails open on every error
+path, and its revisions charge the same repair budget as Day 22's repairs.
+Controlled by `REVIEW_MODE`; `off` restores exact pre-improvement behaviour.
+
 Gates are empty pass-through functions. The pause is `interrupt_before` on the
 compiled graph — LangGraph stops *before* entering the node, checkpoints, and
 returns control. Resuming means writing a decision into state and streaming

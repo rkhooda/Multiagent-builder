@@ -89,6 +89,8 @@ const EVENT_TONES = {
   file_blocked: 'idle',
   gate_reached: 'accent',
   validation_complete: 'alt',
+  file_reviewed: 'alt',
+  file_revised: 'run',
 }
 
 const TONE_TEXT = {
@@ -125,6 +127,28 @@ function FeedEvent({ event }) {
     )
   }
 
+  // Reviewer events reuse the per-file ticker line rather than adding a card:
+  // they arrive interleaved with file_written during the same phase, and a card
+  // per review would bury the generation feed it is annotating.
+  if (event.type === 'file_reviewed' || event.type === 'file_revised') {
+    const revised = event.type === 'file_revised'
+    const label = revised
+      ? `revised — ${event.issues_addressed} issue${event.issues_addressed === 1 ? '' : 's'} addressed`
+      : event.verdict === 'revise'
+        ? `reviewed — ${event.issues_found} issue${event.issues_found === 1 ? '' : 's'}`
+        : 'reviewed — pass'
+    return (
+      <div className="enter relative flex items-start gap-3 pl-7">
+        {node}
+        <div className="flex min-w-0 flex-1 items-center gap-2 py-0.5">
+          <span className={`text-[11px] ${TONE_TEXT[tone]}`}>{revised ? '↻' : '👁'}</span>
+          <span className="truncate font-mono text-[11px] text-ink-2">{event.filepath}</span>
+          <span className="ml-auto shrink-0 font-mono text-[10px] text-ink-3">{label}</span>
+        </div>
+      </div>
+    )
+  }
+
   if (event.type === 'validation_complete') {
     const below = event.below_threshold
     return (
@@ -143,6 +167,9 @@ function FeedEvent({ event }) {
             <span>{event.auto_repaired} repaired</span>
             <span>{event.import_warnings || 0} import warnings</span>
             {event.artifact_errors > 0 && <span>{event.artifact_errors} invalid JSON/YAML</span>}
+            {event.coherence_warnings > 0 && (
+              <span className="text-warn">{event.coherence_warnings} composition</span>
+            )}
             <span className="text-ink-3">
               repairs {event.repair_calls_spent}/{event.repair_ceiling}
             </span>

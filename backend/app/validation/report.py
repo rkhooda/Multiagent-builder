@@ -193,6 +193,13 @@ def render_summary(report: dict) -> str:
         f"**AUTOMATED CHECKS**: {', '.join(parts)}. "
         f"Repair budget used: {report['repair_calls_spent']}/{report['repair_ceiling']}."
     ]
+    if report.get("files_reviewed"):
+        lines.append(
+            f"**REVIEW**: {report['files_reviewed']} frontend file(s) reviewed by a second "
+            f"model, {report.get('files_revised', 0)} revised. Revisions draw from the same "
+            f"repair budget shown above."
+            + (f" {report['review_skipped']} not reviewed (budget or reviewer unavailable)."
+               if report.get("review_skipped") else ""))
     if report["repair_budget_exhausted"]:
         lines.append(
             "> **Repair budget exhausted.** Remaining failures were left unrepaired. "

@@ -266,6 +266,35 @@ every run until changed.
 The header badge shows `Local` or `Cloud only` with the detected models — that
 is how you confirm what the stack actually sees.
 
+### Frontend decomposition and review (server-wide, in `backend/.env`)
+
+Two independent switches that shape how frontend files are produced. Setting
+both to their v1.0 values — `REVIEW_MODE=off` and `DECOMPOSE_FRONTEND=false` —
+restores exact pre-improvement behaviour and is the supported rollback.
+
+| Variable | Default | What it does |
+|---|---|---|
+| `DECOMPOSE_FRONTEND` | `true` | Split large pages into 2–5 section components plus a thin page shell, so each generation call gets a small precise job |
+| `DECOMPOSE_COMPLEXITY_THRESHOLD` | `high` | Minimum task complexity at which a **page** is worth splitting. `medium` decomposes more aggressively, and costs proportionally more calls |
+| `REVIEW_MODE` | `selective` | `off` \| `selective` \| `all`. A second model judges a generated file against its spec; a failing file gets **one** targeted revision |
+
+`selective` reviews page shells, shared primitives, files that already produced
+validation warnings, and high-complexity tasks — roughly a quarter of a file
+set, not all of it. `all` is for measurement only.
+
+Two things worth knowing before you turn this up:
+
+- **Revisions spend the repair budget.** They draw from the same
+  `REPAIR_CEILING_PER_RUN` account as automated repairs, deliberately, so one
+  file cannot quietly consume both. When the ceiling trips, remaining files ship
+  unreviewed and the run says so.
+- **The reviewer is routed to Gemini, not the coders' provider**, so review does
+  not compete with generation for the pool that actually runs out first. Fast
+  Mode withholds review entirely, exactly as it withholds repairs.
+
+Reviewed files carry an eye mark in the Gate 4 file browser; revised ones carry
+`↻`. Both are annotated live in the run feed.
+
 ### Local models (Ollama)
 
 ```bash

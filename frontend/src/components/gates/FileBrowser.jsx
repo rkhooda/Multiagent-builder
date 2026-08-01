@@ -68,7 +68,31 @@ function buildTree(files) {
   return toArray(root).children
 }
 
-function TreeNode({ node, depth, selectedPath, collapsed, onToggle, onSelect, issueCountByFile }) {
+// Improvement 01: a review mark on the tree row, not a new panel. Reviewed and
+// passed is the quiet case and stays quiet — an eye at low contrast — because
+// most reviewed files pass and a loud badge on all of them says nothing. Only a
+// file that was actually sent back and rewritten earns colour.
+function ReviewMark({ record }) {
+  if (!record?.reviewed) return null
+  const revised = record.revised
+  return (
+    <span
+      title={
+        revised
+          ? `Reviewed, then revised — ${record.issues_found} issue${record.issues_found === 1 ? '' : 's'} addressed`
+          : record.verdict === 'revise'
+            ? `Reviewed — ${record.issues_found} issue${record.issues_found === 1 ? '' : 's'}, revision not applied`
+            : 'Reviewed — passed'
+      }
+      className={`flex-shrink-0 text-[10px] ${revised ? 'text-run' : 'text-ink-3'}`}
+    >
+      {revised ? '↻' : '👁'}
+    </span>
+  )
+}
+
+function TreeNode({ node, depth, selectedPath, collapsed, onToggle, onSelect, issueCountByFile,
+                   reviewByFile }) {
   const isFolder = !node.file
   const isCollapsed = collapsed.has(node.path)
   const indent = { paddingLeft: `${depth * 14 + 8}px` }
@@ -96,6 +120,7 @@ function TreeNode({ node, depth, selectedPath, collapsed, onToggle, onSelect, is
               onToggle={onToggle}
               onSelect={onSelect}
               issueCountByFile={issueCountByFile}
+              reviewByFile={reviewByFile}
             />
           ))}
       </div>
@@ -115,6 +140,7 @@ function TreeNode({ node, depth, selectedPath, collapsed, onToggle, onSelect, is
     >
       <span className={`h-2 w-2 flex-shrink-0 rounded-full ${DOT_COLOR[node.file.language] || 'bg-idle'}`} />
       <span className="truncate">{node.name}</span>
+      <ReviewMark record={reviewByFile?.get(node.path)} />
       {issueCount > 0 && (
         <span
           title={`${issueCount} QA issue${issueCount > 1 ? 's' : ''}`}
@@ -159,6 +185,7 @@ export default function FileBrowser({
   projectId,
   filesData,
   issueCountByFile,
+  reviewByFile,
   selectedPath,
   onSelectPath,
   onRequestFix,
@@ -242,6 +269,7 @@ export default function FileBrowser({
               onToggle={handleToggle}
               onSelect={onSelectPath}
               issueCountByFile={issueCountByFile}
+              reviewByFile={reviewByFile}
             />
           ))
         )}

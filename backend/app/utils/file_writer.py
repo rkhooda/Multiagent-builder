@@ -204,7 +204,7 @@ def commit_generated_file(state: dict, processed: ProcessedFile, *, project_id: 
         record = {**processed.review, "revised": processed.revised}
         state.setdefault("review_results", {})[processed.filepath] = record
         if record.get("reviewed"):
-            log.append(f"frontend_reviewer: {processed.filepath} — {record['verdict']}, "
+            log.append(f"reviewer: {processed.filepath} — {record['verdict']}, "
                        f"{record['issues_found']} issue(s)"
                        + (", revised" if processed.revised else ""))
             manager.broadcast_sync(project_id, {
@@ -216,7 +216,7 @@ def commit_generated_file(state: dict, processed: ProcessedFile, *, project_id: 
                 **counts,
             })
         elif record.get("skipped_reason"):
-            log.append(f"frontend_reviewer: {processed.filepath} not reviewed "
+            log.append(f"reviewer: {processed.filepath} not reviewed "
                        f"({record['skipped_reason']})")
         if processed.revised:
             manager.broadcast_sync(project_id, {

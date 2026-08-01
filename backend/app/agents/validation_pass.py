@@ -306,6 +306,17 @@ def validation_pass(state: dict) -> dict:
             errors.append(f"validation: unresolved {fixable[0].describe()}")
             log.append(f"validation_pass: repair failed for {path}")
 
+    # Improvement 01: fold the reviewer's own tally into the SAME report rather
+    # than shipping a second one. render_summary already prefixes the QA report,
+    # and the Gate 4 panel already renders it, so counting here is the whole of
+    # the UI work — no new panel, no new endpoint.
+    reviews = (state.get("review_results") or {}).values()
+    review_stats = {
+        "files_reviewed": sum(1 for r in reviews if r.get("reviewed")),
+        "files_revised": sum(1 for r in reviews if r.get("revised")),
+        "review_skipped": sum(1 for r in reviews if r.get("skipped_reason")),
+    }
+
     remaining_issues = [i for issues in issues_by_file.values() for i in issues]
     report = vreport.aggregate(
         remaining_issues,
@@ -317,6 +328,7 @@ def validation_pass(state: dict) -> dict:
         budget_exhausted=budget_exhausted,
         failed_files=vreport.failed_generation_files(state),
     )
+    report.update(review_stats)
 
     log.append(
         f"validation_pass: completed — {report['files_checked']} files checked, "
