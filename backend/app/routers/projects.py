@@ -56,11 +56,17 @@ class ProjectStateEditRequest(BaseModel):
     )
 
 
-def validate_plan_edit(content: str) -> list[str]:
+def validate_plan_edit(content: str, excluded: list = None) -> list[str]:
     """Validate an edited implementation plan: task schema, unique ids, in-plan dependencies.
 
     Validates against TaskSchema but stores the submitted JSON verbatim, so extra
     keys like "custom": true on user-added tasks survive the round trip.
+
+    `excluded` is the tasks the user unchecked at Gate 3. It is used only to
+    SHARPEN the dependency message: cutting a section leaves its page shell still
+    requiring it, which the generic in-plan check already rejects — but "requires
+    'fe_011' which is not in the submitted plan" does not tell the user that they
+    cut a section out from under a page shell, which is the fix they need to make.
     """
     from app.models.task_schema import TaskSchema
 
@@ -90,14 +96,38 @@ def validate_plan_edit(content: str) -> list[str]:
         errors.append(f"Duplicate task ids: {sorted(duplicates)}")
 
     id_set = set(ids)
+    cut = {t.get("id"): t for t in (excluded or []) if isinstance(t, dict) and t.get("id")}
     for raw in tasks:
         if not isinstance(raw, dict):
             continue
         for dep in raw.get("requires", []) or []:
-            if dep not in id_set:
+            if dep in id_set:
+                continue
+            cut_task = cut.get(dep)
+            if cut_task and cut_task.get("section_of") == raw.get("id"):
+                errors.append(
+                    f"Page shell {raw.get('id', '?')} ({raw.get('filepath', '?')}) still "
+                    f"composes section '{dep}' ({cut_task.get('filepath', '?')}), which you "
+                    f"removed. Remove it from this shell's `requires` too, or keep the section."
+                )
+            else:
                 errors.append(
                     f"Task {raw.get('id', '?')} requires '{dep}' which is not in the submitted plan"
                 )
+
+    # The other direction: a section kept while its shell was cut. Nothing would
+    # ever render it, so it is a guaranteed-orphan generation call.
+    for raw in tasks:
+        if not isinstance(raw, dict):
+            continue
+        shell_id = raw.get("section_of")
+        if shell_id and shell_id not in id_set:
+            where = f" ({cut[shell_id].get('filepath', '?')})" if shell_id in cut else ""
+            errors.append(
+                f"Section {raw.get('id', '?')} ({raw.get('filepath', '?')}) belongs to page "
+                f"shell '{shell_id}'{where}, which is not in the submitted plan. Nothing would "
+                f"import this section — remove it too, or keep the shell."
+            )
 
     return errors
 
@@ -672,7 +702,7 @@ def edit_project_state(project_id: str, request: ProjectStateEditRequest):
     update = {request.field: request.content}
 
     if request.field == "implementation_plan":
-        validation_errors = validate_plan_edit(request.content)
+        validation_errors = validate_plan_edit(request.content, request.excluded_tasks)
         if validation_errors:
             raise HTTPException(status_code=422, detail={"errors": validation_errors})
         if request.excluded_tasks is not None:

@@ -14,6 +14,7 @@ class ProjectState(TypedDict):
     tech_stack: str
     architecture_doc: str
     implementation_plan: str       # stored as JSON string
+    ui_contract: str               # derived at planning: shared tokens/conventions injected into every frontend context
     excluded_tasks: List[dict]     # tasks cut from the plan at gate 3 (audit trail, never generated)
     file_list: List[str]           # list of file paths to generate
     generated_files: Dict[str, str] # filepath -> code content

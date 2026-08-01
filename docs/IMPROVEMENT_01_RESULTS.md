@@ -45,8 +45,17 @@ whose frontend phase actually produced files.
 
 | Scope | Scored | Usable (tier 4) | % usable |
 |---|---|---|---|
-| Whole project | 96 | 21 | **21.9%** |
+| Whole project | 96 | 21 | **21.6%** |
 | **Frontend only** | **51** | **18** | **35.3%** |
+
+> The whole-project figure was first recorded as 21.9% (21/95). Task 1 changed
+> `planned_files()` to union the plan's filepaths rather than use them only as a
+> fallback — required so decomposition's section components are not scored as
+> "unplanned files", which would have made the treatment look worse by
+> construction. That admits `backend/Dockerfile` to the planned set, so the
+> denominator is 96 and the same 21 usable files read as 21.6%. **The frontend
+> column — the number under test — is byte-identical before and after:** 51
+> scored, 18 usable, 35.3%, same histogram.
 
 Frontend tier histogram (the number under test):
 

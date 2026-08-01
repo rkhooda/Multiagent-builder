@@ -273,3 +273,56 @@ regeneration. Guard warns at 25, stops at 30.
 - **Fixture staleness**: today's fixtures embed the OLD three-column table. They
   must be re-frozen from a run using this architecture before the next tuning
   session, or they will measure against a world that no longer exists.
+
+---
+
+## 2026-08-01 (Improvement 01)
+
+### Entry 1 — planning agent: frontend page decomposition (§ 4b)
+
+- **Prompt file**: `prompts/planning_agent.md` — new section **4b**, plus one
+  clause on Field Completeness naming the optional `section_of` key.
+- **Hypothesis, written before the edit** (protocol step 2): complex frontend
+  pages score lowest because a single generation call is asked to author a whole
+  screen at once, so it has too big a job and drifts. Emitting one task per
+  *section* plus a thin page shell should shrink each call's job and raise the
+  per-file tier score. Measured by `score_project.py` tier ≥ 4 on frontend files
+  only, against the Task 0 baseline of 35.3% (18/51) on `2901fb46`.
+- **Attribution** (protocol step 1): this is a **PLANNING-layer** change, not a
+  coder-prompt or context-layer fix. The coder prompt is not at fault for a task
+  that was too large when it arrived, and `build_file_context` cannot make a
+  sprawling task small. The task granularity is decided in the plan, so the plan
+  is where the change belongs.
+- **Honest caveat on the premise.** The Task 0 baseline does **not** show this
+  defect. Of 33 non-usable frontend files: 13 are Day 20 quota stubs (never
+  generated), 8 are a fence artifact at line 4, 8 are unresolved cross-file
+  imports, 4 are build config never generated. **None** is "a page was written
+  badly in one shot". The run was starved before page quality could bind, so the
+  hypothesis is untested rather than supported. That is exactly why this ships
+  behind `DECOMPOSE_FRONTEND` with a keep/revert rule fixed in advance
+  (`docs/IMPROVEMENT_01_RESULTS.md`), and why the A/B is the deliverable.
+- **Deliberately NOT changed**: `prompts/architecture_agent.md`. The UI contract
+  that keeps sections coherent could have been authored there, but Day 26
+  measured architecture at **11,996 / 12,000** output tokens — at the wall. Day
+  21 Entry 4's lesson applies directly: a specificity rule and its token ceiling
+  ship together, and there is no ceiling left. The contract is derived
+  deterministically from `tech_stack` + the validated plan instead
+  (`context_builder.build_ui_contract`), which costs zero calls and cannot drift.
+- **Mechanical enforcement**: every rule in § 4b is checked by
+  `_decomposition_integrity` in the validation registry, not left to the prompt —
+  same policy as Day 21 Entry 4's `_architecture_specificity`. Ten cases in
+  `backend/tests/test_decomposition.py`, zero API calls.
+- **Rollback is tested, not assumed**: `DECOMPOSE_FRONTEND=false` strips § 4b
+  from the prompt at call time (one prompt file, not two — two would drift) and
+  stands the validator down. Two tests cover it, because this is the A/B control
+  arm and a control that is silently treated is not a control.
+- **Regression check**: `test_prompt_regression.py` 7/7 and
+  `ab_prompt_test.py --rescore` 7/7, both 0 API calls. Those fixtures are
+  frontend-coder outputs and are untouched by a planning-prompt change, so they
+  confirm no collateral damage rather than confirming this edit.
+- **VERDICT: PENDING.** No A/B has been run. The harness A/B (`ab_prompt_test.py`)
+  measures per-file coder output and cannot see task granularity, which is a
+  property of the plan — so this edit's verdict requires a full pipeline run per
+  arm, recorded in `docs/IMPROVEMENT_01_RESULTS.md` Task 6. Until that number
+  exists this section is **unproven**, and `DECOMPOSE_FRONTEND=false` is the
+  documented default position to fall back to.

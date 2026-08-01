@@ -22,6 +22,37 @@ const COMPLEXITY_CONFIG = {
 // Deliberately rough 5/10/15-minute heuristic — always labeled "est." in the UI.
 export const COMPLEXITY_MINUTES = { low: 5, medium: 10, high: 15 }
 
+// Keep a decomposed page readable: its sections render immediately above the
+// page shell that composes them, in plan order. Decomposition can add three or
+// four extra cards per page, and scattered by id they read as unrelated noise
+// rather than as one page. This is display order only — serialisePlan still
+// emits canonical phase order, so what is stored is unchanged.
+function groupSectionsUnderShell(phaseTasks) {
+  const sectionsByShell = new Map()
+  phaseTasks.forEach((t) => {
+    if (!t.section_of) return
+    sectionsByShell.set(t.section_of, [...(sectionsByShell.get(t.section_of) || []), t])
+  })
+  if (sectionsByShell.size === 0) return phaseTasks
+
+  const placed = new Set()
+  const ordered = []
+  phaseTasks.forEach((t) => {
+    if (t.section_of && sectionsByShell.has(t.section_of)) return // emitted with its shell
+    ;(sectionsByShell.get(t.id) || []).forEach((s) => {
+      ordered.push(s)
+      placed.add(s.id)
+    })
+    ordered.push(t)
+  })
+  // A section whose shell is missing from this phase must still be shown —
+  // dropping it would hide exactly the plan defect the user needs to fix.
+  phaseTasks.forEach((t) => {
+    if (t.section_of && !placed.has(t.id) && !ordered.includes(t)) ordered.push(t)
+  })
+  return ordered
+}
+
 function nextTaskId(phase, allTasks) {
   const prefix = PHASE_CONFIG[phase].prefix
   const max = allTasks.reduce((m, t) => {
@@ -270,6 +301,12 @@ export default function Gate3Approval({ projectId, projectState, status, onResum
   // Included tasks that depend on a given (excluded/removed) task id
   const includedDependentsOf = (id) => includedTasks.filter((t) => (t.requires || []).includes(id))
 
+  // Sections of an excluded page shell. The `requires` edge points shell -> section,
+  // so the existing dependents warning catches "you cut a section a shell composes"
+  // but not the reverse: cutting the SHELL leaves its sections included with
+  // nothing importing them — generation calls whose output nothing renders.
+  const orphanedSectionsOf = (id) => includedTasks.filter((t) => t.section_of === id)
+
   // Ids whose exclusion currently breaks an included task's requires —
   // the plan cannot be approved while this is non-empty (backend 422 is the safety net).
   const brokenDeps = useMemo(() => {
@@ -459,6 +496,7 @@ export default function Gate3Approval({ projectId, projectState, status, onResum
     const compCfg = COMPLEXITY_CONFIG[task.estimated_complexity] || COMPLEXITY_CONFIG.medium
     const isExcluded = excluded.has(task.id)
     const dependents = isExcluded ? includedDependentsOf(task.id) : []
+    const orphanedSections = isExcluded ? orphanedSectionsOf(task.id) : []
     const isBrokenDependent = includedIds.has(task.id) && (task.requires || []).some((d) => !includedIds.has(d))
     const isEditing = editingId === task.id
     const isPendingRemove = pendingRemove === task.id
@@ -496,6 +534,16 @@ export default function Gate3Approval({ projectId, projectState, status, onResum
               <span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${compCfg.badge}`}>{compCfg.label}</span>
               {task.custom && (
                 <span className="rounded bg-accent-soft px-1.5 py-0.5 text-[10px] font-semibold text-accent">Custom</span>
+              )}
+              {task.section_of && (
+                <button
+                  type="button"
+                  onClick={() => scrollToTask(task.section_of)}
+                  className="rounded bg-overlay px-1.5 py-0.5 font-mono text-[10px] font-semibold text-ink-2 hover:bg-line"
+                  title={`Section of page shell ${task.section_of} — jump to it`}
+                >
+                  § {task.section_of}
+                </button>
               )}
             </div>
             <p className={`mt-0.5 font-mono text-[11px] ${isExcluded ? 'text-ink-2' : 'text-ink-3'}`}>{task.filepath}</p>
@@ -557,6 +605,26 @@ export default function Gate3Approval({ projectId, projectState, status, onResum
                   className="rounded bg-warn px-2 py-0.5 text-[11px] font-semibold text-ink hover:brightness-110"
                 >
                   Exclude dependents too
+                </button>
+              </div>
+            )}
+
+            {isExcluded && orphanedSections.length > 0 && (
+              <div className="mt-2 flex flex-wrap items-center gap-2 rounded border border-warn/45 bg-warn/10 px-2.5 py-1.5">
+                <span className="text-xs text-warn">
+                  ⚠️ {orphanedSections.length} section{orphanedSections.length === 1 ? '' : 's'} of this page{' '}
+                  {orphanedSections.length === 1 ? 'is' : 'are'} still included but nothing would import{' '}
+                  {orphanedSections.length === 1 ? 'it' : 'them'}: {orphanedSections.map((s) => s.id).join(', ')}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setExcluded((prev) => new Set([...prev, ...orphanedSections.map((s) => s.id)]))
+                    setDirty(true)
+                  }}
+                  className="rounded bg-warn px-2 py-0.5 text-[11px] font-semibold text-ink hover:brightness-110"
+                >
+                  Exclude its sections too
                 </button>
               </div>
             )}
@@ -698,7 +766,7 @@ export default function Gate3Approval({ projectId, projectState, status, onResum
         <div className="space-y-3">
           {PHASES.map((phase) => {
             const cfg = PHASE_CONFIG[phase]
-            const phaseTasks = tasks.filter((t) => t.phase === phase)
+            const phaseTasks = groupSectionsUnderShell(tasks.filter((t) => t.phase === phase))
             const phaseIncluded = phaseTasks.filter((t) => !excluded.has(t.id))
             const isCollapsed = collapsed.has(phase)
 

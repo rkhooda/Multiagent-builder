@@ -1,6 +1,46 @@
+import os
 import re
 import json
 from typing import List, Optional
+
+
+# ── Improvement 01: frontend page decomposition ──────────────────────────────
+# Both switches live here rather than in a new config module because the two
+# places that need them — the planning agent (which gates the prompt section)
+# and the plan validator (which enforces the rules) — already import from this
+# module. DECOMPOSE_FRONTEND=false must restore exact v1.0 behaviour: the prompt
+# section is stripped AND the validator stands down, so a plan is neither asked
+# for sections nor judged for lacking them.
+_COMPLEXITY_RANK = {"low": 0, "medium": 1, "high": 2}
+
+# Bounds on the fan-out, duplicated in the prompt so the model is told and in the
+# validator so it is checked. One section is not a decomposition; more than five
+# is atomisation, and each extra section is a whole generation call.
+MIN_SECTIONS_PER_PAGE = 2
+MAX_SECTIONS_PER_PAGE = 5
+
+
+def decomposition_enabled() -> bool:
+    return (os.getenv("DECOMPOSE_FRONTEND") or "true").strip().lower() not in (
+        "false", "0", "no", "off")
+
+
+def decompose_threshold() -> str:
+    """Minimum estimated_complexity at which a page is worth decomposing."""
+    value = (os.getenv("DECOMPOSE_COMPLEXITY_THRESHOLD") or "high").strip().lower()
+    return value if value in _COMPLEXITY_RANK else "high"
+
+
+def meets_complexity(complexity: str, threshold: str = None) -> bool:
+    threshold = threshold or decompose_threshold()
+    return _COMPLEXITY_RANK.get((complexity or "").lower(), -1) >= _COMPLEXITY_RANK[threshold]
+
+
+def is_page_task(filepath: str) -> bool:
+    """A page/screen — the only thing decomposition applies to. Mirrors
+    context_builder._is_consumer: these are the files that COMPOSE others."""
+    low = (filepath or "").lower()
+    return "/pages/" in low or low.rsplit("/", 1)[-1] in ("app.jsx", "app.tsx")
 
 
 def extract_json_block(text: str) -> Optional[dict]:

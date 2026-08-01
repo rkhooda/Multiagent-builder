@@ -167,8 +167,72 @@ def _architecture_quality(text, state):
     return problems
 
 
+def _decomposition_integrity(plan) -> list:
+    """Improvement 01: check section decomposition MECHANICALLY, not by trusting
+    the prompt. Day 21's lesson applies directly — a prompt rule alone does not
+    survive model drift, it quietly stops being followed and nothing notices.
+
+    Five rules, each with a concrete failure behind it:
+      1. every section names a shell that exists — otherwise the section is
+         generated and rendered by nothing;
+      2. the shell `requires` its sections — otherwise the scheduler can build
+         the shell before them and Day 22's import check flags the whole page;
+      3. the shell is actually a page — a section hanging off a component means
+         the model decomposed the wrong thing;
+      4. fan-out stays in 2..5 — one section is not a decomposition, six is
+         atomisation, and each one is a whole generation call;
+      5. filepaths are unique — the Day 19 single-owner assertion still holds,
+         and decomposition is the most likely way to break it.
+    """
+    from app.agents.utils import (MAX_SECTIONS_PER_PAGE, MIN_SECTIONS_PER_PAGE,
+                                  is_page_task)
+
+    errors = []
+    by_id = {t.id: t for t in plan.tasks}
+    sections_of: dict = {}
+    for task in plan.tasks:
+        if task.section_of:
+            sections_of.setdefault(task.section_of, []).append(task)
+
+    for shell_id, sections in sorted(sections_of.items()):
+        names = [s.id for s in sections]
+        shell = by_id.get(shell_id)
+        if shell is None:
+            errors.append(
+                f"Section tasks {names} set section_of='{shell_id}', which is not a "
+                f"task in this plan. Every section needs a page-shell task that "
+                f"imports it.")
+            continue
+        if not is_page_task(shell.filepath):
+            errors.append(
+                f"Section tasks {names} point at shell {shell_id} "
+                f"({shell.filepath}), which is not a page. Only files under "
+                f"src/pages/ or App.jsx may be decomposed into sections.")
+        orphans = sorted(s.id for s in sections if s.id not in set(shell.requires))
+        if orphans:
+            errors.append(
+                f"Page shell {shell_id} ({shell.filepath}) does not list its own "
+                f"sections {orphans} in `requires`. A shell must require every "
+                f"section it composes.")
+        if not MIN_SECTIONS_PER_PAGE <= len(sections) <= MAX_SECTIONS_PER_PAGE:
+            errors.append(
+                f"Page shell {shell_id} has {len(sections)} sections; a decomposed "
+                f"page needs between {MIN_SECTIONS_PER_PAGE} and "
+                f"{MAX_SECTIONS_PER_PAGE}. Merge them back into the page or into "
+                f"fewer, larger sections.")
+
+    seen: dict = {}
+    for task in plan.tasks:
+        if task.filepath in seen:
+            errors.append(
+                f"Duplicate filepath '{task.filepath}' owned by both {seen[task.filepath]} "
+                f"and {task.id}. Exactly one task may own a file.")
+        seen[task.filepath] = task.id
+    return errors
+
+
 def _valid_plan(text, state):
-    from app.agents.utils import parse_and_validate_plan
+    from app.agents.utils import decomposition_enabled, parse_and_validate_plan
     from app.agents.planning_agent import MIN_TASKS
     plan, errors = parse_and_validate_plan(text)
     if plan is None:
@@ -179,6 +243,13 @@ def _valid_plan(text, state):
     missing = sorted(required - {t.filepath for t in plan.tasks})
     if missing:
         errors.append(f"Plan is missing {len(missing)} required file tasks. Examples: {missing[:5]}")
+    # Decomposition off means the model was never sent the spec, so judging the
+    # plan against it would fail valid v1.0 plans. The duplicate-filepath check
+    # rides along inside it because decomposition is what makes it likely — with
+    # the feature off, Day 19's assert_single_owner still covers the db/backend
+    # boundary exactly as before.
+    if decomposition_enabled():
+        errors.extend(_decomposition_integrity(plan))
     return errors
 
 

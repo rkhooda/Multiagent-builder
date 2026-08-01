@@ -103,8 +103,18 @@ def read_disk_files(project_id: str) -> dict:
 def planned_files(state: dict) -> set:
     """Paths the pipeline said it would produce.
 
-    file_list is the planning agent's own output and is authoritative. The plan
-    JSON is parsed as a fallback for older runs that predate file_list.
+    file_list comes from the architecture's folder tree. The implementation plan
+    is unioned in — not used only as a fallback — because the plan may legitimately
+    own files the architecture never listed. Improvement 01's section components
+    are exactly that: planning invents `components/<Page>/Hero.jsx` when it
+    decomposes a page, and without this union every section would score tier 3
+    "unplanned file" and the decomposition would look like a quality REGRESSION
+    purely by construction. A rubric that penalises the change under test is not
+    measuring it.
+
+    On an undecomposed run the union is a no-op: _valid_plan already requires
+    file_list to be a subset of the plan, so this cannot move a pre-existing
+    baseline number.
 
     devops_files are unioned in because the devops agent generates AFTER planning
     and its outputs (Dockerfile, CI workflow, compose) are legitimately absent
@@ -113,13 +123,12 @@ def planned_files(state: dict) -> set:
     depressed all three scores identically and silently.
     """
     planned = set(state.get("file_list") or [])
-    if not planned:
-        try:
-            for task in json.loads(state.get("implementation_plan") or "[]"):
-                if isinstance(task, dict) and task.get("filepath"):
-                    planned.add(task["filepath"])
-        except (json.JSONDecodeError, TypeError):
-            pass
+    try:
+        for task in json.loads(state.get("implementation_plan") or "[]"):
+            if isinstance(task, dict) and task.get("filepath"):
+                planned.add(task["filepath"])
+    except (json.JSONDecodeError, TypeError):
+        pass
     return planned | set(state.get("devops_files") or {})
 
 

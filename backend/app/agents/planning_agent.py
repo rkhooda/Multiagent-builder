@@ -2,7 +2,9 @@ import json
 from pathlib import Path
 
 from ..validation import call_validated
-from .utils import build_feedback_prompt, regeneration_target, truncate_for_context, parse_and_validate_plan
+from .context_builder import build_ui_contract
+from .utils import (build_feedback_prompt, decomposition_enabled, parse_and_validate_plan,
+                    regeneration_target, truncate_for_context)
 
 
 SYSTEM_PROMPT = (
@@ -10,6 +12,26 @@ SYSTEM_PROMPT = (
 ).read_text(encoding="utf-8")
 
 MIN_TASKS = 8
+
+# Section 4b of the prompt is the decomposition spec. It is ONE prompt file (the
+# living spec, per the project's prompt rules) with the section excised at call
+# time when the feature is off — two prompt files would drift apart, and a
+# feature flag that still sends the instructions is not a rollback.
+_DECOMPOSITION_HEADING = "## 4b. Frontend Page Decomposition"
+_NEXT_HEADING = "## 5. Output Format"
+
+
+def _system_prompt() -> str:
+    """The planning prompt, with the decomposition section stripped when
+    DECOMPOSE_FRONTEND is off. Resolved per call, not at import: the flag is a
+    property of the run, and tests flip it between runs in one process."""
+    if decomposition_enabled():
+        return SYSTEM_PROMPT
+    start = SYSTEM_PROMPT.find(_DECOMPOSITION_HEADING)
+    end = SYSTEM_PROMPT.find(_NEXT_HEADING, start + 1)
+    if start == -1 or end == -1:
+        return SYSTEM_PROMPT
+    return SYSTEM_PROMPT[:start] + SYSTEM_PROMPT[end:]
 
 
 def _get_planning_max_tokens(file_count: int) -> int:
@@ -143,7 +165,12 @@ CRITICAL RULES:
     )
     plan, _ = parse_and_validate_plan(response)
 
-    plan_json = json.dumps([task.model_dump() for task in plan.tasks], indent=2)
+    # exclude_none keeps the plan JSON byte-identical to v1.0 when nothing is
+    # decomposed: `section_of` is sparse by design, so emitting it as null on
+    # every task would bloat every plan and break the "decomposition off ==
+    # exact v1.0 behaviour" rollback guarantee.
+    plan_json = json.dumps([task.model_dump(exclude_none=True) for task in plan.tasks],
+                           indent=2)
 
     summary = plan.summary()
     log.append(
@@ -176,8 +203,16 @@ CRITICAL RULES:
         },
     )
 
+    # Derived, not generated: no LLM call, no failure mode, and it is rebuilt
+    # from the plan that was just validated so it can never describe primitives
+    # that are not in it. Stored on state so every frontend context reads one
+    # identical string and Gate 3 can show what the sections are held to.
+    ui_contract = build_ui_contract(tech_stack_str, plan_json)
+    log.append(f"planning_agent: ui contract derived ({len(ui_contract)} chars)")
+
     return {
         "implementation_plan": plan_json,
+        "ui_contract": ui_contract,
         # A fresh plan invalidates any exclusions made against the old one
         "excluded_tasks": [],
         "log": log,

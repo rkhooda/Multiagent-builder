@@ -42,6 +42,15 @@ class TaskSchema(BaseModel):
     estimated_complexity: VALID_COMPLEXITY = Field(
         description="Complexity estimate: low, medium, or high"
     )
+    section_of: Optional[str] = Field(
+        default=None,
+        description=(
+            "Improvement 01: set ONLY on a section-component task produced by "
+            "decomposing a large frontend page. Holds the task id of the page "
+            "shell that imports and composes this section. None on every other "
+            "task, which is what makes decomposition mechanically checkable."
+        ),
+    )
 
     @field_validator("id")
     @classmethod
@@ -134,6 +143,7 @@ class ImplementationPlan(BaseModel):
             "backend": len(self.get_phase_tasks("backend")),
             "frontend": len(self.get_phase_tasks("frontend")),
             "devops": len(self.get_phase_tasks("devops")),
+            "sections": len([t for t in self.tasks if t.section_of]),
             "low_complexity": len([t for t in self.tasks if t.estimated_complexity == "low"]),
             "medium_complexity": len(
                 [t for t in self.tasks if t.estimated_complexity == "medium"]

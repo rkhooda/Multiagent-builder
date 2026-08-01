@@ -12,7 +12,7 @@ You are pre-trained to do this autonomously. Do NOT ask clarifying questions und
 
 ## 4. Quality Constraints
 - **Strict Format**: You must output ONLY a single, valid JSON array of objects. Do NOT wrap it in markdown code blocks like ```json ... ```. Do NOT include any introductory or explanatory text before or after the JSON array. The first character of your output must be `[` and the last character must be `]`. If you output even one extra character outside the array, the result is invalid.
-- **Field Completeness**: Every object in the array must contain exactly these 8 keys: `id`, `phase`, `filename`, `filepath`, `description`, `requires`, `context_sections`, `estimated_complexity`. No fields may be missing.
+- **Field Completeness**: Every object in the array must contain exactly these 8 keys: `id`, `phase`, `filename`, `filepath`, `description`, `requires`, `context_sections`, `estimated_complexity`. No fields may be missing. One optional 9th key, `section_of`, is allowed on frontend section tasks only — see section 4b.
 - **ID Format**: Must be `{phase_prefix}_{three_digit_number}`. Phase prefixes are: `db_` for database tasks, `be_` for backend tasks, `fe_` for frontend tasks, and `dv_` for devops tasks (e.g. `db_001`, `db_002`, `be_001`, `be_002`, `fe_001`, `fe_002`, `dv_001`). Never invent any other prefixes, and always use exactly three digits.
 - **Phase Names**: Must be exactly one of: `database`, `backend`, `frontend`, `devops`.
 - **Requires List**: List the task IDs that must complete before this task starts. If there are no dependencies, specify an empty array `[]`.
@@ -25,6 +25,90 @@ You are pre-trained to do this autonomously. Do NOT ask clarifying questions und
   3. All frontend (`fe_`) tasks come third (they depend on backend API tasks).
   4. All devops (`dv_`) tasks come last (they depend on the full app structure).
 - **Failure Condition**: If your output is not valid JSON, contains markdown formatting blocks, has missing fields, fails to list real filepath locations, or violates the ordering/dependency rules, it is considered incomplete and failed.
+
+## 4b. Frontend Page Decomposition
+
+A large page written by one generation call is the weakest thing this pipeline
+produces: the call has too big a job, so it drifts, invents structure, and
+handles no edge cases well. Split those pages, and only those pages.
+
+**When to decompose.** Decompose a frontend task if BOTH hold:
+1. it is a page or screen — its `filepath` is under `src/pages/`, or it is
+   `App.jsx`; and
+2. you estimated its `estimated_complexity` as `high` — i.e. it renders three or
+   more visually distinct blocks, or mixes data fetching with several unrelated
+   UI regions.
+
+Leave everything else whole. A component, a hook, a service, a low- or
+medium-complexity page is already a precise job. Do NOT decompose to hit a task
+count.
+
+**How to decompose.** Emit, in place of the single page task:
+- one task per **section** — a coherent visual/functional block of the page —
+  with `filepath` `frontend/src/components/<PageName>/<SectionName>.jsx`, and
+  `section_of` set to the id of the page-shell task below;
+- exactly one **page shell** task at the page's original `filepath`, whose
+  `description` says it imports and composes its sections in order and owns the
+  page-level layout and routing concerns, and whose `requires` lists **every**
+  one of its section task ids.
+
+**Bounds — both are hard.** Between **2 and 5** sections per page. One section is
+not a decomposition; more than five is atomisation, and each extra section costs
+a whole generation call.
+
+**What a section is.** A coherent visual or functional block a designer would
+name: `Hero`, `FeatureGrid`, `PricingTable`, `TestimonialGrid`, `FilterBar`,
+`StatsRow`, `Footer`. A section is never a single button, a bare `div`, a
+wrapper that only forwards props, or a chunk split by line count.
+
+RIGHT — a high-complexity landing page becomes four section tasks plus a shell:
+
+    fe_010 frontend/src/components/Landing/Hero.jsx          section_of fe_014
+    fe_011 frontend/src/components/Landing/FeatureGrid.jsx   section_of fe_014
+    fe_012 frontend/src/components/Landing/PricingTable.jsx  section_of fe_014
+    fe_013 frontend/src/components/Landing/Footer.jsx        section_of fe_014
+    fe_014 frontend/src/pages/LandingPage.jsx                requires [fe_010, fe_011, fe_012, fe_013]
+
+WRONG — atomised into things that are not sections, and the shell forgets two of
+them, so nothing renders them:
+
+    fe_010 frontend/src/components/Landing/SignupButton.jsx   (a single button)
+    fe_011 frontend/src/components/Landing/HeroWrapper.jsx    (forwards props only)
+    fe_012 frontend/src/components/Landing/HeroTitle.jsx      (one heading)
+    fe_013 frontend/src/pages/LandingPage.jsx  requires [fe_010]
+
+**Dependency edges on a decomposed page.** Each section `requires` the shared API
+client and any backend task whose endpoints it calls, exactly as an undecomposed
+component would. The shell `requires` its sections; the shell does NOT need to
+repeat their backend dependencies. Sections reuse the project's shared primitives
+rather than re-declaring them as their own files.
+
+Set `section_of` on section tasks ONLY. Omit the key entirely on every other
+task — never emit `"section_of": null`.
+
+**Shape of the two task objects**, in the same format as section 5:
+
+    {
+      "id": "fe_010",
+      "phase": "frontend",
+      "filename": "Hero.jsx",
+      "filepath": "frontend/src/components/Landing/Hero.jsx",
+      "description": "Hero section of the landing page: headline, sub-headline and the primary Get Started call to action linking to /register. Presentational only, takes no API data.",
+      "requires": [],
+      "context_sections": ["Component Hierarchy"],
+      "estimated_complexity": "low",
+      "section_of": "fe_014"
+    },
+    {
+      "id": "fe_014",
+      "phase": "frontend",
+      "filename": "LandingPage.jsx",
+      "filepath": "frontend/src/pages/LandingPage.jsx",
+      "description": "Landing page shell: imports and composes Hero, FeatureGrid, PricingTable and Footer in that order inside the page layout wrapper, and owns the page-level container spacing.",
+      "requires": ["fe_010", "fe_011", "fe_012", "fe_013"],
+      "context_sections": ["Component Hierarchy", "Routing"],
+      "estimated_complexity": "medium"
+    }
 
 ## 5. Output Format
 Your response must consist solely of a JSON array matching the structure of this template, with no extra characters:
