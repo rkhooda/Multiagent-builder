@@ -109,6 +109,13 @@ class ProcessedFile:
     import_warnings: list = field(default_factory=list)  # unresolved Python imports
     error: str = None
     repairs_spent: int = 0  # write-time LLM repairs, folded into retry_counts by the coordinator
+    # Improvement 01. `review` is the reviewer's compact record for this file
+    # (reviewed / verdict / issues_found / skipped_reason) or None when the file
+    # was never a review candidate. `revised` says a revision call actually
+    # replaced the content. Both are carried as DATA so the worker stays pure and
+    # the coordinator remains the only thing that mutates state or broadcasts.
+    review: dict = None
+    revised: bool = False
 
 
 def process_generated_file(project_id: str, task: dict, raw_output: str,
@@ -187,6 +194,39 @@ def commit_generated_file(state: dict, processed: ProcessedFile, *, project_id: 
         state.setdefault("errors", []).extend(
             f"import_warning: {w}" for w in processed.import_warnings)
     log = state.setdefault("log", [])
+
+    # Improvement 01: the review record lands here, on the loop, for the same
+    # reason everything else does — one serialised writer. The reviewer's own
+    # revision was already charged to retry_counts at reservation time inside the
+    # worker (validation.report.try_reserve_repair), so it must NOT be added to
+    # repairs_spent above or it would be charged twice against one ceiling.
+    if processed.review is not None:
+        record = {**processed.review, "revised": processed.revised}
+        state.setdefault("review_results", {})[processed.filepath] = record
+        if record.get("reviewed"):
+            log.append(f"frontend_reviewer: {processed.filepath} — {record['verdict']}, "
+                       f"{record['issues_found']} issue(s)"
+                       + (", revised" if processed.revised else ""))
+            manager.broadcast_sync(project_id, {
+                "type": "file_reviewed",
+                "filename": Path(processed.filepath).name,
+                "filepath": processed.filepath, "phase": phase,
+                "verdict": record["verdict"], "issues_found": record["issues_found"],
+                "coherence_notes": record.get("coherence_notes", ""),
+                **counts,
+            })
+        elif record.get("skipped_reason"):
+            log.append(f"frontend_reviewer: {processed.filepath} not reviewed "
+                       f"({record['skipped_reason']})")
+        if processed.revised:
+            manager.broadcast_sync(project_id, {
+                "type": "file_revised",
+                "filename": Path(processed.filepath).name,
+                "filepath": processed.filepath, "phase": phase,
+                "issues_addressed": record["issues_found"],
+                **counts,
+            })
+
     if processed.warnings:
         log.append(f"coder: {processed.filepath} syntax warnings: {'; '.join(processed.warnings)}")
     verb = {"file_written": "wrote", "file_failed": "stubbed (failed)",

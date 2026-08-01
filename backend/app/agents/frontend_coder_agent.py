@@ -15,9 +15,15 @@ The stage still fails as a whole only when > 50% of its files don't deliver.
 from pathlib import Path
 
 from app.exceptions import LLMError
+from app.llm_router import call_llm
+from app.utils.code_cleaner import strip_code_fences
 from app.utils.file_writer import process_generated_file
 from app.validation import call_validated, syntax_of
+from app.validation import report as vreport
 from .context_builder import build_file_context
+from .frontend_reviewer import (
+    build_revision_message, review_file, review_mode, should_review,
+)
 from .parallel_runner import comment_safe, run_phase
 from .utils import get_tasks_for_phase
 
@@ -26,6 +32,44 @@ SYSTEM_PROMPT = (Path(__file__).resolve().parents[3] / "prompts" / "frontend_cod
 # Fraction of files that must not-deliver (failed + blocked) before the whole
 # stage is considered broken.
 STAGE_FAIL_THRESHOLD = 0.5
+
+# A revision that comes back this thin is a refusal or a truncation, not a fix.
+# Mirrors the min_code_lines(5) floor the generator itself is held to.
+MIN_REVISED_LINES = 5
+
+
+def _revise(task, content, issues, project_id, file_tree):
+    """One targeted revision. Returns a ProcessedFile, or None to keep the original.
+
+    Plain call_llm, not call_validated, on purpose: call_validated would spend a
+    SECOND repair call inside a step that is already the file's last chance, and
+    a revision that comes back broken is caught for free by the Day 22 validation
+    pass under the same budget. One call in, one file out.
+
+    Returning None is the fail-open path and it is the common one: the original
+    was already written to disk by the first process_generated_file, so declining
+    the revision leaves a good file in place rather than a worse one. A revision
+    must never be able to make a file worse than not reviewing it at all.
+    """
+    filepath = task.get("filepath", "")
+    try:
+        raw = call_llm(
+            [{"role": "user", "content": build_revision_message(filepath, content, issues)}],
+            "frontend_code", max_tokens=1500, project_id=project_id, label=filepath)
+    except Exception as e:                        # noqa: BLE001 — fail open
+        print(f"[Reviewer] {filepath}: revision call failed, keeping original ({e})", flush=True)
+        return None
+
+    clean = strip_code_fences(raw)
+    if len([l for l in clean.splitlines() if l.strip()]) < MIN_REVISED_LINES:
+        print(f"[Reviewer] {filepath}: revision too short, keeping original", flush=True)
+        return None
+
+    processed = process_generated_file(project_id, task, clean, file_tree=file_tree)
+    if processed.status != "ok":
+        print(f"[Reviewer] {filepath}: revision failed to write, keeping original", flush=True)
+        return None
+    return processed
 
 
 def _failure_stub(filepath: str, error: str) -> str:
@@ -59,6 +103,7 @@ def frontend_coder_agent(state: dict) -> dict:
     # launch-time context builder share one view (single-threaded on the loop).
     generated_files = dict(state.get("generated_files", {}))
     state["generated_files"] = generated_files
+    state["review_results"] = dict(state.get("review_results") or {})
     log = state.setdefault("log", [])
     errors = state.setdefault("errors", [])
 
@@ -76,8 +121,34 @@ def frontend_coder_agent(state: dict) -> dict:
         return {"generated_files": generated_files, "log": log, "errors": errors,
                 "current_stage": "backend_code"}
 
-    file_tree = state.get("file_list") or list(generated_files.keys())
+    # Sections are invented at planning time and are absent from the
+    # architecture-derived file_list, so the phase's own task filepaths are
+    # unioned in — otherwise import_fixer and the folder map cannot see them.
+    file_tree = sorted(set(state.get("file_list") or list(generated_files.keys()))
+                       | {t.get("filepath") for t in fe_tasks if t.get("filepath")})
     lib_ids = {t["id"] for t in fe_tasks if t.get("id") and _is_lib_file(t.get("filepath", ""))}
+
+    # ── Improvement 01: reviewer wiring, resolved once per phase ─────────────
+    # Live dict on state so the worker's atomic reservation and the coordinator's
+    # commit charge ONE ledger. Same trick generated_files already uses above.
+    retry_counts = dict(state.get("retry_counts") or {})
+    state["retry_counts"] = retry_counts
+    # How many other frontend tasks import this one — the "shared primitive"
+    # half of the selective predicate, read off the plan's own requires edges.
+    dependents = {}
+    for t in fe_tasks:
+        for dep in (t.get("requires") or []):
+            dependents[dep] = dependents.get(dep, 0) + 1
+    # Fast mode already skips Day 22's repairs; a second opinion is the same kind
+    # of spend, so it is withheld for the same reason and stated the same way.
+    fast_mode = bool(state.get("fast_mode"))
+    mode = "off" if fast_mode else review_mode()
+    if mode != "off":
+        log.append(f"frontend_coder_agent: review mode {mode}, "
+                   f"budget {vreport.repairs_spent_total(retry_counts)}/"
+                   f"{vreport.REPAIR_CEILING_PER_RUN}")
+    elif fast_mode:
+        log.append("frontend_coder_agent: fast mode — files generated without review")
 
     def implicit_deps(task, by_id):
         # Every non-lib file waits on the shared API client(s): a component that
@@ -112,7 +183,47 @@ def frontend_coder_agent(state: dict) -> dict:
         )
         processed = process_generated_file(project_id, task, raw, file_tree=file_tree)
         processed.repairs_spent = len(tally)
-        return processed
+
+        # ── generate -> process -> [selective] review -> ONE revision ────────
+        # All of it inside this worker, under the permit it already holds for
+        # its whole lifetime (Day 20 ponytail #2 / Improvement 01 ponytail #2).
+        # No second wave, no new semaphore, no new scheduler: a dependent file
+        # awaiting this one's future therefore sees the REVISED content, which a
+        # post-hoc review pass could not offer.
+        filepath = task.get("filepath", "")
+        findings = list(processed.warnings) + list(processed.import_warnings)
+        wanted, reason = should_review(task, findings, dependents.get(task.get("id"), 0), mode)
+        if not wanted:
+            return processed
+
+        result = review_file(task, processed.content, context, state,
+                             parser_findings=processed.warnings)
+        processed.review = result.as_state()
+        if not result.needs_revision:
+            return processed
+
+        # ONE account (ponytail #2). A revision is an LLM call that fixes a
+        # generated file, exactly like a Day 22 repair, so it charges the same
+        # repair:{path} key under the same per-file cap and per-run ceiling.
+        # Reserved atomically because these workers are a thread pool: check-then
+        # -charge as two statements lets three workers each claim the last slot.
+        allowed, why = vreport.try_reserve_repair(retry_counts, filepath)
+        if not allowed:
+            # Budget exhaustion is a SIGNAL, not an error — Day 22's position.
+            # The file ships as generated, the reason is recorded, and the run
+            # says out loud that the coder prompt or architecture needs work.
+            processed.review["skipped_reason"] = f"revision_{why}"
+            print(f"[Reviewer] {filepath}: revision withheld ({why})", flush=True)
+            return processed
+
+        revised = _revise(task, processed.content, result.blocking_issues,
+                          project_id, file_tree)
+        if revised is None:
+            return processed          # original stands; the slot is still spent
+        revised.repairs_spent = processed.repairs_spent
+        revised.review = processed.review
+        revised.revised = True
+        return revised
 
     result = run_phase(
         fe_tasks, state, generate=generate, build_context=build_context,
@@ -152,6 +263,11 @@ def frontend_coder_agent(state: dict) -> dict:
 
     out = {
         "generated_files": generated_files,
+        # Both were mutated in place by the coordinator/worker during the phase;
+        # they must be returned or LangGraph merges nothing and the budget spent
+        # here is invisible to the Day 22 validation pass that runs next.
+        "retry_counts": retry_counts,
+        "review_results": state.get("review_results", {}),
         "log": log,
         "errors": errors,
         "current_stage": "database",

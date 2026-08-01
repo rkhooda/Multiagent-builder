@@ -24,6 +24,7 @@ class ProjectState(TypedDict):
     previous_versions: Dict[str, str]  # doc name -> prior content, set before an edit re-run overwrites it
     fix_counts: Dict[str, int]     # filepath -> AI fixes applied at gate 4 (capped per file)
     validation_report: dict        # Day 22 automated-checks report (counts, issues, failure_rate)
+    review_results: Dict[str, dict]  # filepath -> {reviewed, verdict, issues_found, revised} (Improvement 01)
 
     # Control fields
     replan_after_architecture: bool  # set on gate-3 'back' rerun: skip gate 2, flow straight to planning

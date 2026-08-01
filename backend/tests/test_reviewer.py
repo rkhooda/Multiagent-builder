@@ -341,6 +341,199 @@ def test_failed_reservation_charges_nothing():
     assert "repair:denied.jsx" not in counts
 
 
+# ── The loop end to end, through the real coder + scheduler ─────────────────
+#
+# Drives frontend_coder_agent for real (real parallel_runner, real
+# process_generated_file, real commit) with every LLM call faked, so the wiring
+# that actually ships is what is under test — not a re-implementation of it.
+
+import shutil  # noqa: E402
+
+import app.agents.frontend_coder_agent as coder  # noqa: E402
+import app.core.connection_manager as cm  # noqa: E402
+from app.utils.file_writer import OUTPUTS_ROOT  # noqa: E402
+
+LOOP_PROJECT = "__test_reviewer_loop__"
+GOOD_FILE = (
+    "import api from '../lib/api';\n"
+    "export default function Panel() {\n"
+    "  const [x, setX] = useState(null);\n"
+    "  if (!x) return <div className=\"p-6\">Loading…</div>;\n"
+    "  return <div className=\"p-6\">{x}</div>;\n"
+    "}\n"
+)
+REVISED_FILE = GOOD_FILE.replace("Panel", "PanelFixed")
+
+LOOP_TASKS = [
+    {"id": "fe_001", "phase": "frontend", "filename": "api.js",
+     "filepath": "frontend/src/lib/api.js", "description": "Shared axios client.",
+     "requires": [], "estimated_complexity": "low"},
+    {"id": "fe_002", "phase": "frontend", "filename": "HomePage.jsx",
+     "filepath": "frontend/src/pages/HomePage.jsx", "description": "Home page shell.",
+     "requires": ["fe_001"], "estimated_complexity": "medium"},
+    {"id": "fe_003", "phase": "frontend", "filename": "Row.jsx",
+     "filepath": "frontend/src/components/tasks/Row.jsx", "description": "One row.",
+     "requires": ["fe_001"], "estimated_complexity": "low"},
+]
+
+
+def _loop_state():
+    return {
+        "project_id": LOOP_PROJECT, "project_name": "LoopTest",
+        "implementation_plan": json.dumps(LOOP_TASKS),
+        "file_list": [t["filepath"] for t in LOOP_TASKS],
+        "architecture_doc": "## API Endpoints\n| Method | Path |\n|---|---|\n| GET | /api/x |",
+        "tech_stack": json.dumps({"frontend": "React 19 + Vite + TailwindCSS + axios"}),
+        "generated_files": {}, "log": [], "errors": [], "retry_counts": {},
+    }
+
+
+def _run_loop(review_responses, revision_response=REVISED_FILE, **env):
+    """Run the real coder phase. Returns (out, review_calls, revision_calls)."""
+    shutil.rmtree(os.path.join(OUTPUTS_ROOT, LOOP_PROJECT), ignore_errors=True)
+    review_calls, revision_calls = [], []
+    responses = list(review_responses)
+
+    def fake_call_llm(messages, agent_type, **kwargs):
+        if agent_type == "frontend_review":
+            review_calls.append(kwargs.get("label"))
+            nxt = responses.pop(0) if responses else PASS_VERDICT
+            if isinstance(nxt, Exception):
+                raise nxt          # a provider failure, not a string that looks like one
+            return nxt
+        return GOOD_FILE
+
+    def fake_revise(messages, agent_type, **kwargs):
+        revision_calls.append(kwargs.get("label"))
+        return revision_response
+
+    restore_env = _with_env(**env)
+    restore_llm = _with_llm(fake_call_llm)
+    original_revise_llm = coder.call_llm
+    original_broadcast = cm.manager.broadcast_sync
+    events = []
+    cm.manager.broadcast_sync = lambda pid, event: events.append(event)
+    coder.call_llm = fake_revise
+    try:
+        out = coder.frontend_coder_agent(_loop_state())
+    finally:
+        coder.call_llm = original_revise_llm
+        cm.manager.broadcast_sync = original_broadcast
+        restore_llm()
+        restore_env()
+        shutil.rmtree(os.path.join(OUTPUTS_ROOT, LOOP_PROJECT), ignore_errors=True)
+    return out, review_calls, revision_calls, events
+
+
+def test_loop_reviews_selectively_and_passes_without_revising():
+    """The affordable default: only the page shell and the shared client are
+    reviewed, and a passing verdict costs exactly zero revision calls."""
+    out, reviews, revisions, _ = _run_loop([PASS_VERDICT, PASS_VERDICT],
+                                           REVIEW_MODE="selective")
+    assert sorted(reviews) == ["frontend/src/lib/api.js",
+                               "frontend/src/pages/HomePage.jsx"], reviews
+    assert revisions == [], "a pass must never spend a revision"
+    assert out["review_results"]["frontend/src/pages/HomePage.jsx"]["verdict"] == "pass"
+    assert "frontend/src/components/tasks/Row.jsx" not in out["review_results"]
+
+
+def test_loop_revises_once_and_the_revision_reaches_state_and_disk():
+    out, reviews, revisions, events = _run_loop([REVISE_VERDICT, PASS_VERDICT],
+                                                REVIEW_MODE="selective")
+    assert len(revisions) == 1, revisions
+    revised_path = revisions[0]
+    assert "PanelFixed" in out["generated_files"][revised_path], "state holds the revision"
+    record = out["review_results"][revised_path]
+    assert record["revised"] is True and record["verdict"] == "revise"
+    assert {e["type"] for e in events} >= {"file_reviewed", "file_revised"}
+
+
+def test_revision_charges_the_shared_repair_ledger_exactly_once():
+    """The ceiling only means anything if the spend lands in the one account."""
+    out, _, revisions, _ = _run_loop([REVISE_VERDICT, PASS_VERDICT],
+                                     REVIEW_MODE="selective")
+    counts = out["retry_counts"]
+    assert vreport.repairs_spent_total(counts) == 1, counts
+    assert vreport.repairs_spent_on(counts, revisions[0]) == 1, counts
+
+
+def test_exhausted_budget_stops_revising_and_says_so():
+    """Budget exhaustion degrades gracefully AND visibly — Day 22's position.
+    The file still ships; the run states that the generator needs work."""
+    restore = _with_env(REPAIR_CEILING_PER_RUN="0")
+    original = vreport.REPAIR_CEILING_PER_RUN
+    vreport.REPAIR_CEILING_PER_RUN = 0
+    try:
+        out, _, revisions, _ = _run_loop([REVISE_VERDICT, REVISE_VERDICT],
+                                         REVIEW_MODE="selective")
+    finally:
+        vreport.REPAIR_CEILING_PER_RUN = original
+        restore()
+    assert revisions == [], "no revision may be issued past the ceiling"
+    skipped = [r for r in out["review_results"].values()
+               if "budget_exhausted" in (r.get("skipped_reason") or "")]
+    assert skipped, out["review_results"]
+    assert len(out["generated_files"]) == 3, "every file still ships"
+
+
+def test_a_broken_reviewer_never_blocks_a_file():
+    """The whole fail-open contract, exercised through the real phase."""
+    out, _, revisions, _ = _run_loop([RuntimeError("down"), RuntimeError("down"),
+                                      RuntimeError("down"), RuntimeError("down")],
+                                     REVIEW_MODE="selective")
+    assert len(out["generated_files"]) == 3, out["generated_files"].keys()
+    assert revisions == []
+    assert all(not r["reviewed"] for r in out["review_results"].values())
+
+
+def test_a_rejected_revision_leaves_the_original_in_place():
+    """A revision must never be able to make a file worse than no review at all."""
+    out, _, revisions, _ = _run_loop([REVISE_VERDICT, PASS_VERDICT],
+                                     revision_response="// nope",
+                                     REVIEW_MODE="selective")
+    assert len(revisions) == 1
+    assert "PanelFixed" not in "".join(out["generated_files"].values())
+    assert all("export default function Panel" in c or "api.js" in p
+               for p, c in out["generated_files"].items())
+    assert out["review_results"][revisions[0]]["revised"] is False
+
+
+def test_review_off_restores_exact_v1_behaviour():
+    """The instant rollback and the A/B control arm."""
+    out, reviews, revisions, events = _run_loop([], REVIEW_MODE="off")
+    assert reviews == [] and revisions == []
+    assert out.get("review_results") == {}
+    assert not any(e["type"].startswith("file_review") for e in events)
+    assert len(out["generated_files"]) == 3
+
+
+def test_fast_mode_withholds_review_like_it_withholds_repairs():
+    shutil.rmtree(os.path.join(OUTPUTS_ROOT, LOOP_PROJECT), ignore_errors=True)
+    restore_env = _with_env(REVIEW_MODE="all")
+    reviews = []
+
+    def fake(messages, agent_type, **kwargs):
+        if agent_type == "frontend_review":
+            reviews.append(kwargs.get("label"))
+            return PASS_VERDICT
+        return GOOD_FILE
+
+    restore_llm = _with_llm(fake)
+    original_broadcast = cm.manager.broadcast_sync
+    cm.manager.broadcast_sync = lambda pid, event: None
+    try:
+        state = _loop_state()
+        state["fast_mode"] = True
+        out = coder.frontend_coder_agent(state)
+    finally:
+        cm.manager.broadcast_sync = original_broadcast
+        restore_llm()
+        restore_env()
+        shutil.rmtree(os.path.join(OUTPUTS_ROOT, LOOP_PROJECT), ignore_errors=True)
+    assert reviews == [], "fast mode must not spend review calls"
+    assert len(out["generated_files"]) == 3
+
+
 def _check(name, cond, detail=""):
     print(f"  {'ok  ' if cond else 'FAIL'} {name}{'' if cond else ' -> ' + detail}")
     return cond
