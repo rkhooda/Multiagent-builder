@@ -353,3 +353,22 @@ rate-limit long before that. Concretely, any one of:
 Then: `DECOMPOSE_FRONTEND=true REVIEW_MODE=selective`, score both arms with
 `score_project.py`, compare frontend-only tier 4 against **35.3% (18/51)**, and
 check total calls (ceiling +35%) and coherence warnings (must not rise).
+
+## Addendum (2026-08-03, ceiling audit)
+
+Two facts about this improvement's measurement were established later by
+[CEILING_AUDIT.md](CEILING_AUDIT.md):
+
+1. **The 700 → 2000 fix was still short.** No gemini review has ever
+   completed: 21 attempts truncated at the 700-era ceiling and one at 1,996
+   against the raised 2000 — gemini-2.5-flash spends ~2.4–2.7k tokens
+   *reasoning* before its answer (the same behaviour measured on QA), so a
+   2000 ceiling sized from answer length alone starves it.
+   `REVIEW_MAX_TOKENS` is now 4000, pinned by test in both profiles.
+2. **This measurement's fallback traffic consumed 88,004 groq tokens on
+   2026-08-01** — 26 silent gemini→groq failover reviews at ~3.3k prompt
+   each, ~88 % of the scarce pool's daily allowance. The rate-limit pressure
+   recorded above ("gemini free RPM and groq both refused") was therefore
+   partly self-inflicted by the starvation defect, not purely ambient quota
+   scarcity. Failovers are now counted per run with cause and token cost
+   (degraded_events, 2026-08-03).

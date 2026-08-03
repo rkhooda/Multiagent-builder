@@ -136,3 +136,31 @@ the trade, not just the speedup).
 
 **Review-by: 2026-08-17.** Measure by then, or delete the incremental code
 path — shipped-but-off code rots quietly while everything around it moves.
+
+## Correction & attribution (2026-08-03, ceiling audit)
+
+The QA ceiling fix raised the question of whether the cost figures above were
+contaminated by pre-fix QA failover consumption of groq. Re-derived from
+metrics.db (see [CEILING_AUDIT.md](CEILING_AUDIT.md)):
+
+- **QA's recorded groq failover spend is 5,043 tokens, all dated 2026-08-03**
+  (the two starved batches of the ceiling measurement itself). The per-file
+  figure was derived from rows dated 2026-07-20, which QA's failovers
+  postdate — so the coder figure was **not** QA-contaminated. Shown rather
+  than assumed.
+- **The per-file figure was still loose.** Recomputed strictly over the frozen
+  plan's own run (32 groq ok `frontend_code` calls, project `2901fb46`,
+  2026-07-20): avg 2,574 prompt + 232 completion = **2,806 ≈ 2.8k
+  tokens/file**, not 3.0k. Corrected arm estimate: 86 × 2.8k ≈ **241k groq
+  tokens/arm** (was 257k); two arms ≈ 483k. Against the 100k/day allowance
+  that is still 2.4× / 4.8× — **the UNPROVEN verdict and the settling-run
+  requirements are unchanged.**
+- **What the audit found instead:** the Improvement-01 reviewer, starving on
+  gemini (every attempt truncated, fail-open), silently consumed **88,004
+  groq tokens on 2026-08-01** — 26 fallback reviews at ~3.3k prompt each,
+  roughly 88 % of a full groq day and nearly equal to the coders' own 89,787
+  for the whole frontend phase. The reviewer is default-off and outside the
+  replay arms, so the estimate above is unaffected, but Improvement 01's
+  observation that "gemini free RPM and groq both refused" during its
+  measurement was partly self-inflicted by this defect (now fixed:
+  `REVIEW_MAX_TOKENS` 4000).

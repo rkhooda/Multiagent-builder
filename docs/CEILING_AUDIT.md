@@ -70,7 +70,10 @@ quota starvation); the only completions come from standalone dev scripts
    **Action: `REVIEW_MAX_TOKENS` 2000 → 4000** (basis: reasoning ≥ 1,996
    observed cut, same-model QA reasoning 2,427–2,740, complete answer ≤ 335;
    1.2 × (2,740 + 335) ≈ 3,690 → 4000). Pinned by test. The reviewer is
-   default-off, so this changes no default-run cost.
+   default-off, so this changes no default-run cost. Quantified cost of the
+   defect while it ran: **88,004 groq tokens on 2026-08-01** (26 fallback
+   reviews, ~3.3k prompt each) — ~88 % of the scarce pool's daily allowance,
+   consumed silently during Improvement 01's own measurement.
 2. **frontend_code starves under fast mode.** Largest measured complete file:
    829 tokens (TaskForm.jsx, groq). The fast-mode floor was 800. **Action:
    `FAST_MODE_FLOOR` 800 → 1000** (1.2 × 829 ≈ 995), pinned in both profiles
