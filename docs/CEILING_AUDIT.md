@@ -98,6 +98,38 @@ quota starvation); the only completions come from standalone dev scripts
    change: point the suites at a temp metrics path so audit queries never need
    a denylist.
 
+## Related observation: plan fragmentation (diagnostic only, 2026-08-03)
+
+The frozen TodoSimple plan (`2901fb46`, Gate-3-approved, decomposition off) has
+**96 tasks for a simple todo brief** — 11 database / 28 backend / 47 frontend /
+10 devops; estimated_complexity 36 low / 45 medium / 15 high. Structural
+counts, zero API calls:
+
+- **11 tasks are `__init__.py` files** — each a full LLM call carrying the
+  ~2.6k-token prompt context to produce a package marker. At the measured
+  2.8k tokens/call that is ~31k tokens (~13 % of a replay arm) spent on
+  files that are mostly empty.
+- **15 tasks are config/boilerplate** (index.html, vite/postcss/tailwind
+  configs, `.env.example`, requirements.txt, READMEs …), five of them
+  rated *medium* and three *high* complexity by the planner.
+- **Per-entity/per-atom fan-out**: schemas, crud, and endpoints each fan into
+  4 near-identical single-entity files plus an `__init__`; the common UI kit
+  is 7 separate tasks (Button, Input, Textarea, Checkbox, Select, DatePicker,
+  Modal). Grouping only the `__init__` markers and these four clusters would
+  plausibly take 96 → ~60–70 calls with identical output files.
+- On-disk "<20 lines" counts are **not usable evidence** here: 55 of 77 files
+  are tiny, but the run was quota-starved and many are placeholders, not what
+  the plan would produce. The plan structure above is the evidence.
+
+**Hypothesis (one line):** the planning prompt's one-task-per-file rule maps
+plan granularity 1:1 onto filesystem granularity, so package markers and
+config stubs cost the same fixed ~2.6k-token prompt overhead as real modules —
+it over-fragments by construction.
+
+**No changes made** — task granularity affects output quality and cost on
+every run; regrouping belongs in its own scoped change with a before/after
+measurement (and a `PROMPT_CHANGELOG` entry), not bolted onto a defect fix.
+
 ## Pinning
 
 `backend/tests/test_token_budgets.py::test_ceilings_cover_measured_requirements`
