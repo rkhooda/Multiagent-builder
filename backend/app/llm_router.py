@@ -110,7 +110,11 @@ else:
 # baseline and this resolves the two things it cannot know: an operator override
 # and the run's speed profile. One choke point, no call-site edits.
 FAST_MODE_SCALE = 0.5
-FAST_MODE_FLOOR = 800          # below this even a small file stops mid-function
+# Raised 800 -> 1000 (ceiling audit, 2026-08-03): the largest measured complete
+# coder file is 829 tokens (TaskForm.jsx, groq), so the old floor truncated the
+# biggest real file in fast mode — the same starvation defect one profile over.
+# 1.2 x 829 ~= 995 -> 1000. Pinned by test_token_budgets in BOTH profiles.
+FAST_MODE_FLOOR = 1000         # below this even a small file stops mid-function
 
 # Agents whose budget fast mode is allowed to scale.
 #
