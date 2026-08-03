@@ -136,6 +136,7 @@ is spent, not as a replacement. Details in [docs/USAGE.md](docs/USAGE.md).
 | **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** | How the pipeline works, the state object, adding or changing an agent |
 | [docs/OBSERVABILITY.md](docs/OBSERVABILITY.md) | Metrics store and LangSmith tracing |
 | [docs/PROVIDERS.md](docs/PROVIDERS.md) | Dated agent→provider map, daily limits, which limit is scarce — update with every routing change |
+| [docs/CEILING_AUDIT.md](docs/CEILING_AUDIT.md) | Output-ceiling starvation audit: measured requirements per agent, verdicts, rerun via `scripts/audit_ceilings.py` |
 | [docs/INTEGRATION_RESULTS.md](docs/INTEGRATION_RESULTS.md) | Measured quality baselines and known limits |
 | [docs/QUALITY_BASELINE.md](docs/QUALITY_BASELINE.md) | Defect taxonomy and layer attribution |
 | [ROADMAP.md](ROADMAP.md) | Current limitations and where this goes next |
