@@ -131,6 +131,12 @@ Generate the complete file content now. Output ONLY the raw file code — no exp
                 files_written += 1
                 log.append(f"database_agent: wrote {filepath} ({result['size_bytes']} bytes)")
 
+                # Improvement 02: this agent commits files without going through
+                # commit_generated_file, so it feeds the QA stream itself.
+                # No-op unless QA_MODE=incremental.
+                from . import qa_stream
+                qa_stream.offer(project_id, filepath, code, [], fast_mode=fast_mode)
+
                 # Broadcast progress
                 from ..core.connection_manager import manager
                 manager.broadcast_sync(project_id, {

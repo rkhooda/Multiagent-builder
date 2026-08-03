@@ -181,6 +181,15 @@ def commit_generated_file(state: dict, processed: ProcessedFile, *, project_id: 
 
     state.setdefault("generated_files", {})[processed.filepath] = processed.content
 
+    # Improvement 02: the natural producer for the incremental QA stream — the
+    # single serialised place every coder file enters state. A pure snapshot
+    # (path, content, parser warnings) goes in; the stream's consumer thread
+    # does the reviewing. No-op unless QA_MODE=incremental. Stubs for
+    # failed/blocked files are offered too, exactly as batch mode reviews them.
+    from ..agents import qa_stream
+    qa_stream.offer(project_id, processed.filepath, processed.content,
+                    processed.warnings, fast_mode=bool(state.get("fast_mode")))
+
     # Day 22: charge write-time repairs to the same per-file account the
     # validation pass draws from, so one file cannot get 1 repair here and 2
     # more later. Done HERE (coordinator, serialised) rather than in the worker.

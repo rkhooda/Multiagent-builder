@@ -640,6 +640,10 @@ async def delete_project(project_id: str):
     # spending quota on a project that is about to stop existing.
     from app.llm_router import abandon_project
     abandon_project(project_id)
+    # Drop any live incremental QA stream with it — its consumer exits on the
+    # abandoned check rather than reviewing files nobody can download.
+    from app.agents import qa_stream
+    qa_stream.discard(project_id)
     task = _live_runs.get(project_id)
     if task:
         cancelled_run = True

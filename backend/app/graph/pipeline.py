@@ -139,6 +139,13 @@ def invalidate_downstream(state: dict, from_stage: str) -> dict:
     snapshots doc artifacts into previous_versions (last snapshot only) and
     clears them. The target stage's own output is left intact for feedback
     injection. Called once, from the resume endpoint, for every edit/back."""
+    # Improvement 02: any invalidation that can clear generated_files makes a
+    # live QA stream's snapshots stale — drop it here, the one choke point
+    # every edit/back resume already routes through. Idempotent and safe when
+    # no stream exists.
+    from app.agents import qa_stream
+    qa_stream.discard(state.get("project_id", ""))
+
     update = {}
     previous_versions = dict(state.get("previous_versions") or {})
     for stage in STAGE_ORDER[STAGE_ORDER.index(from_stage) + 1:]:

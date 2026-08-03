@@ -138,6 +138,17 @@ def _parse_issues(raw_output: str, batch_files: list) -> list:
     return issues
 
 
+def parser_warnings_block(warnings_by_file: dict) -> str:
+    """Automated-checks context for a STREAMED batch, reviewed before the
+    validation node has built the full report: the per-file in-process parser
+    findings available at commit time, phrased through the same
+    qa_context_block so the do-not-re-litigate instruction is identical."""
+    from ..validation.report import qa_context_block
+    issues = [{"kind": "parser", "filepath": fp, "line": None, "message": w}
+              for fp, ws in sorted(warnings_by_file.items()) for w in ws]
+    return "\n" + qa_context_block({"issues": issues}) + "\n" if issues else ""
+
+
 def review_batch(batch: list, automated_block: str, *, project_id: str = "",
                  fast_mode: bool = False, batch_id: int = 0) -> list:
     """Review ONE batch of (filepath, content) pairs. PURE with respect to
@@ -267,19 +278,57 @@ def qa_agent(state: dict) -> dict:
     if automated_block:
         automated_block = "\n" + automated_block + "\n"
 
-    batches = _chunk_files(generated_files)
+    # ── Improvement 02: join the incremental stream, then sweep the rest ─────
+    # In incremental mode most files were reviewed while generation still ran;
+    # this node flushes the remainder, collects the findings, and reviews
+    # whatever the stream never covered (a failed batch, a stall, a
+    # crash-resume that lost the stream) — coverage never depends on the
+    # stream having worked. In batch mode (default) the stream does not exist
+    # and this loop reviews everything, exactly as before.
+    from ..observability import degraded
+    from . import qa_stream as qa_stream_mod
+
+    stream = qa_stream_mod.take(project_id)
+    stream_stats = None
     all_issues = []
     failed_batches = 0
+    batches_done = 0
     last_batch_error = None
 
+    if qa_stream_mod.qa_mode() == "incremental" and stream is None:
+        degraded.record(project_id, "qa_stream_fallback")
+        log.append("qa_agent: incremental mode but no stream — full end-of-run review")
+        print("[QAAgent] DEGRADED: no stream found in incremental mode", flush=True)
+
+    reviewed_content = {}
+    if stream is not None:
+        if not stream.finish():
+            degraded.record(project_id, "qa_stream_stalled")
+            log.append("qa_agent: stream stalled at join — sweeping remaining files")
+            print("[QAAgent] DEGRADED: stream stalled at join", flush=True)
+        stream_stats = stream.snapshot()
+        all_issues.extend(stream_stats["findings"])
+        errors.extend(stream_stats["errors"])
+        failed_batches += stream_stats["failed_batches"]
+        batches_done += stream_stats["batches_submitted"]
+        reviewed_content = stream_stats["reviewed_content"]
+        log.append(f"qa_agent: stream reviewed {len(reviewed_content)} files in "
+                   f"{len(stream_stats['batch_records'])} batches during generation "
+                   f"({stream_stats['failed_batches']} failed)")
+
+    unreviewed = {fp: content for fp, content in generated_files.items()
+                  if fp not in reviewed_content}
+    batches = _chunk_files(unreviewed)
+
     for i, batch in enumerate(batches):
+        batch_id = batches_done + i + 1
         batch_files = [f for f, _ in batch]
         print(f"[QAAgent] Reviewing batch {i + 1}/{len(batches)}: {batch_files}")
 
         try:
             batch_issues = review_batch(batch, automated_block,
                                         project_id=project_id,
-                                        fast_mode=fast_mode, batch_id=i + 1)
+                                        fast_mode=fast_mode, batch_id=batch_id)
             all_issues.extend(batch_issues)
 
             log.append(f"qa_agent: batch {i + 1}/{len(batches)} reviewed ({len(batch_issues)} issues found)")
@@ -294,7 +343,6 @@ def qa_agent(state: dict) -> dict:
             error_msg = f"qa_agent: batch {i + 1}/{len(batches)} failed ({batch_files}): {e}"
             errors.append(error_msg)
             print(f"[QAAgent] ERROR: {error_msg}")
-            from ..observability import degraded
             degraded.record(project_id, "qa_batch_failed")
 
         manager.broadcast_sync(project_id, {
@@ -304,8 +352,10 @@ def qa_agent(state: dict) -> dict:
             "issues_found_so_far": len(all_issues)
         })
 
-    if batches and failed_batches == len(batches):
-        raise last_batch_error
+    total_batches = batches_done + len(batches)
+    if total_batches and failed_batches == total_batches:
+        raise last_batch_error or RuntimeError(
+            f"qa_agent: all {total_batches} review batches failed — nothing was reviewed")
 
     # ── Trivial auto-fix (missing imports / typos only, 1 attempt per file) ──
     auto_fixed_files = []
