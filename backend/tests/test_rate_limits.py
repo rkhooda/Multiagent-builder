@@ -167,6 +167,149 @@ def test_report_shows_remaining_allowance():
         _reset()
 
 
+# ── Failover accounting (ceiling audit, 2026-08-03) ─────────────────────────
+# QA starved on its primary for weeks and every failover silently spent the
+# scarce groq pool; these pin that a call succeeding off its first-choice tier
+# is counted, with its cause and (for scarce destinations) its token cost.
+
+class _Msg:
+    content = "GENERATED"
+
+
+class _FoChoice:
+    finish_reason = "stop"
+    message = _Msg()
+
+
+class _FoUsage:
+    prompt_tokens, completion_tokens, total_tokens = 100, 50, 150
+
+
+class _FoResp:
+    choices = [_FoChoice()]
+    usage = _FoUsage()
+
+
+def _stub_chain(script):
+    """Fake completion consuming one scripted behaviour per call:
+    'ok' returns a response, '429' rate-limits, 'err' raises unclassified."""
+    def fake(**kwargs):
+        step = script.pop(0)
+        if step == "429":
+            raise R.llm_exc.RateLimitError(
+                message="stub 429", llm_provider="stub", model=kwargs["model"])
+        if step == "err":
+            raise RuntimeError("stub provider exploded")
+        return _FoResp()
+    original = R._traced_completion
+    R._traced_completion = fake
+    return lambda: setattr(R, "_traced_completion", original)
+
+
+def _failover_env():
+    os.environ["OBSERVABILITY_ENABLED"] = "false"   # keep stub rows out of metrics.db
+    os.environ["LLM_MIN_INTERVAL_GROQ"] = "0"
+    os.environ["LLM_MIN_INTERVAL_GEMINI"] = "0"
+
+
+def _failover_env_clear():
+    for k in ("OBSERVABILITY_ENABLED", "LLM_MIN_INTERVAL_GROQ", "LLM_MIN_INTERVAL_GEMINI"):
+        os.environ.pop(k, None)
+
+
+def test_failover_onto_scarce_pool_records_cause_and_tokens():
+    """qa: gemini primary errors, groq (scarce) rescues — the QA defect shape.
+    The count carries the cause; the token entry carries the cost."""
+    _reset()
+    _failover_env()
+    from app.observability import degraded
+    restore = _stub_chain(["err", "ok"])
+    try:
+        out = R.call_llm([{"role": "user", "content": "x"}], "qa",
+                         project_id="fo-scarce", use_cache=False, mode="cloud-only")
+        assert out == "GENERATED"
+        events = degraded.drain("fo-scarce")
+        assert events.get("failover:error:gemini->groq") == 1
+        assert events.get("failover_scarce_tokens:groq") == 150
+    finally:
+        restore()
+        _failover_env_clear()
+        _reset()
+
+
+def test_failover_to_non_scarce_pool_has_no_token_entry():
+    _reset()
+    _failover_env()
+    from app.observability import degraded
+    restore = _stub_chain(["err", "ok"])
+    try:
+        R.call_llm([{"role": "user", "content": "x"}], "frontend_code",
+                   project_id="fo-plain", use_cache=False, mode="cloud-only")
+        events = degraded.drain("fo-plain")
+        assert events.get("failover:error:groq->gemini") == 1
+        assert not any(k.startswith("failover_scarce_tokens") for k in events)
+    finally:
+        restore()
+        _failover_env_clear()
+        _reset()
+
+
+def test_rate_limit_failover_is_distinguishable_by_cause():
+    """A 429-driven fallback is the Day 17 design working — counted, but its
+    key must say so, or the counter trains people to ignore it."""
+    _reset()
+    _failover_env()
+    from app.observability import degraded
+    restore = _stub_chain(["429", "429", "ok"])
+    try:
+        R.call_llm([{"role": "user", "content": "x"}], "frontend_code",
+                   project_id="fo-429", use_cache=False, mode="cloud-only")
+        events = degraded.drain("fo-429")
+        assert events.get("failover:rate_limit:groq->gemini") == 1
+    finally:
+        restore()
+        _failover_env_clear()
+        _reset()
+
+
+def test_primary_success_records_no_failover():
+    _reset()
+    _failover_env()
+    from app.observability import degraded
+    restore = _stub_chain(["ok"])
+    try:
+        R.call_llm([{"role": "user", "content": "x"}], "qa",
+                   project_id="fo-clean", use_cache=False, mode="cloud-only")
+        assert degraded.drain("fo-clean") == {}
+    finally:
+        restore()
+        _failover_env_clear()
+        _reset()
+
+
+def test_broken_accounting_cannot_break_a_call():
+    """The guard, proven: even a raising collector must not fail the call."""
+    _reset()
+    _failover_env()
+    from app.observability import degraded
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("accounting exploded")
+
+    original = degraded.record
+    degraded.record = boom
+    restore = _stub_chain(["err", "ok"])
+    try:
+        out = R.call_llm([{"role": "user", "content": "x"}], "qa",
+                         project_id="fo-boom", use_cache=False, mode="cloud-only")
+        assert out == "GENERATED"
+    finally:
+        degraded.record = original
+        restore()
+        _failover_env_clear()
+        _reset()
+
+
 if __name__ == "__main__":
     passed = failed = 0
     for name, fn in sorted(globals().items()):

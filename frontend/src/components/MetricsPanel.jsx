@@ -234,19 +234,31 @@ export default function MetricsPanel({ projectId, compact = false }) {
         </p>
       )}
 
-      {Object.keys(data.degraded_events || {}).length > 0 && (
-        <p className="mt-3 rounded border-l-4 border-warn bg-warn/10 px-3 py-2 text-[11px] text-warn">
-          <span className="font-semibold">
-            {Object.values(data.degraded_events).reduce((a, n) => a + n, 0)} degraded event
-            {Object.values(data.degraded_events).reduce((a, n) => a + n, 0) === 1 ? '' : 's'}
-          </span>{' '}
-          — the run continued in a reduced mode somewhere (
-          {Object.entries(data.degraded_events)
-            .map(([k, n]) => (n > 1 ? `${k} ×${n}` : k))
-            .join(', ')}
-          ). Details on the final review screen.
-        </p>
-      )}
+      {Object.keys(data.degraded_events || {}).length > 0 && (() => {
+        // failover_scarce_tokens:* entries carry token totals, not event
+        // counts — kept out of the sum and phrased as cost instead.
+        const entries = Object.entries(data.degraded_events).filter(([, n]) => n > 0)
+        const tokenEntries = entries.filter(([k]) => k.startsWith('failover_scarce_tokens:'))
+        const countEntries = entries.filter(([k]) => !k.startsWith('failover_scarce_tokens:'))
+        const total = countEntries.reduce((a, [, n]) => a + n, 0)
+        return (
+          <p className="mt-3 rounded border-l-4 border-warn bg-warn/10 px-3 py-2 text-[11px] text-warn">
+            <span className="font-semibold">
+              {total} degraded event{total === 1 ? '' : 's'}
+            </span>{' '}
+            — the run continued in a reduced mode somewhere (
+            {countEntries.map(([k, n]) => (n > 1 ? `${k} ×${n}` : k)).join(', ')}
+            ).{' '}
+            {tokenEntries.map(([k, tokens]) => (
+              <span key={k} className="font-semibold">
+                {tokens.toLocaleString()} tokens landed on {k.split(':')[1]} (scarce pool) via
+                unplanned failover.{' '}
+              </span>
+            ))}
+            Details on the final review screen.
+          </p>
+        )
+      })()}
 
       {(data.truncations || []).length > 0 && (
         <p className="mt-3 rounded border-l-4 border-warn bg-warn/10 px-3 py-2 text-[11px] text-warn">

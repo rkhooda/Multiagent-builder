@@ -695,6 +695,37 @@ def _log_attempt(agent_type: str, model: str, attempt: int, outcome: str, starte
     return entry
 
 
+# Providers whose daily allowance is the binding constraint — the code mirror
+# of the "scarce" designation in docs/PROVIDERS.md; update both together.
+SCARCE_PROVIDERS = {"groq"}
+
+
+def _record_failover(project_id, agent_type, from_model, to_model, cause, usage):
+    """Count a call that succeeded off its first-choice tier (ceiling audit,
+    2026-08-03).
+
+    Fallback is designed behaviour (Day 17), but a failover CAUSED by a defect
+    (output error, timeout) landing on a scarce pool is a defect wearing the
+    safety net's costume — QA starved for weeks exactly this way while every
+    dashboard read healthy. The cause rides in the key so designed causes
+    (rate_limit, budget_exhausted) stay distinguishable from defect-shaped
+    ones, and the token total is recorded when the destination pool is scarce
+    so the cost is a number, not a count. Never raises, never blocks: this is
+    accounting, not routing.
+    """
+    try:
+        from app.observability import degraded
+        to_p = _provider_of(to_model)
+        route = f"{_provider_of(from_model)}->{to_p}"
+        degraded.record(project_id, f"failover:{cause or 'error'}:{route}")
+        if to_p in SCARCE_PROVIDERS:
+            tokens = ((usage or {}).get("prompt_tokens") or 0) + \
+                     ((usage or {}).get("completion_tokens") or 0)
+            degraded.record(project_id, f"failover_scarce_tokens:{to_p}", tokens)
+    except Exception:                           # noqa: BLE001 — accounting must never fail a call
+        pass
+
+
 def call_llm(messages: list, agent_type: str, max_tokens=4000, timeout=None,
              project_id: str = None, label: str = None, fast_mode: bool = False,
              use_cache: bool = True, mode: str = None) -> str:
@@ -750,6 +781,7 @@ def call_llm(messages: list, agent_type: str, max_tokens=4000, timeout=None,
 
     auth_failures = 0
     last_error = None
+    last_failure_outcome = None                 # cause carried into failover accounting
 
     for tier, model in enumerate(chain):
         # A provider whose daily allowance is gone will refuse every request
@@ -764,6 +796,7 @@ def call_llm(messages: list, agent_type: str, max_tokens=4000, timeout=None,
             _log_attempt(agent_type, model, 1, "budget_exhausted", started,
                          project_id=project_id, label=label,
                          context_chars=context_chars)
+            last_failure_outcome = "budget_exhausted"
             continue
 
         is_local = _provider_of(model) == "ollama"
@@ -830,6 +863,9 @@ def call_llm(messages: list, agent_type: str, max_tokens=4000, timeout=None,
                              label=label, context_chars=context_chars,
                              truncated=truncated,
                              cache="miss" if cache_key else None)
+                if tier > 0:
+                    _record_failover(project_id, agent_type, chain[tier - 1],
+                                     model, last_failure_outcome, usage)
                 return content
             except llm_exc.Timeout:
                 last_error = LLMTimeoutError(
@@ -842,16 +878,19 @@ def call_llm(messages: list, agent_type: str, max_tokens=4000, timeout=None,
             except (llm_exc.AuthenticationError, llm_exc.PermissionDeniedError) as e:
                 last_error = LLMAuthError(f"{model} auth failed: {e}", agent_type, model)
                 auth_failures += 1
+                last_failure_outcome = "auth"
                 _log_attempt(agent_type, model, attempt, "auth", started,
                              project_id=project_id, label=label,
                              context_chars=context_chars)
                 break  # bad key never fixes itself — next tier immediately
             except Exception as e:
                 last_error = LLMError(f"{model} failed: {e}", agent_type, model)
+                last_failure_outcome = "error"
                 _log_attempt(agent_type, model, attempt, "error", started,
                              project_id=project_id, label=label,
                              context_chars=context_chars)
                 break  # unclassified (dead slug 404, 5xx, ...) — next tier
+            last_failure_outcome = outcome
             _log_attempt(agent_type, model, attempt, outcome, started,
                          project_id=project_id, label=label,
                          context_chars=context_chars)

@@ -22,13 +22,18 @@ _lock = threading.Lock()
 _events: dict = {}          # project_id -> {event_name: count}
 
 
-def record(project_id: str, event: str) -> None:
-    """Count one degradation. Safe from any thread; never raises."""
-    if not project_id or not event:
+def record(project_id: str, event: str, count: int = 1) -> None:
+    """Count one degradation. Safe from any thread; never raises.
+
+    `count` exists for value-bearing entries (e.g. failover token totals,
+    where the number IS the payload) — same dict, same drain path, no second
+    collector.
+    """
+    if not project_id or not event or count <= 0:
         return
     with _lock:
         bucket = _events.setdefault(project_id, {})
-        bucket[event] = bucket.get(event, 0) + 1
+        bucket[event] = bucket.get(event, 0) + count
 
 
 def drain(project_id: str) -> dict:

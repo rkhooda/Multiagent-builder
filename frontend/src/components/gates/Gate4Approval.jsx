@@ -125,8 +125,22 @@ function degradedLabel(key) {
   if (DEGRADED_LABELS[key]) return DEGRADED_LABELS[key]
   if (key.startsWith('llm_truncated:')) return `Output truncated at token ceiling (${key.split(':')[1]})`
   if (key.startsWith('agent_skipped:')) return `Stage skipped after failure (${key.split(':')[1]})`
+  if (key.startsWith('failover:')) {
+    // failover:{cause}:{from}->{to} — a rate limit or exhausted budget firing
+    // the fallback is the Day 17 design working; any other cause is a defect
+    // wearing the safety net's costume and reads as one.
+    const [, cause, route] = key.split(':')
+    const designed = cause === 'rate_limit' || cause === 'budget_exhausted'
+    return designed
+      ? `Fallback by design (${cause.replace('_', ' ')}): ${route}`
+      : `Unplanned failover (${cause}): ${route}`
+  }
   return key
 }
+
+// failover_scarce_tokens:{provider} entries carry a token total, not an event
+// count — summing them into "N degraded events" would report thousands.
+const isTokenEntry = ([key]) => key.startsWith('failover_scarce_tokens:')
 
 /**
  * Improvement 02 fail-open accounting: every place the pipeline silently
@@ -134,8 +148,10 @@ function degradedLabel(key) {
  * same stance as the quality threshold banner.
  */
 function DegradedEventsBanner({ events }) {
-  const entries = Object.entries(events || {}).filter(([, n]) => n > 0)
-  if (entries.length === 0) return null
+  const all = Object.entries(events || {}).filter(([, n]) => n > 0)
+  const entries = all.filter((e) => !isTokenEntry(e))
+  const tokenEntries = all.filter(isTokenEntry)
+  if (entries.length === 0 && tokenEntries.length === 0) return null
   const total = entries.reduce((a, [, n]) => a + n, 0)
   return (
     <div className="rounded-lg border border-warn/45 bg-warn/10 p-3">
@@ -151,6 +167,12 @@ function DegradedEventsBanner({ events }) {
               <li key={key}>
                 {degradedLabel(key)}
                 {count > 1 && <span className="ml-1 font-semibold">×{count}</span>}
+              </li>
+            ))}
+            {tokenEntries.map(([key, tokens]) => (
+              <li key={key} className="font-semibold">
+                {tokens.toLocaleString()} tokens consumed on {key.split(':')[1]} (scarce pool) by
+                unplanned failover
               </li>
             ))}
           </ul>
