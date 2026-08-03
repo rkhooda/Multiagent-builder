@@ -357,6 +357,72 @@ def qa_agent(state: dict) -> dict:
         raise last_batch_error or RuntimeError(
             f"qa_agent: all {total_batches} review batches failed — nothing was reviewed")
 
+    # ── Files CHANGED after their review (ponytail #1 decision) ──────────────
+    # Streamed reviews saw a snapshot; a Day 22 validation repair (which edits
+    # generated_files without any commit hook) or a QA auto-fix can change the
+    # file afterwards. Default policy: flag possibly_stale in the report —
+    # free and honest, and the realistic delta (a mechanical repair) is exactly
+    # what QA is told not to re-litigate. QA_REREVIEW_CHANGED=true re-reviews
+    # each changed file at most once, reserved through the SAME repair account
+    # (try_reserve_repair) as every other post-generation LLM spend; a denial
+    # is counted as qa_rereview_capped, never silent.
+    possibly_stale = []
+    retry_counts = dict(state.get("retry_counts") or {})
+    stale = sorted(fp for fp, content in generated_files.items()
+                   if fp in reviewed_content and reviewed_content[fp] != content)
+    if stale:
+        rereview = {}
+        if qa_stream_mod.rereview_changed():
+            from ..validation import report as _vreport
+            for fp in stale:
+                allowed, why = _vreport.try_reserve_repair(retry_counts, fp)
+                if allowed:
+                    rereview[fp] = generated_files[fp]
+                else:
+                    degraded.record(project_id, "qa_rereview_capped")
+                    possibly_stale.append(fp)
+                    log.append(f"qa_agent: re-review of changed {fp} withheld ({why})")
+        else:
+            possibly_stale = list(stale)
+            log.append(f"qa_agent: {len(stale)} file(s) changed after review — "
+                       f"flagged possibly stale (QA_REREVIEW_CHANGED off)")
+
+        if rereview:
+            all_issues = [i for i in all_issues if i.get("file") not in rereview]
+            for j, batch in enumerate(_chunk_files(rereview)):
+                batch_files = [f for f, _ in batch]
+                try:
+                    all_issues.extend(review_batch(
+                        batch, automated_block, project_id=project_id,
+                        fast_mode=fast_mode, batch_id=total_batches + j + 1))
+                    log.append(f"qa_agent: re-reviewed changed files {batch_files}")
+                except Exception as e:          # noqa: BLE001 — same tolerance
+                    failed_batches += 1
+                    degraded.record(project_id, "qa_batch_failed")
+                    possibly_stale.extend(batch_files)
+                    errors.append(f"qa_agent: re-review batch failed ({batch_files}): {e}")
+                    print(f"[QAAgent] ERROR: re-review failed: {e}")
+            possibly_stale.sort()
+
+    # ── Non-duplicative report under the new timing ──────────────────────────
+    # Streamed batches were reviewed before the validation node existed, so the
+    # model could not be told about JS findings it hadn't produced yet. Closed
+    # here instead: any QA finding at the same file+line as a mechanical
+    # validation finding is dropped. Batch mode already passes the full report
+    # as context, so it keeps today's behaviour untouched. The Improvement 01
+    # reviewer needs no dedupe in either mode — its verdicts live in
+    # review_results/validation summary and never enter the QA issue list.
+    if stream_stats is not None and (validation_report.get("issues") or []):
+        mechanical = {(i.get("filepath"), str(i.get("line")))
+                      for i in validation_report["issues"]
+                      if i.get("line") is not None}
+        kept = [i for i in all_issues
+                if (i.get("file"), str(i.get("line"))) not in mechanical]
+        if len(kept) != len(all_issues):
+            log.append(f"qa_agent: dropped {len(all_issues) - len(kept)} finding(s) "
+                       "duplicating mechanical validation findings")
+        all_issues = kept
+
     # ── Trivial auto-fix (missing imports / typos only, 1 attempt per file) ──
     auto_fixed_files = []
     fix_attempted_files = set()
@@ -417,6 +483,14 @@ def qa_agent(state: dict) -> dict:
 
     all_issues = sort_findings(all_issues)
     qa_report = _build_report(project_name, len(generated_files), all_issues, auto_fixed_files)
+    if possibly_stale:
+        stale_note = (
+            f"**Possibly Stale Reviews**: {len(possibly_stale)} file(s) changed after "
+            f"review ({', '.join(possibly_stale[:10])}"
+            + (", …" if len(possibly_stale) > 10 else "")
+            + "). Findings for them describe the pre-change content — "
+              "set QA_REREVIEW_CHANGED=true to re-review within the repair budget.")
+        qa_report = qa_report.replace("## Summary\n", f"## Summary\n{stale_note}\n\n", 1)
     # Prepend the automated-checks summary so the Gate 4 QA panel leads with what
     # the machine established deterministically, before the model's opinions.
     summary = render_summary(validation_report)
@@ -442,6 +516,9 @@ def qa_agent(state: dict) -> dict:
         "generated_files": generated_files,
         "qa_report": qa_report,
         "qa_issues_count": qa_issues_count,
+        # Re-reviews of changed files charge the shared repair account, so the
+        # spend must flow back or it is invisible to Gate 4's budget breakdown.
+        "retry_counts": retry_counts,
         "log": log,
         "errors": errors,
         "current_stage": "devops",
