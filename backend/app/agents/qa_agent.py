@@ -9,6 +9,15 @@ BATCH_SIZE = 3
 MAX_BATCH_CHARS = 60000  # ~15K tokens at ~4 chars/token
 MAX_AUTO_FIXES_PER_FILE = 1
 
+# MEASURED, not guessed (2026-08-03, Improvement 02 Task 0). QA's primary,
+# gemini-2.5-flash, is a THINKING model: it spent 2,427-2,740 completion tokens
+# on reasoning per 3-file batch before emitting any answer text, and the worst
+# observed complete response was 4,949 tokens. At the old ceiling of 3,000 the
+# answer intermittently had no room left — surfacing not as a truncation but as
+# an ERROR and a silent groq failover (the Improvement-01 trap one layer down).
+# Locked by test_token_budgets.test_qa_ceiling_covers_measured_requirement.
+QA_MAX_TOKENS = 6000
+
 ISSUE_LINE_RE = re.compile(
     r'^\s*\d+[\.\)]\s*\[(CRITICAL|WARNING|INFO)\](\[TRIVIAL\])?\s*([^\s:]+)(?::(\d+))?\s*[-–]\s*(.+)$',
     re.IGNORECASE | re.MULTILINE
@@ -221,7 +230,7 @@ def qa_agent(state: dict) -> dict:
                 {"role": "user", "content": user_content}
             ]
 
-            raw_output = call_llm(messages, "qa", max_tokens=3000,
+            raw_output = call_llm(messages, "qa", max_tokens=QA_MAX_TOKENS,
                                   project_id=project_id, fast_mode=fast_mode)
             batch_issues = _parse_issues(raw_output, batch_files)
             all_issues.extend(batch_issues)
@@ -271,7 +280,7 @@ def qa_agent(state: dict) -> dict:
                     content=generated_files[filepath]
                 )}
             ]
-            fixed_content = call_llm(fix_messages, "qa", max_tokens=3000,
+            fixed_content = call_llm(fix_messages, "qa", max_tokens=QA_MAX_TOKENS,
                                       project_id=project_id, label=filepath,
                                       fast_mode=fast_mode)
 

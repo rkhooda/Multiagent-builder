@@ -50,16 +50,27 @@ def test_junk_env_is_ignored_not_fatal():
 
 
 def test_fast_mode_scales_agents_with_measured_headroom():
-    assert resolve_max_tokens("qa", 3000, fast_mode=True) == 1500
     assert resolve_max_tokens("database", 2500, fast_mode=True) == 1250
 
 
 def test_fast_mode_never_scales_an_agent_measured_at_its_ceiling():
     """architecture ran 11,996/12,000 and requirements 4,496/4,500 on both
-    calls. Halving those does not shorten the document, it cuts it off."""
+    calls. Halving those does not shorten the document, it cuts it off. qa
+    joined this set 2026-08-03: its gemini primary thinks for 2.4-2.7k tokens
+    before answering, so halving starves the answer, not the reasoning."""
     for agent, budget in (("architecture", 12000), ("requirements", 4500),
-                          ("research", 4500), ("planning", 9000)):
+                          ("research", 4500), ("planning", 9000), ("qa", 6000)):
         assert resolve_max_tokens(agent, budget, fast_mode=True) == budget, agent
+
+
+def test_qa_ceiling_covers_measured_requirement():
+    """Improvement 02 Task 0 (2026-08-03): worst observed complete QA batch
+    response was 4,949 completion tokens (reasoning + answer) on
+    gemini-2.5-flash. An output requirement and its token ceiling ship
+    together — this pins the measured number so they can never again drift
+    apart (the Improvement-01 reviewer shipped 700 against a ~2,000 need)."""
+    from app.agents.qa_agent import QA_MAX_TOKENS
+    assert QA_MAX_TOKENS >= 4949
 
 
 def test_fast_mode_respects_the_floor():

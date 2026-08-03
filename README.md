@@ -135,6 +135,7 @@ is spent, not as a replacement. Details in [docs/USAGE.md](docs/USAGE.md).
 | **[docs/USAGE.md](docs/USAGE.md)** | Writing briefs, the four gates, reading the QA report and metrics, the run modes, using the output |
 | **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** | How the pipeline works, the state object, adding or changing an agent |
 | [docs/OBSERVABILITY.md](docs/OBSERVABILITY.md) | Metrics store and LangSmith tracing |
+| [docs/PROVIDERS.md](docs/PROVIDERS.md) | Dated agent→provider map, daily limits, which limit is scarce — update with every routing change |
 | [docs/INTEGRATION_RESULTS.md](docs/INTEGRATION_RESULTS.md) | Measured quality baselines and known limits |
 | [docs/QUALITY_BASELINE.md](docs/QUALITY_BASELINE.md) | Defect taxonomy and layer attribution |
 | [ROADMAP.md](ROADMAP.md) | Current limitations and where this goes next |

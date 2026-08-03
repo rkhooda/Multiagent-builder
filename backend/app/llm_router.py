@@ -129,7 +129,11 @@ FAST_MODE_FLOOR = 800          # below this even a small file stops mid-function
 # What is left has real headroom (coder files average 356 tokens against 1,500),
 # which is also why fast mode's budget lever is honestly a minor one — the
 # measured wall-clock savings come from skipping the review stages below.
-FAST_MODE_SCALABLE = {"frontend_code", "backend_code", "database", "devops", "qa"}
+# qa was removed 2026-08-03 (Improvement 02): its gemini primary spends
+# 2.4-2.7k completion tokens THINKING per batch before any answer text, so QA
+# has no halving headroom — scaling it re-creates the empty-answer failure the
+# measured QA_MAX_TOKENS exists to prevent. Same logic as the exclusions above.
+FAST_MODE_SCALABLE = {"frontend_code", "backend_code", "database", "devops"}
 
 
 def resolve_max_tokens(agent_type: str, requested: int, fast_mode: bool = False) -> int:
