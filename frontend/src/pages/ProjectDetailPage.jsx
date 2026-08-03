@@ -11,7 +11,7 @@ import Gate2Approval from '../components/gates/Gate2Approval'
 import Gate3Approval from '../components/gates/Gate3Approval'
 import Gate4Approval from '../components/gates/Gate4Approval'
 import ErrorCard from '../components/ErrorCard'
-import PhaseProgress, { derivePhaseProgress } from '../components/PhaseProgress'
+import PhaseProgress, { derivePhaseProgress, deriveQaStream, QaStreamIndicator } from '../components/PhaseProgress'
 import ProjectRecord from '../components/ProjectRecord'
 import { RestartDialog, DeleteDialog } from '../components/LifecycleDialogs'
 import { statusMeta, stageLabel } from '../lib/status'
@@ -684,6 +684,10 @@ export default function ProjectDetailPage() {
                 {phaseProgress.map((p) => (
                   <PhaseProgress key={p.phase} phase={p} />
                 ))}
+                <QaStreamIndicator
+                  qa={deriveQaStream(events)}
+                  generating={phaseProgress.some((p) => !p.complete)}
+                />
               </div>
             )}
             {events.length === 0 && status === 'connecting' ? (

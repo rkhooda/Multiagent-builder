@@ -39,6 +39,42 @@ export function derivePhaseProgress(events) {
   })
 }
 
+// Improvement 02: incremental QA runs DURING generation. Streaming
+// qa_batch_complete events carry monotonic counters, so the latest one is the
+// whole truth — idempotent under reconnect/replay, same principle as the file
+// count snapshots above. Returns null when nothing streamed (batch mode).
+export function deriveQaStream(events) {
+  let latest = null
+  for (const e of events) {
+    if (e.type === 'qa_batch_complete' && e.streaming) latest = e
+  }
+  if (!latest) return null
+  return {
+    reviewed: latest.files_reviewed ?? 0,
+    enqueued: latest.files_enqueued ?? 0,
+    issues: latest.issues_found_so_far ?? 0,
+  }
+}
+
+// Compact companion line under the generation bars — the overlap made visible.
+export function QaStreamIndicator({ qa, generating }) {
+  if (!qa) return null
+  return (
+    <div className="flex items-center gap-1.5 rounded-lg border border-line bg-raised px-4 py-2 text-[11px] text-ink-3">
+      {generating && (
+        <svg className="h-3 w-3 animate-spin text-run" fill="none" viewBox="0 0 24 24">
+          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+        </svg>
+      )}
+      <span className="font-mono">
+        QA: reviewing ({qa.reviewed} of {qa.enqueued} files
+        {qa.issues > 0 ? `, ${qa.issues} issue${qa.issues === 1 ? '' : 's'} so far` : ''})
+      </span>
+    </div>
+  )
+}
+
 const LABELS = { frontend: 'frontend', backend: 'backend', code: 'code' }
 
 export default function PhaseProgress({ phase }) {

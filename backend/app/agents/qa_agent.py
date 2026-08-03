@@ -498,9 +498,30 @@ def qa_agent(state: dict) -> dict:
         qa_report = qa_report.replace("## Summary\n", f"## Summary\n{summary}\n\n", 1)
     qa_issues_count = len(all_issues)
 
+    # ── qa_overlap_ratio: the headline number for Improvement 02 ─────────────
+    # Fraction of review batches that finished before generation ended (the
+    # last file-producing stage's stage_history timestamp). 0.0 in batch mode
+    # by construction — that is the serial tail this change compresses.
+    qa_overlap_ratio = 0.0
+    if stream_stats and total_batches:
+        from datetime import datetime
+        generation_end = None
+        for entry in reversed(state.get("stage_history") or []):
+            if entry.get("stage") in ("backend_code", "database", "frontend_code"):
+                try:
+                    generation_end = datetime.fromisoformat(entry["timestamp"]).timestamp()
+                except (KeyError, TypeError, ValueError):
+                    pass
+                break
+        if generation_end:
+            done_before = sum(1 for r in stream_stats["batch_records"]
+                              if r["ended"] <= generation_end)
+            qa_overlap_ratio = round(done_before / total_batches, 3)
+
     log.append(
         f"qa_agent: completed — {len(generated_files)} files reviewed, "
-        f"{qa_issues_count} issues found, {len(auto_fixed_files)} auto-fixed"
+        f"{qa_issues_count} issues found, {len(auto_fixed_files)} auto-fixed, "
+        f"overlap ratio {qa_overlap_ratio}"
     )
     print(f"[QAAgent] Done. {qa_issues_count} issues found, {len(auto_fixed_files)} auto-fixed")
 
@@ -509,7 +530,8 @@ def qa_agent(state: dict) -> dict:
         "agent": "qa",
         "stage": "qa",
         "output_preview": qa_report[:200],
-        "qa_issues_count": qa_issues_count
+        "qa_issues_count": qa_issues_count,
+        "qa_overlap_ratio": qa_overlap_ratio
     })
 
     return {
@@ -519,6 +541,7 @@ def qa_agent(state: dict) -> dict:
         # Re-reviews of changed files charge the shared repair account, so the
         # spend must flow back or it is invisible to Gate 4's budget breakdown.
         "retry_counts": retry_counts,
+        "qa_overlap_ratio": qa_overlap_ratio,
         "log": log,
         "errors": errors,
         "current_stage": "devops",

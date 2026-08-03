@@ -1299,9 +1299,11 @@ def get_project_metrics(project_id: str):
         values = graph.get_state({"configurable": {"thread_id": project_id}}).values
         summary["fast_mode"] = bool((values or {}).get("fast_mode"))
         summary["degraded_events"] = (values or {}).get("degraded_events") or {}
+        summary["qa_overlap_ratio"] = (values or {}).get("qa_overlap_ratio")
     except Exception:                           # noqa: BLE001 — a panel detail
         summary["fast_mode"] = False
         summary["degraded_events"] = {}
+        summary["qa_overlap_ratio"] = None
     return summary
 
 

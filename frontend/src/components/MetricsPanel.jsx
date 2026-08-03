@@ -141,6 +141,17 @@ export default function MetricsPanel({ projectId, compact = false }) {
           sub={cache.total ? `${cache.hits}/${cache.total}` : 'no data'}
           accent={cache.hits > 0 ? 'text-ok' : undefined}
         />
+        {/* Improvement 02 headline: how much QA finished before generation
+            ended. Shown only when the run actually streamed (batch mode is 0
+            by construction and would just read as noise). */}
+        {data.qa_overlap_ratio > 0 && (
+          <Stat
+            label="QA Overlap"
+            value={`${Math.round(data.qa_overlap_ratio * 100)}%`}
+            sub="reviewed during generation"
+            accent="text-ok"
+          />
+        )}
       </div>
 
       {/* Where the minutes went. Ordered by TOTAL time, not per-call latency:
