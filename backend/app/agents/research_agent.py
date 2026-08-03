@@ -7,6 +7,11 @@ from .search import format_search_results, web_search
 from .utils import build_feedback_prompt, regeneration_target, truncate_for_context
 
 
+# Audited 2026-08-03: saturated doc-writer (measured max 4,496 — fills any
+# budget), a deliberate Day 26 length control, not starvation. Raising it buys
+# longer docs for more tokens, nothing else.
+RESEARCH_MAX_TOKENS = 4500
+
 SYSTEM_PROMPT = (
     Path(__file__).resolve().parents[3] / "prompts" / "research_agent.md"
 ).read_text(encoding="utf-8")
@@ -398,7 +403,7 @@ Quality bar: if a sentence could appear in a report about any software product, 
     # Quality checks + one-shot repair live in the shared validation registry
     # (app/validation.py) — validate_report_quality below is its plug-in.
     report = call_validated(
-        messages, "research", state, max_tokens=4500,
+        messages, "research", state, max_tokens=RESEARCH_MAX_TOKENS,
         original_instruction=(
             f"Every sentence must be specific to {project_name}, not generic advice. "
             f"Write the full corrected report now starting with # Research Report: {project_name}"

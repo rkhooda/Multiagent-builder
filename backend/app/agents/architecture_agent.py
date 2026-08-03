@@ -5,6 +5,10 @@ from ..validation import call_validated
 from .utils import build_feedback_prompt, regeneration_target, truncate_for_context, parse_folder_structure, extract_mermaid_diagrams
 
 
+# Audited 2026-08-03: saturated doc-writer (measured max 11,996, gemini era; no
+# real history yet on the current groq routing) — deliberate length control.
+ARCHITECTURE_MAX_TOKENS = 12000
+
 SYSTEM_PROMPT = (
     Path(__file__).resolve().parents[3] / "prompts" / "architecture_agent.md"
 ).read_text(encoding="utf-8")
@@ -127,7 +131,7 @@ CRITICAL REQUIREMENTS:
         # doc truncated mid-way and failed validation on missing trailing
         # sections, i.e. the sharper prompt produced WORSE output than the vague
         # one. A specificity rule and its token ceiling ship together.
-        messages, "architecture", state, max_tokens=12000,
+        messages, "architecture", state, max_tokens=ARCHITECTURE_MAX_TOKENS,
         original_instruction=(
             "Rewrite the FULL architecture document from scratch. Non-negotiable formatting rules: "
             "use all required markdown headings exactly; close every code fence; keep the folder tree "

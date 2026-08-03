@@ -29,6 +29,11 @@ from .utils import get_tasks_for_phase
 
 SYSTEM_PROMPT = (Path(__file__).resolve().parents[3] / "prompts" / "frontend_coder_agent.md").read_text(encoding="utf-8")
 
+# Audited 2026-08-03: measured max complete file 829 (TaskForm.jsx, groq) —
+# 1.8x headroom. NOTE: 829 also exceeds the old fast-mode floor of 800, which
+# is why FAST_MODE_FLOOR in llm_router is 1000.
+FRONTEND_FILE_MAX_TOKENS = 1500
+
 # Fraction of files that must not-deliver (failed + blocked) before the whole
 # stage is considered broken.
 STAGE_FAIL_THRESHOLD = 0.5
@@ -55,7 +60,7 @@ def _revise(task, content, issues, project_id, file_tree):
     try:
         raw = call_llm(
             [{"role": "user", "content": build_revision_message(filepath, content, issues)}],
-            "frontend_code", max_tokens=1500, project_id=project_id, label=filepath)
+            "frontend_code", max_tokens=FRONTEND_FILE_MAX_TOKENS, project_id=project_id, label=filepath)
     except Exception as e:                        # noqa: BLE001 — fail open
         print(f"[Reviewer] {filepath}: revision call failed, keeping original ({e})", flush=True)
         from app.observability import degraded
@@ -170,7 +175,7 @@ def frontend_coder_agent(state: dict) -> dict:
         ]
         tally = []  # worker-local: no shared-state mutation off the event loop
         raw = call_validated(
-            messages, "frontend_code", state, max_tokens=1500,
+            messages, "frontend_code", state, max_tokens=FRONTEND_FILE_MAX_TOKENS,
             original_instruction="Output ONLY the file's code — no fences, no prose.",
             log=None,
             # Day 22: covers .json artifacts written by this phase. .jsx needs a

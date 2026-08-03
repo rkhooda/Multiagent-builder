@@ -48,7 +48,16 @@ SYSTEM_PROMPT = (Path(__file__).resolve().parents[3] / "prompts"
 # cheaper mistake. Fail-open covered this defect exactly as designed — every
 # truncated review resolved to "pass" and no file was blocked — which is why it
 # showed up as a silent quality loss rather than a broken run.
-REVIEW_MAX_TOKENS = 2000
+#
+# Raised 2000 -> 4000 (ceiling audit, 2026-08-03): 2000 was sized before this
+# slot's gemini-2.5-flash routing was understood to THINK before answering. The
+# audit found every gemini review ever recorded was truncated — 21 at the old
+# 700 ceiling and one at 1,996 against this 2000 one — i.e. no gemini review
+# has ever completed; every complete verdict came from the groq fallback.
+# Basis: reasoning >= 1,996 observed (cut off), same-model QA reasoning
+# measured 2,427-2,740, complete answer <= 335 (groq); 1.2 x (2,740 + 335)
+# ~= 3,690 -> 4000. Pinned by test_token_budgets.
+REVIEW_MAX_TOKENS = 4000
 
 # Reviewing a file needs the file. This bounds what a single pathological
 # generation can cost us in prompt tokens; real components are ~1-3k chars.

@@ -6,6 +6,11 @@ from .utils import get_tasks_for_phase, get_completed_file_content, truncate_for
 
 SYSTEM_PROMPT = (Path(__file__).resolve().parents[3] / "prompts" / "database_agent.md").read_text(encoding="utf-8")
 
+# Audited 2026-08-03: NO real pipeline history (every TodoSimple attempt was
+# rate-limited); standalone dev-script calls measured <= 722. Direct model,
+# generous headroom — truncation flag + failover accounting are the alarm.
+DATABASE_MAX_TOKENS = 2500
+
 
 def database_agent(state: dict) -> dict:
     """
@@ -108,7 +113,7 @@ Generate the complete file content now. Output ONLY the raw file code — no exp
         ]
 
         try:
-            code = call_llm(messages, "database", max_tokens=2500,
+            code = call_llm(messages, "database", max_tokens=DATABASE_MAX_TOKENS,
                             project_id=project_id, label=filepath,
                             fast_mode=fast_mode)
 
@@ -119,7 +124,7 @@ Generate the complete file content now. Output ONLY the raw file code — no exp
                     "role": "user",
                     "content": "Your response was too short or empty. Generate the complete, full file content now."
                 })
-                code = call_llm(messages, "database", max_tokens=2500,
+                code = call_llm(messages, "database", max_tokens=DATABASE_MAX_TOKENS,
                             project_id=project_id, label=filepath,
                             fast_mode=fast_mode)
 

@@ -34,9 +34,17 @@ def _system_prompt() -> str:
     return SYSTEM_PROMPT[:start] + SYSTEM_PROMPT[end:]
 
 
+# Audited 2026-08-03: worst real plan measured 26,894 completion tokens against
+# the 32,000 cap (1.19x headroom). Dynamic per-file sizing, not a flat ceiling.
+PLANNING_MIN_TOKENS = 4500
+PLANNING_TOKENS_PER_FILE = 300
+PLANNING_TOKENS_CAP = 32000
+
+
 def _get_planning_max_tokens(file_count: int) -> int:
     """Scale output budget for large architectures that need one task per file."""
-    return min(32000, max(4500, file_count * 300))
+    return min(PLANNING_TOKENS_CAP,
+               max(PLANNING_MIN_TOKENS, file_count * PLANNING_TOKENS_PER_FILE))
 
 
 def planning_agent(state: dict) -> dict:

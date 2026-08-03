@@ -4,6 +4,10 @@ from pathlib import Path
 from ..validation import call_validated
 from .utils import build_feedback_prompt, extract_tech_stack, regeneration_target, truncate_for_context
 
+# Audited 2026-08-03: saturated doc-writer (measured max 4,496 on both Day 26
+# calls) — a deliberate length control, not starvation.
+REQUIREMENTS_MAX_TOKENS = 4500
+
 SYSTEM_PROMPT = (
     Path(__file__).resolve().parents[3] / "prompts" / "requirements_agent.md"
 ).read_text(encoding="utf-8")
@@ -106,7 +110,7 @@ At the very end of your response, output the tech stack as a JSON code block."""
     # ── LLM call (length/section checks + one repair via the shared registry) ─
     print("[RequirementsAgent] Calling LLM...")
     response = call_validated(
-        messages, "requirements", state, max_tokens=4500,
+        messages, "requirements", state, max_tokens=REQUIREMENTS_MAX_TOKENS,
         original_instruction=(
             "Output the COMPLETE requirements document with every required section — "
             "Functional Requirements (12+ items), Non-Functional Requirements, User Stories (8+), "

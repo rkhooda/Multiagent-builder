@@ -31,6 +31,11 @@ from .utils import get_tasks_for_phase, assert_single_owner
 
 SYSTEM_PROMPT = (Path(__file__).resolve().parents[3] / "prompts" / "backend_coder_agent.md").read_text(encoding="utf-8")
 
+# Audited 2026-08-03: NO real pipeline history (every TodoSimple attempt was
+# rate-limited). Direct model; frontend files (same shape) measured <= 829 —
+# truncation flag + failover accounting are the alarm.
+BACKEND_FILE_MAX_TOKENS = 1500
+
 # Fraction of files that must fail before the whole stage is considered broken.
 STAGE_FAIL_THRESHOLD = 0.5
 
@@ -170,7 +175,7 @@ def backend_coder_agent(state: dict) -> dict:
         ]
         tally = []  # worker-local: no shared-state mutation off the event loop
         raw = call_validated(
-            messages, "backend_code", state, max_tokens=1500,
+            messages, "backend_code", state, max_tokens=BACKEND_FILE_MAX_TOKENS,
             original_instruction="Output ONLY the file's code — no fences, no prose.",
             log=None,
             # Day 22: real ast/compile parse of THIS file, inside the existing

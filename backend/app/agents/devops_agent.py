@@ -5,6 +5,11 @@ from ..utils.file_writer import write_project_file
 
 SYSTEM_PROMPT = (Path(__file__).resolve().parents[3] / "prompts" / "devops_agent.md").read_text(encoding="utf-8")
 
+# Audited 2026-08-03: NO real pipeline history; standalone dev-script calls
+# measured <= 64. Direct model, generous headroom — truncation flag + failover
+# accounting are the alarm.
+DEVOPS_MAX_TOKENS = 2000
+
 # DevOps files are generated as a fixed set, not from the task plan,
 # because every project needs these regardless of what the planner decided
 DEVOPS_FILES = [
@@ -117,7 +122,7 @@ Generate the complete file content now. Output ONLY the raw file content — no 
         ]
 
         try:
-            content = call_llm(messages, "devops", max_tokens=2000,
+            content = call_llm(messages, "devops", max_tokens=DEVOPS_MAX_TOKENS,
                                project_id=project_id, label=filepath,
                                fast_mode=fast_mode)
 
@@ -127,7 +132,7 @@ Generate the complete file content now. Output ONLY the raw file content — no 
                     "role": "user",
                     "content": "Your response was too short. Generate the complete file content now."
                 })
-                content = call_llm(messages, "devops", max_tokens=2000,
+                content = call_llm(messages, "devops", max_tokens=DEVOPS_MAX_TOKENS,
                                project_id=project_id, label=filepath,
                                fast_mode=fast_mode)
 
