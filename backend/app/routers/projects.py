@@ -478,6 +478,7 @@ def serialize_project_state(state_snapshot, project_id: str) -> dict:
         "fix_counts": values.get("fix_counts", {}),
         "retry_counts": values.get("retry_counts", {}),
         "validation_report": values.get("validation_report", {}),
+        "degraded_events": values.get("degraded_events", {}),
         "stage_history": values.get("stage_history", []),
         "current_stage": values.get("current_stage", ""),
         "human_feedback": values.get("human_feedback", ""),
@@ -1049,6 +1050,11 @@ async def recover_project(project_id: str, request: RecoverRequest):
         update["log"] = list(values.get("log") or []) + [
             f"{failed_agent}_agent: SKIPPED after failure — {reason}"
         ]
+        # Improvement 02: a skipped stage is the run's loudest reduced mode —
+        # counted in the same account as every other fail-open path.
+        from app.observability import degraded as _degraded
+        update["degraded_events"] = _degraded.merge(
+            values.get("degraded_events"), {f"agent_skipped:{failed_agent}": 1})
         update["failed_agent"] = ""
         update["failure_context"] = None
         clear_failure(project_id)
@@ -1288,8 +1294,10 @@ def get_project_metrics(project_id: str):
     try:
         values = graph.get_state({"configurable": {"thread_id": project_id}}).values
         summary["fast_mode"] = bool((values or {}).get("fast_mode"))
+        summary["degraded_events"] = (values or {}).get("degraded_events") or {}
     except Exception:                           # noqa: BLE001 — a panel detail
         summary["fast_mode"] = False
+        summary["degraded_events"] = {}
     return summary
 
 

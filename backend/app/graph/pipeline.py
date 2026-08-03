@@ -90,7 +90,11 @@ STAGE_ARTIFACTS = {
     "architecture": {"architecture_doc": "", "file_list": []},
     "planning": {"implementation_plan": "", "excluded_tasks": []},
     "code": {"generated_files": {}, "qa_report": "", "qa_issues_count": 0,
-             "devops_files": {}, "fix_counts": {}, "validation_report": {}},
+             "devops_files": {}, "fix_counts": {}, "validation_report": {},
+             # Improvement 02: a regenerated code phase gets a fresh fail-open
+             # account — stale "QA batch failed" counts from a discarded
+             # generation would misreport the run the user actually downloads.
+             "degraded_events": {}},
 }
 # Doc fields snapshotted into previous_versions before clearing (diff source).
 SNAPSHOT_FIELDS = {"research_report", "requirements_doc", "architecture_doc", "implementation_plan"}
@@ -183,6 +187,18 @@ def stage_node(stage: str, agent_fn):
             result["previous_versions"] = previous_versions
             result["human_feedback"] = ""
             result["human_decision"] = ""
+
+        # Improvement 02: fold any fail-open degradations recorded during this
+        # stage (by workers, the router, or the QA stream — none of which may
+        # touch state) into the run's visible account. One drain point for all
+        # agents; events recorded during a FAILED stage stay in the collector
+        # and are drained by the next stage that completes.
+        from app.observability import degraded
+        pending = degraded.drain(state.get("project_id", ""))
+        if pending:
+            result["degraded_events"] = degraded.merge(
+                degraded.merge(state.get("degraded_events"), pending),
+                result.get("degraded_events"))
 
         # regen_cycle (set at resume, cleared on approve/reject) attributes
         # every stage in a cascade to the decision + gate that triggered it.

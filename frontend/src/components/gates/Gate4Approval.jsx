@@ -108,6 +108,58 @@ function QualityThresholdBanner({ report }) {
   )
 }
 
+// Human-readable labels for degraded_events keys; unknown keys render raw so a
+// new backend event is never invisible while waiting for a label here.
+const DEGRADED_LABELS = {
+  qa_batch_failed: 'QA batch failed (files in it went unreviewed by the model)',
+  qa_stream_fallback: 'QA stream fell back to end-of-run review',
+  qa_stream_stalled: 'QA stream stalled',
+  qa_rereview_capped: 'File changed after review, re-review withheld (cap)',
+  validation_js_unavailable: 'JS deep validation unavailable — heuristic only',
+  review_failed_open: 'Reviewer failed open (file treated as pass)',
+  revision_failed_open: 'Revision call failed (original kept)',
+  revision_withheld_budget: 'Revision withheld (repair budget)',
+}
+
+function degradedLabel(key) {
+  if (DEGRADED_LABELS[key]) return DEGRADED_LABELS[key]
+  if (key.startsWith('llm_truncated:')) return `Output truncated at token ceiling (${key.split(':')[1]})`
+  if (key.startsWith('agent_skipped:')) return `Stage skipped after failure (${key.split(':')[1]})`
+  return key
+}
+
+/**
+ * Improvement 02 fail-open accounting: every place the pipeline silently
+ * continued in a reduced mode, counted and shown. WARNS, never blocks —
+ * same stance as the quality threshold banner.
+ */
+function DegradedEventsBanner({ events }) {
+  const entries = Object.entries(events || {}).filter(([, n]) => n > 0)
+  if (entries.length === 0) return null
+  const total = entries.reduce((a, [, n]) => a + n, 0)
+  return (
+    <div className="rounded-lg border border-warn/45 bg-warn/10 p-3">
+      <div className="flex items-start gap-2">
+        <span aria-hidden="true" className="text-base leading-none">⚠</span>
+        <div className="flex-1">
+          <p className="text-sm font-semibold text-warn">
+            {total} degraded event{total === 1 ? '' : 's'}: parts of this run continued in a
+            reduced mode.
+          </p>
+          <ul className="mt-1 space-y-0.5 text-xs text-warn">
+            {entries.map(([key, count]) => (
+              <li key={key}>
+                {degradedLabel(key)}
+                {count > 1 && <span className="ml-1 font-semibold">×{count}</span>}
+              </li>
+            ))}
+          </ul>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function SummaryCard({ filesData, projectState, severityCounts }) {
   const totalIssues = severityCounts.critical + severityCounts.warnings + severityCounts.info
   const models = [...new Set(Object.values(projectState?.agent_models || {}))]
@@ -425,6 +477,7 @@ export default function Gate4Approval({ projectId, projectState, status, onResum
       )}
 
       <QualityThresholdBanner report={projectState?.validation_report} />
+      <DegradedEventsBanner events={projectState?.degraded_events} />
 
       <SummaryCard filesData={filesData} projectState={projectState} severityCounts={severityCounts} />
 

@@ -223,6 +223,8 @@ def validation_pass(state: dict) -> dict:
         print(f"[Validation] DEGRADED: {note}", flush=True)
         log.append(f"validation_pass: {note}")
         errors.append(f"validation: {note}")
+        from ..observability import degraded
+        degraded.record(project_id, "validation_js_unavailable")
         for path, content in generated_files.items():
             found = js_syntax_heuristic(content or "", path)
             if found:

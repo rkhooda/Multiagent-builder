@@ -58,6 +58,8 @@ def _revise(task, content, issues, project_id, file_tree):
             "frontend_code", max_tokens=1500, project_id=project_id, label=filepath)
     except Exception as e:                        # noqa: BLE001 — fail open
         print(f"[Reviewer] {filepath}: revision call failed, keeping original ({e})", flush=True)
+        from app.observability import degraded
+        degraded.record(project_id, "revision_failed_open")
         return None
 
     clean = strip_code_fences(raw)
@@ -214,6 +216,8 @@ def frontend_coder_agent(state: dict) -> dict:
             # says out loud that the coder prompt or architecture needs work.
             processed.review["skipped_reason"] = f"revision_{why}"
             print(f"[Reviewer] {filepath}: revision withheld ({why})", flush=True)
+            from app.observability import degraded
+            degraded.record(project_id, "revision_withheld_budget")
             return processed
 
         revised = _revise(task, processed.content, result.blocking_issues,

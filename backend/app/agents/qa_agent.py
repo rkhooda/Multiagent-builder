@@ -247,6 +247,8 @@ def qa_agent(state: dict) -> dict:
             error_msg = f"qa_agent: batch {i + 1}/{len(batches)} failed ({batch_files}): {e}"
             errors.append(error_msg)
             print(f"[QAAgent] ERROR: {error_msg}")
+            from ..observability import degraded
+            degraded.record(project_id, "qa_batch_failed")
 
         manager.broadcast_sync(project_id, {
             "type": "qa_batch_complete",

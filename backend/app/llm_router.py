@@ -679,6 +679,10 @@ def _log_attempt(agent_type: str, model: str, attempt: int, outcome: str, starte
               f" ({entry.get('completion_tokens')} tokens, model={model}"
               f"{', ' + label if label else ''}) — raise its max_tokens",
               flush=True)
+        # Improvement 02: a truncation is a silent degradation — the run keeps
+        # going with a cut-off artifact. Counted per run, not only logged.
+        from app.observability import degraded
+        degraded.record(project_id, f"llm_truncated:{agent_type}")
     metrics_store.record_agent_run(
         agent=agent_type, model=model, attempt=attempt, outcome=outcome,
         project_id=project_id, label=label, context_chars=context_chars,

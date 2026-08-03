@@ -211,6 +211,8 @@ def review_file(task: dict, content: str, generation_context: str, state: dict,
         )
     except Exception as e:                        # noqa: BLE001 — fail open, always
         print(f"[Reviewer] {filepath}: review failed, treating as pass ({e})", flush=True)
+        from app.observability import degraded
+        degraded.record(state.get("project_id", ""), "review_failed_open")
         return ReviewResult(reviewed=False, skipped_reason=f"review_failed: {str(e)[:120]}")
 
     data, error = extract_verdict_json(raw)
@@ -218,6 +220,8 @@ def review_file(task: dict, content: str, generation_context: str, state: dict,
         # Belt and braces: the validator should have caught this and repaired it,
         # so reaching here means both attempts produced unparseable output.
         print(f"[Reviewer] {filepath}: unparseable verdict after repair ({error})", flush=True)
+        from app.observability import degraded
+        degraded.record(state.get("project_id", ""), "review_failed_open")
         return ReviewResult(reviewed=False, skipped_reason="unparseable_verdict")
 
     result = _normalise(data)

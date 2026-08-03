@@ -25,6 +25,7 @@ class ProjectState(TypedDict):
     fix_counts: Dict[str, int]     # filepath -> AI fixes applied at gate 4 (capped per file)
     validation_report: dict        # Day 22 automated-checks report (counts, issues, failure_rate)
     review_results: Dict[str, dict]  # filepath -> {reviewed, verdict, issues_found, revised} (Improvement 01)
+    degraded_events: Dict[str, int]  # event -> count of silent fail-open degradations (Improvement 02)
 
     # Control fields
     replan_after_architecture: bool  # set on gate-3 'back' rerun: skip gate 2, flow straight to planning

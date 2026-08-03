@@ -223,6 +223,20 @@ export default function MetricsPanel({ projectId, compact = false }) {
         </p>
       )}
 
+      {Object.keys(data.degraded_events || {}).length > 0 && (
+        <p className="mt-3 rounded border-l-4 border-warn bg-warn/10 px-3 py-2 text-[11px] text-warn">
+          <span className="font-semibold">
+            {Object.values(data.degraded_events).reduce((a, n) => a + n, 0)} degraded event
+            {Object.values(data.degraded_events).reduce((a, n) => a + n, 0) === 1 ? '' : 's'}
+          </span>{' '}
+          — the run continued in a reduced mode somewhere (
+          {Object.entries(data.degraded_events)
+            .map(([k, n]) => (n > 1 ? `${k} ×${n}` : k))
+            .join(', ')}
+          ). Details on the final review screen.
+        </p>
+      )}
+
       {(data.truncations || []).length > 0 && (
         <p className="mt-3 rounded border-l-4 border-warn bg-warn/10 px-3 py-2 text-[11px] text-warn">
           <span className="font-semibold">
