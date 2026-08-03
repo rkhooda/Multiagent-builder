@@ -1,13 +1,21 @@
+import os
 import re
+import time
 from pathlib import Path
 from ..llm_router import call_llm
 from ..utils.file_writer import write_project_file
 
 SYSTEM_PROMPT = (Path(__file__).resolve().parents[3] / "prompts" / "qa_agent.md").read_text(encoding="utf-8")
 
-BATCH_SIZE = 3
 MAX_BATCH_CHARS = 60000  # ~15K tokens at ~4 chars/token
 MAX_AUTO_FIXES_PER_FILE = 1
+
+
+def qa_batch_size() -> int:
+    """Batch size 3 is load-bearing for cost: per-file review would triple the
+    call count. Read at call time so tests and operators can tune it."""
+    env = os.getenv("QA_BATCH_SIZE") or ""
+    return max(1, int(env)) if env.strip().isdigit() else 3
 
 # MEASURED, not guessed (2026-08-03, Improvement 02 Task 0). QA's primary,
 # gemini-2.5-flash, is a THINKING model: it spent 2,427-2,740 completion tokens
@@ -50,13 +58,15 @@ Fix ONLY this trivial issue (missing import or typo). Do not change any other lo
 
 
 def _chunk_files(generated_files: dict) -> list:
-    """Split files into batches of up to BATCH_SIZE; oversized files get their own batch."""
-    items = list(generated_files.items())
+    """Split files into batches of up to qa_batch_size(); oversized files get
+    their own batch. The identical rule drives the incremental stream's
+    should_flush, so batch composition — and therefore call count — is the same
+    whether files arrive all at once or one commit at a time."""
     batches = []
     current = []
     current_chars = 0
 
-    for filepath, content in items:
+    for filepath, content in generated_files.items():
         content = content or ""
         content_len = len(content)
 
@@ -68,7 +78,7 @@ def _chunk_files(generated_files: dict) -> list:
             batches.append([(filepath, content)])
             continue
 
-        if len(current) >= BATCH_SIZE or (current and current_chars + content_len > MAX_BATCH_CHARS):
+        if len(current) >= qa_batch_size() or (current and current_chars + content_len > MAX_BATCH_CHARS):
             batches.append(current)
             current = []
             current_chars = 0
@@ -128,6 +138,51 @@ def _parse_issues(raw_output: str, batch_files: list) -> list:
     return issues
 
 
+def review_batch(batch: list, automated_block: str, *, project_id: str = "",
+                 fast_mode: bool = False, batch_id: int = 0) -> list:
+    """Review ONE batch of (filepath, content) pairs. PURE with respect to
+    shared state: no state mutation, no broadcasts — callable from the QA node
+    or from the incremental stream's consumer thread, at any time. Raises on
+    LLM failure; the caller owns the per-batch tolerance (count the degraded
+    event, log, continue).
+
+    Findings carry identity for out-of-order aggregation: batch_id and
+    reviewed_at (epoch seconds — reviewed_at vs generation end is what the
+    qa_overlap_ratio is computed from). sort_findings() makes the final report
+    independent of completion order.
+    """
+    batch_files = [f for f, _ in batch]
+    user_content = REVIEW_INSTRUCTION.format(
+        files_block=_format_files_block(batch),
+        automated_block=automated_block or "")
+    messages = [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "user", "content": user_content},
+    ]
+    raw_output = call_llm(messages, "qa", max_tokens=QA_MAX_TOKENS,
+                          project_id=project_id, fast_mode=fast_mode,
+                          label=f"qa_batch:{batch_id}")
+    issues = _parse_issues(raw_output, batch_files)
+    reviewed_at = time.time()
+    for issue in issues:
+        issue["batch_id"] = batch_id
+        issue["reviewed_at"] = reviewed_at
+    return issues
+
+
+def sort_findings(issues: list) -> list:
+    """Deterministic order regardless of batch completion order: same findings
+    in, byte-identical report text out."""
+    def key(issue):
+        try:
+            line = int(issue.get("line") or 0)
+        except (TypeError, ValueError):
+            line = 0
+        return (issue.get("file") or "", line,
+                issue.get("severity") or "", issue.get("description") or "")
+    return sorted(issues, key=key)
+
+
 def _build_report(project_name: str, files_reviewed: int, issues: list, auto_fixed_files: list) -> str:
     critical = [i for i in issues if i["severity"] == "CRITICAL"]
     warnings = [i for i in issues if i["severity"] == "WARNING"]
@@ -175,9 +230,9 @@ def qa_agent(state: dict) -> dict:
     Writes: state['qa_report'], state['qa_issues_count'], state['generated_files']
             (trivial auto-fixes applied), state['log'], state['errors']
 
-    Uses DeepSeek R1 via OpenRouter — a slower reasoning model well suited for
-    code review. Reviews files in batches of 3, tolerating individual batch
-    failures without failing the whole stage.
+    Routing lives in docs/PROVIDERS.md (gemini-2.5-flash primary as of
+    2026-08-03). Reviews files in batches (qa_batch_size, default 3),
+    tolerating individual batch failures without failing the whole stage.
     """
     generated_files = state.get("generated_files", {})
     project_name = state.get("project_name", "Unknown Project")
@@ -222,17 +277,9 @@ def qa_agent(state: dict) -> dict:
         print(f"[QAAgent] Reviewing batch {i + 1}/{len(batches)}: {batch_files}")
 
         try:
-            user_content = REVIEW_INSTRUCTION.format(
-                files_block=_format_files_block(batch),
-                automated_block=automated_block)
-            messages = [
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": user_content}
-            ]
-
-            raw_output = call_llm(messages, "qa", max_tokens=QA_MAX_TOKENS,
-                                  project_id=project_id, fast_mode=fast_mode)
-            batch_issues = _parse_issues(raw_output, batch_files)
+            batch_issues = review_batch(batch, automated_block,
+                                        project_id=project_id,
+                                        fast_mode=fast_mode, batch_id=i + 1)
             all_issues.extend(batch_issues)
 
             log.append(f"qa_agent: batch {i + 1}/{len(batches)} reviewed ({len(batch_issues)} issues found)")
@@ -318,6 +365,7 @@ def qa_agent(state: dict) -> dict:
             "description": (desc or body).strip(),
         })
 
+    all_issues = sort_findings(all_issues)
     qa_report = _build_report(project_name, len(generated_files), all_issues, auto_fixed_files)
     # Prepend the automated-checks summary so the Gate 4 QA panel leads with what
     # the machine established deterministically, before the model's opinions.
