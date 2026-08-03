@@ -288,6 +288,25 @@ default to off**, so out of the box you get exact v1.0 behaviour.
 validation warnings, and high-complexity tasks — roughly a quarter of a file
 set, not all of it. `all` is for measurement only.
 
+### Incremental QA (server-wide, in `backend/.env`)
+
+Improvement 02: QA can review files in batches **while generation is still
+running** instead of as a serial tail after the last file. Same batches, same
+call count, same report — most of the reviewing just finishes earlier, and the
+metrics panel shows a "QA Overlap" percentage.
+
+| Variable | Default | What it does |
+|---|---|---|
+| `QA_MODE` | `batch` | `batch` \| `incremental`. `batch` is exact pre-Improvement-02 behaviour — the rollback and A/B control in one switch |
+| `QA_BATCH_SIZE` | `3` | Files per review call. Smaller means more calls — 1 would triple the cost |
+| `QA_CONCURRENCY` | `1` | Concurrent review calls in incremental mode |
+| `QA_REREVIEW_CHANGED` | `false` | Re-review a file changed after its review (one re-review per file, spending the shared repair budget). Off, changed files are flagged "possibly stale" in the QA report for free |
+
+> **Why batch by default.** Same reason as the table above: the keep rule
+> requires a measured tail-span win, and the phase-scoped A/B needs ~5× the
+> daily allowance of the provider that binds. Ships unproven, defaults to the
+> old behaviour, pinned by a test. See `docs/IMPROVEMENT_02_RESULTS.md`.
+
 Two things worth knowing before you turn this up:
 
 - **Revisions spend the repair budget.** They draw from the same

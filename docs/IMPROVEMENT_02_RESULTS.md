@@ -85,11 +85,54 @@ not. The control arm of the Task 6 phase-scoped replay IS the baseline.
 - **qa_issues_count on current routing:** no trustworthy sample exists (see
   inventory). The Task 6 control arm must record it.
 
-## Task 6 — Measurement
+## Task 6 — Measurement (2026-08-03)
 
-*(to be filled after implementation; per-arm cost estimate must be written
-BEFORE the runs)*
+### What shipped, and what the correctness evidence says
 
-## Verdict
+- 18 offline correctness tests (`tests/test_qa_stream.py`), zero API calls, all
+  green; full offline gate 19/19; golden rescore 7/7. Call-count flatness is
+  proven structurally: the stream batches by `_chunk_files`' exact rules over
+  commit order, and `test_batch_mode_reviews_end_of_run_with_identical_chunks`
+  pins batch composition.
+- Shipped default is `QA_MODE=batch` (exact pre-change behaviour), pinned by
+  `test_qa_mode_defaults_to_batch`.
 
-*(KEEP / REVERT / UNPROVEN — recorded after measurement)*
+### Per-arm cost estimate — written before any run, and it kills the run
+
+The phase-scoped replay (generation phases + QA only, both arms from the one
+persisted Gate-3-approved plan, TodoSimple `2901fb46`):
+
+- Plan: **86 file-producing tasks** (47 frontend + 11 database + 28 backend).
+- Measured per-file coder cost on groq (ok calls, this very project's history):
+  2,637 prompt + 350 completion ≈ **3.0k tokens/file**.
+- One arm's generation ≈ 86 × 3.0k ≈ **257k groq tokens** — *before* retries
+  and repairs (the original run burned >100k on the frontend phase alone once
+  retry storms started). Two arms ≈ **515k groq tokens**.
+- Groq's daily allowance — the scarce pool per [PROVIDERS.md](PROVIDERS.md) —
+  is **100k tokens/day**. One arm is ~2.6× a full day; the pair is ~5×.
+- QA itself is not the constraint: ~29 batches/arm ≈ 160–220k gemini
+  tokens/day against a 1M allowance.
+- Spreading one arm across 3+ UTC days does not rescue it: the measured
+  quantity is a *timing span*, and multi-day rate-limit stalls would dominate
+  generation-end → QA-end, making the number meaningless rather than merely
+  noisy. Per the brief's rule: say so with the arithmetic and stop — no
+  substitute brief, no partial arm.
+
+## Verdict: UNPROVEN (recorded 2026-08-03)
+
+The code ships dark: `QA_MODE=batch` is the default, the 18 correctness tests
+stand, and no efficiency claim is made without a number.
+
+**What would settle it** (estimated 515k groq + 440k gemini tokens total):
+replay ONLY the code-generation phases + QA from the frozen `2901fb46` plan,
+control (`QA_MODE=batch`) and treatment (`QA_MODE=incremental`) as two
+single-day runs — which requires either a paid/raised groq tier, or moving the
+coders to a pool with ≥300k tokens/day headroom (re-verify PROVIDERS.md
+first). Compare: generation-end → QA-end span, total wall-clock, QA call count
+(must be flat), QA tokens, `qa_overlap_ratio`, and `qa_issues_count` +
+severity mix (watch for the narrower-context quality trap: early batches see
+less of the codebase than one end-of-run pass — if issue count drops, report
+the trade, not just the speedup).
+
+**Review-by: 2026-08-17.** Measure by then, or delete the incremental code
+path — shipped-but-off code rots quietly while everything around it moves.
