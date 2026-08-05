@@ -42,6 +42,10 @@ function Stat({ label, value, sub, accent }) {
 export default function MetricsPanel({ projectId, compact = false }) {
   const [data, setData] = useState(null)
   const [error, setError] = useState(null)
+  // Collapsed by default: the full breakdown (stat grid, time chart, provider
+  // budget, per-agent table) can run taller than the generated-files view it
+  // sits above, so it starts out of the way and expands on request.
+  const [collapsed, setCollapsed] = useState(true)
 
   useEffect(() => {
     if (!projectId) return
@@ -120,16 +124,25 @@ export default function MetricsPanel({ projectId, compact = false }) {
             </span>
           )}
         </h3>
-        <span className="text-[10px] text-ink-3">
+        <span className="flex items-center gap-3 text-[10px] text-ink-3">
           {data.attempts} attempt{data.attempts === 1 ? '' : 's'}
           {data.failed_attempts > 0 && ` · ${data.failed_attempts} failed`}
           {/* Distinct from failed: a tier passed over because its daily budget
               was gone, with no request sent. Every local call skips both cloud
               tiers, so lumping these in read as a broken run. */}
           {data.skipped_attempts > 0 && ` · ${data.skipped_attempts} skipped`}
+          <button
+            type="button"
+            onClick={() => setCollapsed((value) => !value)}
+            className="font-mono text-[10px] font-semibold uppercase tracking-wider text-accent"
+          >
+            {collapsed ? 'Expand' : 'Collapse'}
+          </button>
         </span>
       </div>
 
+      {!collapsed && (
+      <>
       <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
         <Stat label="Total Tokens" value={fmt(data.total_tokens)} accent="text-accent" />
         <Stat label="Input Tokens" value={fmt(data.prompt_tokens)} sub="prompt" />
@@ -333,6 +346,8 @@ export default function MetricsPanel({ projectId, compact = false }) {
           </table>
         </div>
         </DesktopOnly>
+      )}
+      </>
       )}
     </div>
   )
