@@ -19,6 +19,7 @@ from app.agents.validation_pass import validation_pass
 from app.agents.frontend_coder_agent import frontend_coder_agent
 from app.agents.backend_coder_agent import backend_coder_agent
 from app.agents.utils import regeneration_target
+from app.utils.file_writer import write_project_file
 
 def human_gate_1(state: ProjectState) -> Dict:
     # Empty pass-through function. LangGraph pauses before this node.
@@ -134,6 +135,31 @@ STAGE_PRIMARY_OUTPUT = {
     "planning": "implementation_plan",
 }
 
+# Stage -> (output field, docs/ filename) mirrored to outputs/{project_id}/docs/
+# as markdown so the existing ZIP/PDF export picks them up from gate 1 onward,
+# not just after code generation writes files. planning's field is JSON, not
+# prose, so it gets fenced rather than written raw.
+STAGE_DOC_FILE = {
+    "research": ("research_report", "research.md"),
+    "requirements": ("requirements_doc", "requirements.md"),
+    "architecture": ("architecture_doc", "architecture.md"),
+    "planning": ("implementation_plan", "implementation-plan.md"),
+    "qa": ("qa_report", "qa-report.md"),
+}
+
+
+def _persist_stage_doc(stage: str, project_id: str, result: dict) -> None:
+    spec = STAGE_DOC_FILE.get(stage)
+    if not spec or not project_id:
+        return
+    field, filename = spec
+    content = result.get(field)
+    if not content:
+        return
+    if stage == "planning":
+        content = f"# Implementation Plan\n\n```json\n{content}\n```\n"
+    write_project_file(project_id, f"docs/{filename}", content, add_header=False)
+
 def invalidate_downstream(state: dict, from_stage: str) -> dict:
     """State update that marks everything produced AFTER from_stage stale:
     snapshots doc artifacts into previous_versions (last snapshot only) and
@@ -228,6 +254,9 @@ def stage_node(stage: str, agent_fn):
                 entry["trigger"] = "partial"
         history.append(entry)
         result["stage_history"] = history
+
+        _persist_stage_doc(stage, state.get("project_id", ""), result)
+
         return result
     node.__name__ = f"{stage}_node"
     return node

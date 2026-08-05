@@ -523,6 +523,13 @@ export default function ProjectDetailPage() {
               {fileCount} files generated
             </span>
           )}
+          <a
+            href={`/api/projects/${projectId}/download`}
+            title="Download everything generated so far — docs and code — as a ZIP"
+            className="rounded border border-run/35 bg-overlay px-3 py-1.5 text-xs font-semibold text-ink-2 transition-colors hover:text-ink"
+          >
+            ⬇ Export
+          </a>
           <button
             type="button"
             onClick={() => setRestarting(true)}
