@@ -1,6 +1,6 @@
 # Provider Map — Single Source of Truth
 
-**Dated: 2026-08-03.** This table is transcribed from the live `MODELS` dict in
+**Dated: 2026-08-05.** This table is transcribed from the live `MODELS` dict in
 `backend/app/llm_router.py`, which is the only authority. **Update this file in
 the same commit as any routing change.** Routing has drifted twice and silently
 invalidated design premises both times (Day 23: qwen3-coder:free delisted, both
@@ -20,8 +20,42 @@ a dated map is what stops a third silent drift.
 | qa | gemini-2.5-flash | groq llama-3.3-70b | Gemini 1M tokens/day |
 | devops | groq llama-3.3-70b | gemini-2.5-flash | **Groq 100k tokens/day (scarce)** |
 
-A third local tier (Ollama, unmetered) is appended to every chain when a local
-daemon is detected; `LLM_MODE=prefer-local` puts it first.
+## NVIDIA NIM — third fallback tier (Day 31)
+
+Once primary and fallback are both spent, the chain now has a third *cloud*
+tier before falling through to local Ollama, drawn from NVIDIA's
+build.nvidia.com catalog behind a free-credit key (`NVIDIA_API_KEY` in
+`backend/.env`, bridged to litellm's expected `NVIDIA_NIM_API_KEY` at load
+time). Both models in each list below are spliced into the chain, in order —
+not just the first — so a rate limit on the better NVIDIA model still falls
+through to the second before reaching Ollama.
+
+| Category | Agents | Chain (best → worst) |
+|---|---|---|
+| Code | architecture, frontend_code, backend_code, database, devops | `nvidia_nim/qwen/qwen2.5-coder-32b-instruct` → `nvidia_nim/deepseek-ai/deepseek-r1-distill-qwen-32b` |
+| Prose/judgment | research, requirements, planning, qa, frontend_review | `nvidia_nim/deepseek-ai/deepseek-r1` → `nvidia_nim/qwen/qwen2.5-72b-instruct` |
+
+**DeepSeek R1 carries the same reasoning-model risk already documented below
+for nemotron**: it can ignore `max_tokens` and spend the whole budget on
+hidden reasoning before any answer text. That is why it sits at tier 3
+(last-resort), never primary/fallback. Its distilled sibling
+(`deepseek-r1-distill-qwen-32b`, used for code) has shorter reasoning chains
+than the flagship and is lower-risk, but not risk-free.
+
+NVIDIA's free tier is **credit-based**, not a renewing daily quota like
+Groq/Gemini's — `llm_router.py` currently tracks it as untracked (no daily
+ceiling) because no refusal has been observed yet to calibrate a real number
+against. Revisit once one is.
+
+Model slugs above are best-effort from the public NIM catalog, not verified
+live. If one is wrong or delisted, the existing "unclassified error → next
+tier" handling already degrades gracefully — this is exactly how the delisted
+`openrouter/qwen3-coder:free` was survived (Day 23, above).
+
+A fourth, local tier (Ollama, unmetered) is appended to every chain when a
+local daemon is detected; `LLM_MODE=prefer-local` puts it first, ahead of
+every cloud tier including NVIDIA. `LLM_MODE=cloud-only` excludes only Ollama
+— NVIDIA stays in, since it is cloud too.
 
 ## Which limit is currently scarce
 

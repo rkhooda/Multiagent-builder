@@ -15,6 +15,12 @@ from app.observability import llm_cache, metrics_store
 # Load environment variables from the parent directory of backend/app (i.e. backend/.env)
 load_dotenv(dotenv_path=os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env"))
 
+# litellm's nvidia_nim provider reads NVIDIA_NIM_API_KEY specifically, not the
+# NVIDIA_API_KEY name used everywhere else in this project's .env — bridge it
+# once here so backend/.env only needs the one consistent key name.
+if os.getenv("NVIDIA_API_KEY") and not os.getenv("NVIDIA_NIM_API_KEY"):
+    os.environ["NVIDIA_NIM_API_KEY"] = os.environ["NVIDIA_API_KEY"]
+
 MODELS = {
     "research":     ("gemini/gemini-2.5-flash", "groq/llama-3.3-70b-versatile"),
     "requirements": ("gemini/gemini-2.5-flash", "openrouter/cohere/north-mini-code:free"),
@@ -207,6 +213,10 @@ _PACE_DEFAULTS = {
     "gemini": 6.5,   # ~10 RPM free tier
     "groq": 8.0,     # TPM-bound; empirically survivable for ~4k-token calls
     "openrouter": 3.0,
+    # Conservative default, unmeasured — no observed-429 data yet for this
+    # newly added tier. Zero pacing on a brand-new tier risks an immediate 429
+    # storm on first real use. Tune via LLM_MIN_INTERVAL_NVIDIA_NIM.
+    "nvidia_nim": 2.0,
     "ollama": 0.0,   # local, unmetered
 }
 _pace_lock = threading.Lock()
@@ -298,6 +308,11 @@ _DAILY_TOKEN_LIMITS = {
     "groq": 100_000,        # observed refusal: "tokens per day (TPD): Limit 100000"
     "gemini": 1_000_000,    # generous free daily ceiling; tracked, rarely binding
     "openrouter": 0,        # 0 = untracked: OpenRouter free tier limits REQUESTS
+    # 0 = untracked: no observed daily refusal to calibrate a real number
+    # against yet. NVIDIA NIM's free tier is credit-based rather than a
+    # renewing daily quota like Groq/Gemini, so "daily ceiling" may not even
+    # be the right frame once those credits run out — revisit if/when it is.
+    "nvidia_nim": 0,
     "ollama": 0,            # local, unmetered
 }
 _MAX_BACKOFF_FACTOR = 8.0
@@ -466,6 +481,39 @@ LOCAL_FALLBACKS.update({agent: _LOCAL_PROSE for agent in
                         ("research", "requirements", "architecture", "planning", "qa",
                          # Reviewing is judgement + strict JSON, not code emission.
                          "frontend_review")})
+
+
+# ── NVIDIA NIM tier (third cloud fallback, Day 31) ───────────────────────────
+# Groq's 100k tokens/day is the binding constraint (docs/PROVIDERS.md) — once
+# it and Gemini are both spent, the chain had nowhere left to go but Ollama.
+# NVIDIA's build.nvidia.com catalog hosts strong open models behind a
+# free-credit API key as a third cloud tier. Both entries per list are spliced
+# into the chain (not just the first) so a rate limit on the best NVIDIA model
+# still has a second one to fall through to before Ollama — same reasoning
+# call_llm already applies to primary/fallback.
+#
+# Slugs are best-effort from the public NIM catalog, not verified live. If one
+# is wrong or delisted, call_llm's existing "unclassified error -> next tier"
+# handling already degrades gracefully — this is exactly how the delisted
+# openrouter/qwen3-coder:free was survived (see MODELS above).
+NVIDIA_CODE = [
+    "nvidia_nim/qwen/qwen2.5-coder-32b-instruct",          # purpose-built coder, non-reasoning
+    "nvidia_nim/deepseek-ai/deepseek-r1-distill-qwen-32b",  # DeepSeek lineage; distilled, so
+                                                             # shorter reasoning chains than the
+                                                             # flagship R1 below
+]
+NVIDIA_PROSE = [
+    # Flagship reasoning model — SAME failure class as the nemotron model
+    # already demoted off QA (Day 26, docs/PROVIDERS.md): can ignore
+    # max_tokens and spend the whole budget on hidden reasoning before any
+    # answer text. Kept as a last-resort tier only, never primary/fallback.
+    "nvidia_nim/deepseek-ai/deepseek-r1",
+    "nvidia_nim/qwen/qwen2.5-72b-instruct",  # non-reasoning general instruct, safe last resort
+]
+NVIDIA_FALLBACKS = {agent: NVIDIA_CODE for agent in
+                    ("frontend_code", "backend_code", "database", "devops", "architecture")}
+NVIDIA_FALLBACKS.update({agent: NVIDIA_PROSE for agent in
+                         ("research", "requirements", "planning", "qa", "frontend_review")})
 
 
 # Local generation is slow enough that the cloud timeouts are a guillotine: the
@@ -742,6 +790,9 @@ def call_llm(messages: list, agent_type: str, max_tokens=4000, timeout=None,
     no project. Returns the content string — the signature stays compatible so
     all eleven existing call sites are untouched, and usage is captured as a
     side effect rather than by widening the return type.
+
+    Chain: primary -> fallback -> NVIDIA NIM tiers (when configured) -> Ollama
+    (when detected).
     """
     primary, fallback = MODELS.get(agent_type, MODELS["research"])
     context_chars = sum(len(m.get("content") or "") for m in messages)
@@ -752,7 +803,13 @@ def call_llm(messages: list, agent_type: str, max_tokens=4000, timeout=None,
     # prefer-local puts it first, making free unlimited iteration the default
     # path and cloud the safety net rather than the other way round.
     ollama = None if mode == "cloud-only" else get_ollama_model(agent_type)
-    chain = [primary, fallback]
+    # NVIDIA is cloud, not local, so it stays in even under cloud-only and
+    # lands after the two existing cloud tiers — a no-op empty list when no
+    # key is configured, so a checkout without NVIDIA_API_KEY behaves exactly
+    # as before.
+    nvidia_tiers = (NVIDIA_FALLBACKS.get(agent_type, NVIDIA_PROSE)
+                    if os.getenv("NVIDIA_NIM_API_KEY") else [])
+    chain = [primary, fallback] + nvidia_tiers
     if ollama:
         chain.insert(0, ollama) if mode == "prefer-local" else chain.append(ollama)
     base_timeout = timeout or AGENT_TIMEOUT_SECONDS.get(agent_type, DEFAULT_TIMEOUT_SECONDS)
