@@ -33,19 +33,29 @@ through to the second before reaching Ollama.
 | Category | Agents | Chain (best → worst) |
 |---|---|---|
 | Code | architecture, frontend_code, backend_code, database, devops | `nvidia_nim/qwen/qwen2.5-coder-32b-instruct` → `nvidia_nim/deepseek-ai/deepseek-r1-distill-qwen-32b` |
-| Prose/judgment | research, requirements, planning, qa, frontend_review | `nvidia_nim/deepseek-ai/deepseek-r1` → `nvidia_nim/qwen/qwen2.5-72b-instruct` |
+| Prose/judgment | research, requirements, planning, qa, frontend_review | `nvidia_nim/deepseek-ai/deepseek-r1` → `nvidia_nim/nvidia/llama-3.1-nemotron-ultra-253b-v1` → `nvidia_nim/qwen/qwen2.5-72b-instruct` |
 
-**DeepSeek R1 carries the same reasoning-model risk already documented below
-for nemotron**: it can ignore `max_tokens` and spend the whole budget on
-hidden reasoning before any answer text. That is why it sits at tier 3
-(last-resort), never primary/fallback. Its distilled sibling
+**DeepSeek R1 and Nemotron Ultra carry the same reasoning-model risk already
+documented below for nemotron**: they can ignore `max_tokens` and spend the
+whole budget on hidden reasoning before any answer text. That is why both sit
+at tier 3 (last-resort), never primary/fallback, with Nemotron ordered after
+R1 pending more trust — NVIDIA's own Nemotron family is specifically what got
+demoted off QA on Day 26. DeepSeek's distilled sibling
 (`deepseek-r1-distill-qwen-32b`, used for code) has shorter reasoning chains
 than the flagship and is lower-risk, but not risk-free.
 
-NVIDIA's free tier is **credit-based**, not a renewing daily quota like
-Groq/Gemini's — `llm_router.py` currently tracks it as untracked (no daily
-ceiling) because no refusal has been observed yet to calibrate a real number
-against. Revisit once one is.
+**The rate limit is a rolling per-account cooldown, not a daily allowance —
+user-confirmed 2026-08-05** (tested directly against NVIDIA's models in
+another tool): hitting the limit on any model clears itself in ~10-15
+minutes, unlike Groq/Gemini's fixed UTC-midnight reset. `llm_router.py`
+therefore tracks this with its own timestamp-based cooldown
+(`_nvidia_cooldown_until`, ~12 min default, tunable via
+`LLM_COOLDOWN_MINUTES_NVIDIA_NIM`) rather than the daily-budget mechanism
+above — one 429 from any NVIDIA model excludes the *whole* tier from the
+chain (the limit is account-wide, not per-slug) until the cooldown expires,
+same shape as Ollama being silently absent when no daemon is detected. It is
+NOT in `_DAILY_TOKEN_LIMITS`, deliberately — that tracker assumes a
+midnight reset, which is the wrong shape here.
 
 Model slugs above are best-effort from the public NIM catalog, not verified
 live. If one is wrong or delisted, the existing "unclassified error → next

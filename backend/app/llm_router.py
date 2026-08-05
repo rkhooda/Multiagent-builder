@@ -308,10 +308,14 @@ _DAILY_TOKEN_LIMITS = {
     "groq": 100_000,        # observed refusal: "tokens per day (TPD): Limit 100000"
     "gemini": 1_000_000,    # generous free daily ceiling; tracked, rarely binding
     "openrouter": 0,        # 0 = untracked: OpenRouter free tier limits REQUESTS
-    # 0 = untracked: no observed daily refusal to calibrate a real number
-    # against yet. NVIDIA NIM's free tier is credit-based rather than a
-    # renewing daily quota like Groq/Gemini, so "daily ceiling" may not even
-    # be the right frame once those credits run out — revisit if/when it is.
+    # 0 = untracked BY DESIGN, not by omission: user-confirmed (2026-08-05,
+    # testing NVIDIA models directly in another tool) the limit is NOT a
+    # UTC-midnight daily allowance like Groq/Gemini's — it is a rolling
+    # per-model rate limit that clears itself in ~10-15 minutes. A
+    # daily-reset counter would model the wrong shape entirely (it would
+    # stay "exhausted" until midnight when the real limit already cleared
+    # 45 minutes in) — see the cooldown mechanism below instead, which is
+    # time-window-based to match.
     "nvidia_nim": 0,
     "ollama": 0,            # local, unmetered
 }
@@ -496,6 +500,11 @@ LOCAL_FALLBACKS.update({agent: _LOCAL_PROSE for agent in
 # is wrong or delisted, call_llm's existing "unclassified error -> next tier"
 # handling already degrades gracefully — this is exactly how the delisted
 # openrouter/qwen3-coder:free was survived (see MODELS above).
+#
+# The rate limit itself is NOT the daily-allowance shape Groq/Gemini have —
+# user-confirmed (2026-08-05) it is a rolling per-model limit that clears in
+# ~10-15 minutes, so it is handled below by a time-based cooldown rather than
+# the daily-budget mechanism, which would assume it stays dead until midnight.
 NVIDIA_CODE = [
     "nvidia_nim/qwen/qwen2.5-coder-32b-instruct",          # purpose-built coder, non-reasoning
     "nvidia_nim/deepseek-ai/deepseek-r1-distill-qwen-32b",  # DeepSeek lineage; distilled, so
@@ -508,12 +517,55 @@ NVIDIA_PROSE = [
     # max_tokens and spend the whole budget on hidden reasoning before any
     # answer text. Kept as a last-resort tier only, never primary/fallback.
     "nvidia_nim/deepseek-ai/deepseek-r1",
+    # User-verified (2026-08-05) working well in direct testing. Same
+    # reasoning-model caveat as R1 above applies — NVIDIA's own Nemotron
+    # family is what got demoted off QA for ignoring max_tokens (Day 26),
+    # so this is placed after R1, not ahead of it, until it earns more trust.
+    "nvidia_nim/nvidia/llama-3.1-nemotron-ultra-253b-v1",
     "nvidia_nim/qwen/qwen2.5-72b-instruct",  # non-reasoning general instruct, safe last resort
 ]
 NVIDIA_FALLBACKS = {agent: NVIDIA_CODE for agent in
                     ("frontend_code", "backend_code", "database", "devops", "architecture")}
 NVIDIA_FALLBACKS.update({agent: NVIDIA_PROSE for agent in
                          ("research", "requirements", "planning", "qa", "frontend_review")})
+
+
+# ── NVIDIA NIM cooldown ───────────────────────────────────────────────────────
+# WHY a separate mechanism from the daily budget above. Groq/Gemini's limits
+# reset once at UTC midnight, so "spent -> stop sending -> resume at a known
+# time" is the right model for them. NVIDIA NIM's is a rolling per-account
+# rate limit, user-confirmed (2026-08-05) to clear in ~10-15 minutes rather
+# than sitting dead until midnight — a daily-shaped tracker would keep
+# skipping it for up to 24h after a limit that had already cleared in 15
+# minutes. So this is a plain timestamp instead: one 429 from ANY nvidia_nim
+# model starts a cooldown for the WHOLE tier (the limit is account-wide, not
+# per-model-slug), and the tier is simply left out of the chain — same shape
+# as Ollama being absent when no daemon is detected — until the cooldown
+# expires, converting a certain-to-fail round trip into a free skip straight
+# to Ollama/failure instead of burning a call finding that out.
+_NVIDIA_COOLDOWN_MINUTES = 12  # midpoint of the observed 10-15 minute window
+_nvidia_cooldown_until = 0.0
+
+
+def _nvidia_cooldown_minutes() -> float:
+    env = os.getenv("LLM_COOLDOWN_MINUTES_NVIDIA_NIM")
+    if env:
+        try:
+            return max(0.0, float(env))
+        except ValueError:
+            pass
+    return _NVIDIA_COOLDOWN_MINUTES
+
+
+def _nvidia_in_cooldown() -> bool:
+    return time.monotonic() < _nvidia_cooldown_until
+
+
+def _start_nvidia_cooldown():
+    global _nvidia_cooldown_until
+    _nvidia_cooldown_until = time.monotonic() + _nvidia_cooldown_minutes() * 60
+    print(f"[LLM] nvidia_nim rate-limited — cooling down for "
+          f"{_nvidia_cooldown_minutes():.0f}m", flush=True)
 
 
 # Local generation is slow enough that the cloud timeouts are a guillotine: the
@@ -805,10 +857,10 @@ def call_llm(messages: list, agent_type: str, max_tokens=4000, timeout=None,
     ollama = None if mode == "cloud-only" else get_ollama_model(agent_type)
     # NVIDIA is cloud, not local, so it stays in even under cloud-only and
     # lands after the two existing cloud tiers — a no-op empty list when no
-    # key is configured, so a checkout without NVIDIA_API_KEY behaves exactly
-    # as before.
+    # key is configured (checkout without NVIDIA_API_KEY behaves exactly as
+    # before) or while the tier is cooling down after a recent rate limit.
     nvidia_tiers = (NVIDIA_FALLBACKS.get(agent_type, NVIDIA_PROSE)
-                    if os.getenv("NVIDIA_NIM_API_KEY") else [])
+                    if os.getenv("NVIDIA_NIM_API_KEY") and not _nvidia_in_cooldown() else [])
     chain = [primary, fallback] + nvidia_tiers
     if ollama:
         chain.insert(0, ollama) if mode == "prefer-local" else chain.append(ollama)
@@ -932,6 +984,8 @@ def call_llm(messages: list, agent_type: str, max_tokens=4000, timeout=None,
                 last_error = LLMRateLimitError(
                     f"{model} rate-limited: {e}", agent_type, model)
                 outcome = "rate_limit"
+                if _provider_of(model) == "nvidia_nim":
+                    _start_nvidia_cooldown()
             except (llm_exc.AuthenticationError, llm_exc.PermissionDeniedError) as e:
                 last_error = LLMAuthError(f"{model} auth failed: {e}", agent_type, model)
                 auth_failures += 1
