@@ -184,8 +184,6 @@ AGENT_TIMEOUT_SECONDS = {
     "planning": 240,  # observed success 84.5s at 21.5k tokens; complex briefs run longer
     "qa":       360,  # observed success 354s — batched review over many files
 }
-# Wait before the single same-model retry on a 429, per tier: primary, fallback, ollama.
-RATE_LIMIT_WAITS = [2, 10, 5]
 
 # ── Per-model request pacing (Day 25) ────────────────────────────────────────
 # WHY. The parallel coder phases fire one call per file with no rate awareness.
@@ -487,85 +485,133 @@ LOCAL_FALLBACKS.update({agent: _LOCAL_PROSE for agent in
                          "frontend_review")})
 
 
-# ── NVIDIA NIM tier (third cloud fallback, Day 31) ───────────────────────────
-# Groq's 100k tokens/day is the binding constraint (docs/PROVIDERS.md) — once
-# it and Gemini are both spent, the chain had nowhere left to go but Ollama.
-# NVIDIA's build.nvidia.com catalog hosts strong open models behind a
-# free-credit API key as a third cloud tier. Both entries per list are spliced
-# into the chain (not just the first) so a rate limit on the best NVIDIA model
-# still has a second one to fall through to before Ollama — same reasoning
-# call_llm already applies to primary/fallback.
+# ── Deep cloud fallback tiers (2026-08-06) ───────────────────────────────────
+# WHY. The old chain was two cloud models deep (primary, fallback) plus two
+# NVIDIA slugs. Observed failure: gemini 429s, groq 429s, and the NVIDIA slugs
+# 404 — the whole run stalls with three providers still holding capacity. Two
+# separate defects behind that:
 #
-# Slugs are best-effort from the public NIM catalog, not verified live. If one
-# is wrong or delisted, call_llm's existing "unclassified error -> next tier"
-# handling already degrades gracefully — this is exactly how the delisted
-# openrouter/qwen3-coder:free was survived (see MODELS above).
+#   1. The NVIDIA slugs were "best-effort from the public catalog, not verified
+#      live", and every one of them was wrong. `qwen/*` is GONE from NVIDIA's
+#      catalog (410 Gone), and the deepseek-r1 slugs 404. So the third tier was
+#      never a tier — just two guaranteed-dead round trips before Ollama.
+#   2. A rate limit ended the chain instead of moving along it.
 #
-# The rate limit itself is NOT the daily-allowance shape Groq/Gemini have —
-# user-confirmed (2026-08-05) it is a rolling per-model limit that clears in
-# ~10-15 minutes, so it is handled below by a time-based cooldown rather than
-# the daily-budget mechanism, which would assume it stays dead until midnight.
+# Both lists below are transcribed from a live probe of NVIDIA's and
+# OpenRouter's catalogs on 2026-08-06: every slug returned a real completion,
+# and each is annotated with its measured first-token latency. Ordering is
+# fastest-verified-first, with non-reasoning models ahead of reasoning ones —
+# reasoning models can spend the whole max_tokens budget thinking before
+# emitting an answer (the Day 26 nemotron demotion), so they are runway, not
+# first choice.
+#
+# ponytail: a hand-verified list, not live catalog discovery. Re-probe with the
+# script in the commit message when models start 404ing; automate only if that
+# becomes frequent.
 NVIDIA_CODE = [
-    "nvidia_nim/qwen/qwen2.5-coder-32b-instruct",          # purpose-built coder, non-reasoning
-    "nvidia_nim/deepseek-ai/deepseek-r1-distill-qwen-32b",  # DeepSeek lineage; distilled, so
-                                                             # shorter reasoning chains than the
-                                                             # flagship R1 below
+    "nvidia_nim/poolside/laguna-xs-2.1",            # 4.4s, coding-specialist, non-reasoning
+    "nvidia_nim/minimaxai/minimax-m3",              # 2.1s, non-reasoning
+    "nvidia_nim/meta/llama-3.1-70b-instruct",       # 1.3s, non-reasoning
+    "nvidia_nim/openai/gpt-oss-20b",                # 0.7s, reasoning but terse
+    "nvidia_nim/thinkingmachines/inkling",          # 0.9s, reasoning
+    "nvidia_nim/nvidia/nemotron-3-super-120b-a12b",  # 0.7s, reasoning
 ]
 NVIDIA_PROSE = [
-    # Flagship reasoning model — SAME failure class as the nemotron model
-    # already demoted off QA (Day 26, docs/PROVIDERS.md): can ignore
-    # max_tokens and spend the whole budget on hidden reasoning before any
-    # answer text. Kept as a last-resort tier only, never primary/fallback.
-    "nvidia_nim/deepseek-ai/deepseek-r1",
-    # User-verified (2026-08-05) working well in direct testing. Same
-    # reasoning-model caveat as R1 above applies — NVIDIA's own Nemotron
-    # family is what got demoted off QA for ignoring max_tokens (Day 26),
-    # so this is placed after R1, not ahead of it, until it earns more trust.
-    "nvidia_nim/nvidia/llama-3.1-nemotron-ultra-253b-v1",
-    "nvidia_nim/qwen/qwen2.5-72b-instruct",  # non-reasoning general instruct, safe last resort
+    "nvidia_nim/minimaxai/minimax-m3",              # 2.1s, non-reasoning
+    "nvidia_nim/meta/llama-3.1-70b-instruct",       # 1.3s, non-reasoning
+    "nvidia_nim/mistralai/mistral-medium-3.5-128b",  # 21.9s, non-reasoning
+    "nvidia_nim/openai/gpt-oss-20b",                # 0.7s, reasoning but terse
+    "nvidia_nim/thinkingmachines/inkling",          # 0.9s, reasoning
+    "nvidia_nim/nvidia/nemotron-3-super-120b-a12b",  # 0.7s, reasoning
+    "nvidia_nim/nvidia/nemotron-3-nano-30b-a3b",    # 1.1s, reasoning
 ]
 NVIDIA_FALLBACKS = {agent: NVIDIA_CODE for agent in
                     ("frontend_code", "backend_code", "database", "devops", "architecture")}
 NVIDIA_FALLBACKS.update({agent: NVIDIA_PROSE for agent in
                          ("research", "requirements", "planning", "qa", "frontend_review")})
 
+# OpenRouter's free pool is a FOURTH cloud tier drawn from a different account
+# and different upstreams, so it survives an NVIDIA account-wide limit. It was
+# previously reachable from exactly one slot in MODELS (requirements' fallback)
+# despite the key being configured — capacity that was already paid for and
+# simply not wired in.
+OPENROUTER_CODE = [
+    "openrouter/poolside/laguna-s-2.1:free",        # 2.3s, coding-specialist, non-reasoning
+    "openrouter/poolside/laguna-xs-2.1:free",       # 2.6s
+    "openrouter/openai/gpt-oss-20b:free",           # 3.1s
+    "openrouter/nvidia/nemotron-3-super-120b-a12b:free",  # 1.6s
+]
+OPENROUTER_PROSE = [
+    "openrouter/google/gemma-4-31b-it:free",        # 1.2s, non-reasoning
+    "openrouter/google/gemma-4-26b-a4b-it:free",    # 1.4s, non-reasoning
+    "openrouter/inclusionai/ling-3.0-flash:free",   # 1.6s
+    "openrouter/openai/gpt-oss-20b:free",           # 3.1s
+    "openrouter/nvidia/nemotron-3-super-120b-a12b:free",  # 1.6s
+]
+OPENROUTER_FALLBACKS = {agent: OPENROUTER_CODE for agent in
+                        ("frontend_code", "backend_code", "database", "devops", "architecture")}
+OPENROUTER_FALLBACKS.update({agent: OPENROUTER_PROSE for agent in
+                             ("research", "requirements", "planning", "qa", "frontend_review")})
 
-# ── NVIDIA NIM cooldown ───────────────────────────────────────────────────────
-# WHY a separate mechanism from the daily budget above. Groq/Gemini's limits
-# reset once at UTC midnight, so "spent -> stop sending -> resume at a known
-# time" is the right model for them. NVIDIA NIM's is a rolling per-account
-# rate limit, user-confirmed (2026-08-05) to clear in ~10-15 minutes rather
-# than sitting dead until midnight — a daily-shaped tracker would keep
-# skipping it for up to 24h after a limit that had already cleared in 15
-# minutes. So this is a plain timestamp instead: one 429 from ANY nvidia_nim
-# model starts a cooldown for the WHOLE tier (the limit is account-wide, not
-# per-model-slug), and the tier is simply left out of the chain — same shape
-# as Ollama being absent when no daemon is detected — until the cooldown
-# expires, converting a certain-to-fail round trip into a free skip straight
-# to Ollama/failure instead of burning a call finding that out.
-_NVIDIA_COOLDOWN_MINUTES = 12  # midpoint of the observed 10-15 minute window
-_nvidia_cooldown_until = 0.0
+
+# ── Per-model cooldown ───────────────────────────────────────────────────────
+# WHY this and not the daily budget above. Groq/Gemini's *daily* allowances
+# reset at UTC midnight, which is what `_DAILY_TOKEN_LIMITS` models. But most
+# 429s are not that — they are per-minute request/token limits that clear on
+# their own in seconds to minutes, and NVIDIA's clears in ~10-15 minutes
+# (user-confirmed 2026-08-05). Retrying the SAME model seconds later, which is
+# what this used to do, is near-certain to fail again and costs the call its
+# last attempt.
+#
+# So a 429 takes that model out of the chain for a provider-shaped window and
+# the call moves straight to the next model. With the deep tiers above that
+# means a rate limit costs one round trip and the work continues on another
+# model instead of stalling the run. The chain IS the retry mechanism.
+#
+# ponytail: cooldown is per MODEL, not per provider. If a provider's limit is
+# really account-wide, each of its models pays one 429 before being skipped —
+# bounded and visible in the logs. Tighten to provider-wide only if that shows
+# up as a real cost.
+_COOLDOWN_MINUTES = {
+    "gemini": 1.0,        # free-tier RPM window
+    "groq": 2.0,          # TPM window; the daily TPD ceiling is tracked separately
+    "openrouter": 5.0,    # free pool limits requests per day, partly rolling
+    "nvidia_nim": 12.0,   # midpoint of the observed 10-15 minute window
+}
+_DEFAULT_COOLDOWN_MINUTES = 1.0
+_cooldown_until: dict = {}
 
 
-def _nvidia_cooldown_minutes() -> float:
-    env = os.getenv("LLM_COOLDOWN_MINUTES_NVIDIA_NIM")
+def cooldown_minutes_for(model: str) -> float:
+    provider = _provider_of(model)
+    env = os.getenv(f"LLM_COOLDOWN_MINUTES_{provider.upper()}")
     if env:
         try:
             return max(0.0, float(env))
         except ValueError:
             pass
-    return _NVIDIA_COOLDOWN_MINUTES
+    return _COOLDOWN_MINUTES.get(provider, _DEFAULT_COOLDOWN_MINUTES)
 
 
-def _nvidia_in_cooldown() -> bool:
-    return time.monotonic() < _nvidia_cooldown_until
+def in_cooldown(model: str) -> bool:
+    return time.monotonic() < _cooldown_until.get(model, 0.0)
 
 
-def _start_nvidia_cooldown():
-    global _nvidia_cooldown_until
-    _nvidia_cooldown_until = time.monotonic() + _nvidia_cooldown_minutes() * 60
-    print(f"[LLM] nvidia_nim rate-limited — cooling down for "
-          f"{_nvidia_cooldown_minutes():.0f}m", flush=True)
+def start_cooldown(model: str):
+    minutes = cooldown_minutes_for(model)
+    if minutes <= 0:
+        return
+    _cooldown_until[model] = time.monotonic() + minutes * 60
+    print(f"[LLM] {model} rate-limited — out of the chain for {minutes:.0f}m", flush=True)
+
+
+def cooldown_remaining(models: list) -> float:
+    """Seconds until the soonest of these models is usable again (inf if none
+    is merely cooling down — i.e. waiting cannot help)."""
+    now = time.monotonic()
+    waits = [_cooldown_until[m] - now for m in models
+             if _cooldown_until.get(m, 0.0) > now]
+    return min(waits) if waits else float("inf")
 
 
 # Local generation is slow enough that the cloud timeouts are a guillotine: the
@@ -826,6 +872,39 @@ def _record_failover(project_id, agent_type, from_model, to_model, cause, usage)
         pass
 
 
+def build_chain(agent_type: str, mode: str) -> list:
+    """Every model this agent may use, best first, deduped.
+
+    primary -> fallback -> NVIDIA NIM tiers -> OpenRouter free tiers -> Ollama.
+    A provider with no key configured contributes nothing, so a checkout with
+    only GEMINI_API_KEY behaves exactly as it did before the deep tiers existed.
+    """
+    primary, fallback = MODELS.get(agent_type, MODELS["research"])
+    chain = [primary, fallback]
+    if os.getenv("NVIDIA_NIM_API_KEY"):
+        chain += NVIDIA_FALLBACKS.get(agent_type, NVIDIA_PROSE)
+    if os.getenv("OPENROUTER_API_KEY"):
+        chain += OPENROUTER_FALLBACKS.get(agent_type, OPENROUTER_PROSE)
+    # cloud-only omits the local tier entirely, so a run that must not be
+    # silently degraded pauses instead — that choice is the honest alternative
+    # to hardcoding which agents are "too important" for local models.
+    # prefer-local puts it first, making free unlimited iteration the default
+    # path and cloud the safety net rather than the other way round.
+    ollama = None if mode == "cloud-only" else get_ollama_model(agent_type)
+    if ollama:
+        chain.insert(0, ollama) if mode == "prefer-local" else chain.append(ollama)
+    return list(dict.fromkeys(chain))            # dedupe, first occurrence wins
+
+
+# A pass is one sweep down the chain. More than one only ever happens when
+# every model was rate-limited, and then only while waiting can actually help.
+MAX_CHAIN_PASSES = 3
+# Cap on how long a call will sit waiting for the soonest cooldown to expire.
+# Longer than this and the caller is better served by an error it can surface
+# than by a request that looks hung.
+MAX_COOLDOWN_WAIT_SECONDS = 120
+
+
 def call_llm(messages: list, agent_type: str, max_tokens=4000, timeout=None,
              project_id: str = None, label: str = None, fast_mode: bool = False,
              use_cache: bool = True, mode: str = None) -> str:
@@ -846,24 +925,9 @@ def call_llm(messages: list, agent_type: str, max_tokens=4000, timeout=None,
     Chain: primary -> fallback -> NVIDIA NIM tiers (when configured) -> Ollama
     (when detected).
     """
-    primary, fallback = MODELS.get(agent_type, MODELS["research"])
     context_chars = sum(len(m.get("content") or "") for m in messages)
     mode = (mode or llm_mode())
-    # cloud-only omits the local tier entirely, so a run that must not be
-    # silently degraded pauses instead — that choice is the honest alternative
-    # to hardcoding which agents are "too important" for local models.
-    # prefer-local puts it first, making free unlimited iteration the default
-    # path and cloud the safety net rather than the other way round.
-    ollama = None if mode == "cloud-only" else get_ollama_model(agent_type)
-    # NVIDIA is cloud, not local, so it stays in even under cloud-only and
-    # lands after the two existing cloud tiers — a no-op empty list when no
-    # key is configured (checkout without NVIDIA_API_KEY behaves exactly as
-    # before) or while the tier is cooling down after a recent rate limit.
-    nvidia_tiers = (NVIDIA_FALLBACKS.get(agent_type, NVIDIA_PROSE)
-                    if os.getenv("NVIDIA_NIM_API_KEY") and not _nvidia_in_cooldown() else [])
-    chain = [primary, fallback] + nvidia_tiers
-    if ollama:
-        chain.insert(0, ollama) if mode == "prefer-local" else chain.append(ollama)
+    full_chain = build_chain(agent_type, mode)
     base_timeout = timeout or AGENT_TIMEOUT_SECONDS.get(agent_type, DEFAULT_TIMEOUT_SECONDS)
     max_tokens = resolve_max_tokens(agent_type, max_tokens, fast_mode)
 
@@ -891,27 +955,38 @@ def call_llm(messages: list, agent_type: str, max_tokens=4000, timeout=None,
     auth_failures = 0
     last_error = None
     last_failure_outcome = None                 # cause carried into failover accounting
+    last_model = None                           # what the successful tier fell over FROM
 
-    for tier, model in enumerate(chain):
-        # A provider whose daily allowance is gone will refuse every request
-        # until UTC midnight, so sending one is a guaranteed-wasted round trip.
-        # Skipping straight to the next tier converts that certain failure into
-        # a call that can actually succeed.
-        if budget_exhausted(model):
-            started = time.monotonic()
-            last_error = LLMRateLimitError(
-                f"{model} skipped: daily token budget for "
-                f"{_provider_of(model)} exhausted", agent_type, model)
-            _log_attempt(agent_type, model, 1, "budget_exhausted", started,
-                         project_id=project_id, label=label,
-                         context_chars=context_chars)
-            last_failure_outcome = "budget_exhausted"
+    # A pass is one sweep down the chain. Models that would certainly refuse are
+    # filtered out without a round trip: a spent daily allowance lasts until UTC
+    # midnight, and a cooling-down model was rate-limited moments ago. A second
+    # pass happens only when the whole chain was rate-limited, which is the one
+    # case where waiting changes the answer.
+    for pass_no in range(1, MAX_CHAIN_PASSES + 1):
+        chain = [m for m in full_chain if not in_cooldown(m) and not budget_exhausted(m)]
+        if len(chain) < len(full_chain):
+            print(f"[LLM] {agent_type}: skipping "
+                  f"{', '.join(m for m in full_chain if m not in chain)} "
+                  f"(cooling down or out of daily budget)", flush=True)
+        if not chain:
+            wait = cooldown_remaining(full_chain)
+            if wait > MAX_COOLDOWN_WAIT_SECONDS or pass_no == MAX_CHAIN_PASSES:
+                last_error = last_error or LLMRateLimitError(
+                    f"every model for {agent_type} is rate-limited or out of "
+                    f"daily budget: {', '.join(full_chain)}", agent_type,
+                    ",".join(full_chain))
+                break
+            print(f"[LLM] {agent_type}: whole chain unavailable — waiting {wait:.0f}s "
+                  f"for the soonest model to come back", flush=True)
+            time.sleep(wait)
             continue
 
-        is_local = _provider_of(model) == "ollama"
-        timeout = max(base_timeout, OLLAMA_TIMEOUT_FLOOR_SECONDS) if is_local else base_timeout
-
-        for attempt in (1, 2):
+        rate_limited = False
+        for model in chain:
+            is_local = _provider_of(model) == "ollama"
+            timeout = (max(base_timeout, OLLAMA_TIMEOUT_FLOOR_SECONDS)
+                       if is_local else base_timeout)
+            attempt = pass_no
             started = time.monotonic()
             try:
                 injected = _fault_injection(agent_type, model)
@@ -972,53 +1047,55 @@ def call_llm(messages: list, agent_type: str, max_tokens=4000, timeout=None,
                              label=label, context_chars=context_chars,
                              truncated=truncated,
                              cache="miss" if cache_key else None)
-                if tier > 0:
-                    _record_failover(project_id, agent_type, chain[tier - 1],
+                if last_model:
+                    _record_failover(project_id, agent_type, last_model,
                                      model, last_failure_outcome, usage)
                 return content
             except llm_exc.Timeout:
                 last_error = LLMTimeoutError(
                     f"{model} timed out after {timeout}s", agent_type, model)
                 outcome = "timeout"
+                # A model that just burned the whole timeout is not one the NEXT
+                # file should burn it on too. Same cooldown as a 429: one caller
+                # pays for the discovery, the rest skip straight past it.
+                start_cooldown(model)
             except llm_exc.RateLimitError as e:
                 last_error = LLMRateLimitError(
                     f"{model} rate-limited: {e}", agent_type, model)
                 outcome = "rate_limit"
-                if _provider_of(model) == "nvidia_nim":
-                    _start_nvidia_cooldown()
+                rate_limited = True
+                start_cooldown(model)
+                _penalise(model)                # widen this model's pacing too
+            except (llm_exc.ServiceUnavailableError, llm_exc.InternalServerError) as e:
+                # "ResourceExhausted" from a NIM endpoint with no spare GPU, and
+                # 5xx generally: same shape as a 429 — the model is fine, the
+                # capacity is not, and it comes back on its own. Cooled and
+                # retried down the chain rather than counted as a dead slug.
+                last_error = LLMError(f"{model} unavailable: {e}", agent_type, model)
+                outcome = "unavailable"
+                rate_limited = True
+                start_cooldown(model)
             except (llm_exc.AuthenticationError, llm_exc.PermissionDeniedError) as e:
                 last_error = LLMAuthError(f"{model} auth failed: {e}", agent_type, model)
                 auth_failures += 1
-                last_failure_outcome = "auth"
-                _log_attempt(agent_type, model, attempt, "auth", started,
-                             project_id=project_id, label=label,
-                             context_chars=context_chars)
-                break  # bad key never fixes itself — next tier immediately
+                outcome = "auth"                # bad key never fixes itself
             except Exception as e:
                 last_error = LLMError(f"{model} failed: {e}", agent_type, model)
-                last_failure_outcome = "error"
-                _log_attempt(agent_type, model, attempt, "error", started,
-                             project_id=project_id, label=label,
-                             context_chars=context_chars)
-                break  # unclassified (dead slug 404, 5xx, ...) — next tier
-            last_failure_outcome = outcome
+                outcome = "error"               # unclassified (dead slug 404, 5xx, ...)
             _log_attempt(agent_type, model, attempt, outcome, started,
                          project_id=project_id, label=label,
                          context_chars=context_chars)
-            if attempt == 1:
-                if outcome == "rate_limit":
-                    # Push the model's next slot out, then wait at least a full
-                    # interval. The old flat 2s retried well inside the window
-                    # that had just rejected us, so the retry was near-certain
-                    # to fail too and cost the file its last attempt.
-                    _penalise(model)
-                    time.sleep(max(RATE_LIMIT_WAITS[min(tier, len(RATE_LIMIT_WAITS) - 1)],
-                                   min_interval_for(model)))
-                continue  # one same-model retry for 429/timeout
-            break  # second failure on this model — next tier
+            last_failure_outcome = outcome
+            last_model = model
+            # No same-model retry: the chain IS the retry. Every remaining model
+            # is a fresh provider-and-model pair, which beats asking the one that
+            # just refused a second time.
 
-    if auth_failures == len(chain):
+        if not rate_limited:
+            break     # nothing left that waiting for a cooldown could fix
+
+    if auth_failures and auth_failures == len(full_chain):
         raise LLMAuthError(
             f"All providers rejected their API keys for agent={agent_type} — fix backend/.env",
-            agent_type, ",".join(chain))
+            agent_type, ",".join(full_chain))
     raise last_error

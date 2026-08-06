@@ -12,6 +12,7 @@ from app import llm_router as R
 def _reset():
     R._backoff_factor.clear()
     R._next_allowed.clear()
+    R._cooldown_until.clear()
     R._spent_today.clear()
     R._budget_day[0] = R._utc_day()             # seeded: skip the metrics.db read
 
@@ -260,7 +261,7 @@ def test_rate_limit_failover_is_distinguishable_by_cause():
     _reset()
     _failover_env()
     from app.observability import degraded
-    restore = _stub_chain(["429", "429", "ok"])
+    restore = _stub_chain(["429", "ok"])
     try:
         R.call_llm([{"role": "user", "content": "x"}], "frontend_code",
                    project_id="fo-429", use_cache=False, mode="cloud-only")
@@ -308,6 +309,88 @@ def test_broken_accounting_cannot_break_a_call():
         restore()
         _failover_env_clear()
         _reset()
+
+
+# ── Deep chain + per-model cooldown (2026-08-06) ────────────────────────────
+# The failure this fixes: gemini 429s, groq 429s, the run stalls while three
+# other providers still hold capacity.
+
+def test_chain_spans_every_configured_provider():
+    """A rate limit must have somewhere to go. With keys configured the chain
+    is many models across four cloud providers, not two."""
+    os.environ["NVIDIA_NIM_API_KEY"] = "stub"
+    os.environ["OPENROUTER_API_KEY"] = "stub"
+    try:
+        chain = R.build_chain("frontend_code", "cloud-only")
+        providers = {R._provider_of(m) for m in chain}
+        assert {"groq", "gemini", "nvidia_nim", "openrouter"} <= providers, chain
+        assert len(chain) >= 8, chain
+        assert len(chain) == len(set(chain)), f"duplicate models: {chain}"
+    finally:
+        for k in ("NVIDIA_NIM_API_KEY", "OPENROUTER_API_KEY"):
+            os.environ.pop(k, None)
+
+
+def test_429_moves_on_instead_of_retrying_the_same_model():
+    """The old policy retried the model that had just refused, then gave up.
+    Now the 429'd model is cooled out of the chain and the next one serves —
+    so exactly two provider calls happen, not three."""
+    _reset()
+    _failover_env()
+    restore = _stub_chain(["429", "ok"])         # a third call would IndexError
+    try:
+        out = R.call_llm([{"role": "user", "content": "x"}], "frontend_code",
+                         use_cache=False, mode="cloud-only")
+        assert out == "GENERATED"
+        assert R.in_cooldown("groq/llama-3.3-70b-versatile")
+        assert not R.in_cooldown("gemini/gemini-2.5-flash")
+    finally:
+        restore()
+        _failover_env_clear()
+        _reset()
+
+
+def test_a_cooled_model_is_skipped_without_a_round_trip():
+    _reset()
+    _failover_env()
+    restore = _stub_chain(["ok"])                # only the SECOND tier may be called
+    try:
+        R.start_cooldown("groq/llama-3.3-70b-versatile")
+        R.call_llm([{"role": "user", "content": "x"}], "frontend_code",
+                   use_cache=False, mode="cloud-only")
+    finally:
+        restore()
+        _failover_env_clear()
+        _reset()
+
+
+def test_whole_chain_cooled_waits_instead_of_failing():
+    """Every model rate-limited is a pause, not a failure — the run resumes as
+    soon as the soonest one is usable again."""
+    _reset()
+    _failover_env()
+    restore = _stub_chain(["ok"])
+    try:
+        for model in R.build_chain("frontend_code", "cloud-only"):
+            R._cooldown_until[model] = time.monotonic() + 0.4
+        started = time.monotonic()
+        assert R.call_llm([{"role": "user", "content": "x"}], "frontend_code",
+                          use_cache=False, mode="cloud-only") == "GENERATED"
+        assert time.monotonic() - started >= 0.4, "returned before the cooldown expired"
+    finally:
+        restore()
+        _failover_env_clear()
+        _reset()
+
+
+def test_cooldown_window_is_per_provider_and_env_tunable():
+    assert R.cooldown_minutes_for("nvidia_nim/minimaxai/minimax-m3") == 12.0
+    assert R.cooldown_minutes_for("gemini/gemini-2.5-flash") == 1.0
+    os.environ["LLM_COOLDOWN_MINUTES_GEMINI"] = "0.5"
+    try:
+        assert R.cooldown_minutes_for("gemini/gemini-2.5-flash") == 0.5
+    finally:
+        del os.environ["LLM_COOLDOWN_MINUTES_GEMINI"]
 
 
 if __name__ == "__main__":
