@@ -11,10 +11,13 @@ help:
 	@echo "make ollama   Start with the optional local-model service"
 	@echo "make clean    Remove containers and images. Never touches ./data"
 
-# Both must exist before compose runs: Docker creates missing bind-mount paths
-# as root, and a missing env_file is a hard error rather than a warning.
+# Must exist before compose runs: Docker creates missing bind-mount paths as
+# root, and a missing env_file is a hard error rather than a warning.
+# sandbox-scratch is the `sandbox` service's shared workspace root — see the
+# SANDBOX_SCRATCH_ROOT comment in docker-compose.yml for why it has to exist
+# at a stable host path before that container starts.
 dirs:
-	@mkdir -p data/db data/outputs
+	@mkdir -p data/db data/outputs data/sandbox-scratch
 
 backend/.env:
 	@cp backend/.env.example backend/.env

@@ -115,9 +115,13 @@ corresponding fixture:
 - **PIDs**: `--pids-limit=256` — `fixture_fork_bomb`
 - **Disk**: no `overlay2` storage-opt quota exists on the default driver, so
   this is enforced by the runner: a watcher polls the workspace directory
-  size every 2s and kills the container if it exceeds `2g`.
+  size every 1s and kills the container if it exceeds `2g`.
   `ponytail: poll-based, not a cgroup quota — upgrade to --storage-opt size=
-  if the storage driver changes to one that supports it.` — `fixture_disk_fill`
+  if the storage driver changes to one that supports it.` A single-syscall
+  burst write that completes inside one poll window can still slip through;
+  the realistic failure this catches (a slowly/unboundedly growing log,
+  dependency tree, or generated file) grows over multiple poll windows.
+  — `fixture_disk_fill`
 - **Wall clock**: a per-tier timeout (Phase 2 declares the values) enforced by
   `subprocess.run(..., timeout=T)` in the runner, not a shell `timeout`
   binary the base image may lack — `fixture_infinite_loop`

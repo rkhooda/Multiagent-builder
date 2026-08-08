@@ -1,0 +1,5 @@
+# Pinned to match backend/requirements.txt — same versions, this service
+# needs only the web layer, not the agent pipeline.
+fastapi==0.128.8
+uvicorn[standard]==0.39.0
+pydantic==2.12.5

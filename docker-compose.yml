@@ -21,6 +21,7 @@ services:
       # is off the name simply does not resolve, the probe fails, and the chain
       # behaves exactly as it did before local models existed.
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://ollama:11434}
+      SANDBOX_URL: http://sandbox:8100
     ports:
       - "8000:8000"
     volumes:
@@ -40,6 +41,30 @@ services:
       timeout: 3s
       retries: 5
       start_period: 15s
+    restart: unless-stopped
+
+  # Build verification sandbox. Holds the Docker socket; holds NOTHING else —
+  # no env_file, no ./data/db mount, no writable outputs/. `backend` reaches
+  # it over this default network by service name; it publishes no host port,
+  # so nothing outside the compose network can reach it either. Every build
+  # container IT spawns runs on `sandbox-net` below, not this network — see
+  # docs/SANDBOX_THREAT_MODEL.md for why the two are kept apart.
+  sandbox:
+    build:
+      context: .
+      dockerfile: backend/sandbox/Dockerfile
+    environment:
+      # Must be the literal HOST path of the scratch mount below, not a
+      # container-side path: this service hands workspace paths to the HOST
+      # daemon (over the socket) for the containers it spawns, so the string
+      # has to resolve on the host, not inside this container. Mounting the
+      # scratch dir at that same absolute path on both sides is what makes a
+      # single string valid in both places.
+      SANDBOX_SCRATCH_ROOT: ${PWD}/data/sandbox-scratch
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./data/outputs:/outputs:ro
+      - ${PWD}/data/sandbox-scratch:${PWD}/data/sandbox-scratch
     restart: unless-stopped
 
   frontend:
@@ -71,3 +96,15 @@ services:
 
 volumes:
   ollama_models:
+
+# `sandbox-net` — where build containers run — is deliberately NOT declared
+# here. A Compose network with no service attached to it is never actually
+# created by `docker compose up` (verified empirically: declaring it and no
+# service referencing it left it absent from `docker network ls`), so a
+# top-level declaration would be dead configuration. `sandbox`'s runner
+# creates it lazily and idempotently on first use (`runner.ensure_network()`)
+# instead — the only thing that ever needs it to exist is the `docker run
+# --network sandbox-net` call the runner itself makes. No service in this
+# file is a member of it: that absence is what keeps every build container
+# off the network backend/frontend/sandbox share. See
+# docs/SANDBOX_THREAT_MODEL.md.
