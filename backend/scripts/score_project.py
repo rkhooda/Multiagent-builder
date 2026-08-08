@@ -30,10 +30,18 @@ Tier 4 is the honest automatable line for "usable without manual edits": the fil
 exists, parses, its imports resolve against what was actually generated, it has
 real content, and it is a file the plan asked for.
 
-The fifth rung people reach for — "would plausibly run" — is deliberately NOT
-automated. Deciding it requires executing an arbitrary generated stack. It is
-recorded as a separate, sampled, manual judgement (--manual) so the automated
-number stays reproducible and the subjective one stays visibly subjective.
+A FIFTH RUNG, ABOVE THE FILE LADDER: "does it actually build and boot" — Build
+Verification. This is a PROJECT-level fact, not a per-file one (no individual
+file "runs" on its own), so it is not TIER_SUBSTANTIVE+1 on the per-file
+ladder above; it is a separate `build_verification` field on the result,
+populated from state["build_verification"] — the report the pipeline's
+build_verify stage already computed and persisted to the checkpoint. Reading
+it costs nothing: no sandbox call happens here, exactly the same
+zero-API-cost, offline, re-runnable property as everything else in this file.
+Absent on any checkpoint from before that stage existed, or when the stage
+was disabled/found nothing to verify — reported as unavailable, never as a
+false pass. This is what used to be the "would plausibly run" rung this
+docstring called deliberately unautomated; it no longer is.
 """
 import argparse
 import ast
@@ -182,6 +190,34 @@ def is_stub(content: str, filepath: str) -> bool:
     return len(stripped) < 30
 
 
+def summarize_build_verification(state: dict) -> dict:
+    """Project-level: does it actually install/build/boot, per the pipeline's
+    already-persisted build_verify report. `all_pass` is True only when every
+    declared target's every declared tier came back `pass` — the honest top
+    line. Never guesses when the data is missing (pre-Build-Verification
+    checkpoint, the stage was disabled, or the active profile declares no
+    verify targets): `available=False`, not a silent pass."""
+    report = state.get("build_verification") or {}
+    targets = report.get("targets") or {}
+    if not report.get("enabled") or not targets:
+        return {"available": False, "all_pass": False, "targets": {}}
+
+    all_pass = all(
+        v.get("verdict") == "pass"
+        for r in targets.values()
+        for v in (r.get("tiers") or {}).values()
+    ) and all(r.get("tiers") for r in targets.values())
+
+    return {
+        "available": True,
+        "all_pass": all_pass,
+        "targets": {
+            name: {tier: v.get("verdict") for tier, v in (r.get("tiers") or {}).items()}
+            for name, r in targets.items()
+        },
+    }
+
+
 def score_project(project_id: str, verbose: bool = False) -> dict:
     state = load_state(project_id)
     disk = read_disk_files(project_id)
@@ -281,6 +317,7 @@ def score_project(project_id: str, verbose: bool = False) -> dict:
         "usable_pct": round(100.0 * usable / scored, 1) if scored else 0.0,
         "tiers": histogram,
         "qa_issues_count": state.get("qa_issues_count", 0),
+        "build_verification": summarize_build_verification(state),
         "files": [
             {"path": p, "tier": TIER_NAMES[t], "reason": reasons.get(p, "")}
             for p, t in sorted(tiers.items(), key=lambda kv: (kv[1], kv[0]))
@@ -293,6 +330,13 @@ def score_project(project_id: str, verbose: bool = False) -> dict:
               f"missing {result['missing']}")
         print(f"USABLE (tier>={TIER_NAMES[USABLE_TIER]}): {usable}/{scored} = {result['usable_pct']}%")
         print("tiers: " + "  ".join(f"{k}={v}" for k, v in histogram.items()))
+        bv = result["build_verification"]
+        if not bv["available"]:
+            print("BUILD VERIFICATION: unavailable (no build_verify data on this checkpoint)")
+        else:
+            print(f"BUILD VERIFICATION: {'ALL PASS' if bv['all_pass'] else 'NOT all passing'}")
+            for name, tiers in bv["targets"].items():
+                print("  " + name + ": " + ", ".join(f"{t}={v}" for t, v in tiers.items()))
         print()
         for f in result["files"]:
             if f["tier"] != TIER_NAMES[TIER_SUBSTANTIVE]:
@@ -311,11 +355,13 @@ def main():
     results = [score_project(pid, verbose=True) for pid in args.project_id]
 
     if args.row:
-        print("\n| project | planned | generated | missing | % usable | QA issues |")
-        print("|---|---|---|---|---|---|")
+        print("\n| project | planned | generated | missing | % usable | QA issues | build verified |")
+        print("|---|---|---|---|---|---|---|")
         for r in results:
+            bv = r["build_verification"]
+            bv_cell = ("all pass" if bv["all_pass"] else "not all passing") if bv["available"] else "n/a"
             print(f"| {r['project_name'] or r['project_id'][:8]} | {r['planned']} | "
-                  f"{r['generated']} | {r['missing']} | {r['usable_pct']}% | {r['qa_issues_count']} |")
+                  f"{r['generated']} | {r['missing']} | {r['usable_pct']}% | {r['qa_issues_count']} | {bv_cell} |")
 
     if args.json:
         Path(args.json).write_text(json.dumps(results if len(results) > 1 else results[0], indent=2))

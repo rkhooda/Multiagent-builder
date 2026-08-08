@@ -80,5 +80,36 @@ check("planned_files falls back to the plan JSON when file_list is empty",
 check("planned_files survives an unparseable plan",
       sp.planned_files({"implementation_plan": "not json"}) == set())
 
+# ── build_verification: the fifth rung, project-level, never a false pass ────
+check("no build_verification data on the checkpoint -> unavailable, not pass",
+      sp.summarize_build_verification({}) == {"available": False, "all_pass": False, "targets": {}})
+check("stage disabled -> unavailable",
+      sp.summarize_build_verification({"build_verification": {"enabled": False}})
+      == {"available": False, "all_pass": False, "targets": {}})
+check("profile declared no targets -> unavailable",
+      sp.summarize_build_verification({"build_verification": {"enabled": True, "targets": {}}})
+      == {"available": False, "all_pass": False, "targets": {}})
+
+_all_pass_state = {"build_verification": {"enabled": True, "targets": {
+    "backend": {"tiers": {"install": {"verdict": "pass"}, "build": {"verdict": "pass"},
+                          "boot": {"verdict": "pass"}}},
+    "frontend": {"tiers": {"install": {"verdict": "pass"}, "build": {"verdict": "pass"},
+                           "boot": {"verdict": "pass"}}},
+}}}
+summary = sp.summarize_build_verification(_all_pass_state)
+check("all tiers pass -> available and all_pass",
+      summary["available"] and summary["all_pass"])
+
+_one_fail_state = {"build_verification": {"enabled": True, "targets": {
+    "backend": {"tiers": {"install": {"verdict": "pass"}, "build": {"verdict": "pass"},
+                          "boot": {"verdict": "pass"}}},
+    "frontend": {"tiers": {"install": {"verdict": "pass"}, "build": {"verdict": "fail_code"},
+                           "boot": {"verdict": "skipped"}}},
+}}}
+summary = sp.summarize_build_verification(_one_fail_state)
+check("one target not fully passing -> all_pass is False, not silently dropped",
+      summary["available"] and not summary["all_pass"]
+      and summary["targets"]["frontend"]["build"] == "fail_code")
+
 print(f"\n{passed} passed, {failed} failed")
 sys.exit(1 if failed else 0)
