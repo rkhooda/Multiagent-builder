@@ -94,6 +94,70 @@ BRIEFS = {
                   "frontend/src/lib/api.js", "frontend/src/pages/TodosPage.jsx",
                   "frontend/src/components/TodoItem.jsx"],
     },
+    # ── The two new targets, planned under their OWN profiles ────────────────
+    "static_site_profile": {
+        "profile": "static-site",
+        "name": "Fernwood Studio",
+        "brief": (
+            "A small marketing site for an architecture studio: a home page "
+            "with a hero and short intro, a projects page with a gallery of "
+            "past work, and a contact page with an email address and studio "
+            "location. Purely informational."
+        ),
+        "expect": {"database": 0, "backend": 0},
+        "why": "The static-site profile declares no database or backend phase at all.",
+        "files": ["src/index.html", "src/projects.html", "src/contact.html",
+                  "src/styles/main.css", "src/scripts/main.js"],
+    },
+    "express_profile": {
+        "profile": "node-express-api",
+        "name": "Parcel Tracking API",
+        "brief": (
+            "A REST API that tracks parcels. Create a parcel with a "
+            "destination and weight, record scan events against it as it "
+            "moves through depots, and query a parcel's status and full scan "
+            "history. No user interface."
+        ),
+        "expect": {"frontend": 0},
+        "why": "The node-express-api profile declares no frontend phase.",
+        # Includes the deterministic infra paths, as a real architecture doc
+        # would: the profile resolves them from file_list, and the scorer's
+        # top tier requires a file to be in the plan's file list.
+        "files": ["prisma/schema.prisma", "src/routes/parcels.js",
+                  "src/routes/scans.js", "src/services/parcels.js",
+                  "src/middleware/errors.js",
+                  "package.json", "src/lib/prisma.js", "src/server.js"],
+        "schema": (
+            "```prisma\n"
+            "model Parcel {\n"
+            "  id           Int      @id @default(autoincrement())\n"
+            "  trackingCode String   @unique\n"
+            "  destination  String\n"
+            "  weightGrams  Int\n"
+            "  createdAt    DateTime @default(now())\n"
+            "  updatedAt    DateTime @updatedAt\n"
+            "  scans        Scan[]\n"
+            "}\n\n"
+            "model Scan {\n"
+            "  id        Int      @id @default(autoincrement())\n"
+            "  parcel    Parcel   @relation(fields: [parcelId], references: [id], onDelete: Cascade)\n"
+            "  parcelId  Int\n"
+            "  depot     String\n"
+            "  scannedAt DateTime @default(now())\n\n"
+            "  @@index([parcelId])\n"
+            "}\n```"
+        ),
+        "api": (
+            "| Method | Path | Auth | Description | Response |\n"
+            "|--------|------|------|-------------|----------|\n"
+            "| GET | /parcels | none | list parcels, paginated | `[{\"id\":1,\"trackingCode\":\"AB12\",\"destination\":\"Leeds\",\"weightGrams\":900}]` |\n"
+            "| GET | /parcels/:id | none | one parcel by id | `{\"id\":1,\"trackingCode\":\"AB12\",\"destination\":\"Leeds\",\"weightGrams\":900}` |\n"
+            "| POST | /parcels | none | create a parcel | `{\"id\":2,\"trackingCode\":\"CD34\",\"destination\":\"Hull\",\"weightGrams\":450}` |\n"
+            "| DELETE | /parcels/:id | none | delete a parcel | empty body, 204 |\n"
+            "| GET | /scans | none | scan history for a parcel | `[{\"id\":7,\"parcelId\":1,\"depot\":\"Leeds North\",\"scannedAt\":\"2026-01-04T09:12:00Z\"}]` |\n"
+            "| POST | /scans | none | record a scan against a parcel | `{\"id\":8,\"parcelId\":1,\"depot\":\"Hull Central\"}` |"
+        ),
+    },
     "cli_tool": {
         "profile": "react-fastapi",
         "name": "logsift",
@@ -122,10 +186,16 @@ def stub_architecture(spec: dict) -> str:
     project has neither a database nor an API.
     """
     tree = "\n".join(f"  {p}" for p in spec["files"])
-    has_api = any(p.startswith("backend/app/routers/") for p in spec["files"])
-    has_db = any(p.startswith("backend/app/models/") for p in spec["files"])
+    has_api = any("/routes/" in p or "/routers/" in p for p in spec["files"])
+    has_db = any("/models/" in p or p.endswith(".prisma") for p in spec["files"])
 
+    # Domain-specific when the brief supplies it. A generic `items` table here
+    # is not neutral — measured 2026-08-08, the Express coders faithfully
+    # implemented an `Item` model for a parcel-tracking brief, which scores as
+    # a coder defect when it is really the architecture the harness handed
+    # them. The stub must describe the project the brief describes.
     api_section = (
+        f"## API Endpoints\n\n{spec['api']}\n" if spec.get("api") and has_api else
         "## API Endpoints\n\n"
         "| Method | Path | Auth | Description | Response |\n"
         "|--------|------|------|-------------|----------|\n"
@@ -134,6 +204,7 @@ def stub_architecture(spec: dict) -> str:
         "## API Endpoints\n\nThis project exposes no HTTP API.\n"
     )
     db_section = (
+        f"## Database Schema\n\n{spec['schema']}\n" if spec.get("schema") and has_db else
         "## Database Schema\n\n```sql\nCREATE TABLE items (id INTEGER PRIMARY KEY, "
         "title TEXT NOT NULL);\n```\n"
         if has_db else

@@ -101,12 +101,25 @@ def test_ceilings_cover_measured_requirements():
         ("database",        DATABASE_MAX_TOKENS,        722),
         ("devops",          DEVOPS_MAX_TOKENS,           64),
         ("qa",              QA_MAX_TOKENS,             4949),
+        # Improvement 03, measured 2026-08-08 from real generations of the two
+        # new profiles (backend/metrics.db, projects gen-static-site-v3 and
+        # gen-express-v2; zero truncation flags on any call). A new prompt does
+        # NOT inherit a ceiling from a differently-shaped one, so each is
+        # measured on its own output even where it reuses an existing routing
+        # key. Both sit under the ceiling that key already carries, which is
+        # the finding — no ceiling needed raising, and now that is pinned
+        # rather than assumed.
+        ("frontend_code[static-site]",  FRONTEND_FILE_MAX_TOKENS, 562),
+        ("backend_code[express]",       BACKEND_FILE_MAX_TOKENS,  464),
+        ("database[express-prisma]",    DATABASE_MAX_TOKENS,      154),
     ]
     for agent, ceiling, requirement in measured:
         assert ceiling >= requirement, (
             f"{agent}: configured ceiling {ceiling} < measured requirement "
             f"{requirement} (default profile)")
-        effective_fast = resolve_max_tokens(agent, ceiling, fast_mode=True)
+        # The routing key is what resolve_max_tokens scales; the bracketed
+        # suffix only records which profile produced the measurement.
+        effective_fast = resolve_max_tokens(agent.split("[")[0], ceiling, fast_mode=True)
         assert effective_fast >= requirement, (
             f"{agent}: fast-mode effective ceiling {effective_fast} < measured "
             f"requirement {requirement} — exclude it from FAST_MODE_SCALABLE "

@@ -131,8 +131,9 @@ def active_profile(state: dict) -> StackProfile:
 
 # Registry. Imported at the bottom so profile modules can import the
 # dataclasses from this package without a cycle.
-from . import react_fastapi  # noqa: E402
+from . import node_express_api, react_fastapi, static_site  # noqa: E402
 
 PROFILES = {
-    react_fastapi.PROFILE.name: react_fastapi.PROFILE,
+    p.name: p for p in (react_fastapi.PROFILE, static_site.PROFILE,
+                        node_express_api.PROFILE)
 }

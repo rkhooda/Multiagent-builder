@@ -225,5 +225,138 @@ check("a plan with only frontend tasks is legal",
       not any("database" in e or "absent" in e.lower()
               for e in _valid_plan(_plan(*_BASE), _ST)))
 
+# ── Profiles 2 and 3: the seams they exist to break ─────────────────────────
+SS = PROFILES["static-site"]
+EX = PROFILES["node-express-api"]
+
+# static-site breaks "every phase is always present"
+check("static-site declares no database phase", SS.phase("database") is None)
+check("static-site declares no backend phase", SS.phase("backend") is None)
+check("static-site declares frontend + devops only",
+      SS.phase_names() == ["frontend", "devops"])
+check("static-site renders no deterministic infra", SS.infra is None)
+check("static-site has its own coder prompt",
+      SS.phase("frontend").prompt_file == "static_site_coder_agent.md")
+check("static-site prompt forbids frameworks",
+      all(s in SS.prompt_for("frontend")
+          for s in ("No React", "no build step", "<!DOCTYPE html>")))
+check("static-site prompt carries worked examples",
+      SS.prompt_for("frontend").count("EXAMPLE —") >= 3)
+check("static-site contract is CSS tokens, not Tailwind",
+      "--color-accent" in SS.ui_contract("", "[]")
+      and "Tailwind" not in SS.ui_contract("", "[]"))
+check("static-site floor is below the react-fastapi floor",
+      SS.min_tasks < RF.min_tasks)
+check("static-site: pages wait on the stylesheet",
+      SS.implicit_deps["frontend"](
+          {"id": "fe_002", "filepath": "src/index.html"},
+          {"fe_001": {"id": "fe_001", "filepath": "src/styles/main.css"},
+           "fe_002": {"id": "fe_002", "filepath": "src/index.html"}}) == ["fe_001"])
+check("static-site: the stylesheet waits on nothing",
+      SS.implicit_deps["frontend"](
+          {"id": "fe_001", "filepath": "src/styles/main.css"},
+          {"fe_001": {"id": "fe_001", "filepath": "src/styles/main.css"}}) == [])
+check("static-site file kinds are extension-driven",
+      [SS.file_kind(p) for p in ("src/index.html", "src/styles/main.css",
+                                 "src/scripts/main.js", "src/data/x.json")]
+      == ["page", "style", "script", "data"])
+
+# node-express-api breaks the LANGUAGE assumption
+check("express declares no frontend phase", EX.phase("frontend") is None)
+check("express keeps database + backend + devops",
+      EX.phase_names() == ["database", "backend", "devops"])
+check("express has its own coder prompt",
+      EX.phase("backend").prompt_file == "express_coder_agent.md")
+check("express prompt mandates ESM with .js extensions",
+      all(s in EX.prompt_for("backend")
+          for s in ("never `require()`", "MUST include the `.js` extension")))
+check("express prompt forbids a second PrismaClient",
+      "NEVER call `new PrismaClient()`" in EX.prompt_for("backend"))
+check("express prompt carries worked examples",
+      EX.prompt_for("backend").count("EXAMPLE —") >= 3)
+check("express import note is relative-with-extension, not app-rooted",
+      ".js` extension" in EX.phase("backend").import_note
+      and "app." not in EX.phase("backend").import_note)
+check("express declares no UI contract", EX.ui_contract is None)
+check("express infra basenames are the JS ones",
+      EX.infra_basenames == frozenset({"package.json", "server.js", "prisma.js"}))
+check("express: route waits on schema and service",
+      sorted(EX.implicit_deps["backend"](
+          {"id": "be_002", "filepath": "src/routes/parcels.js", "description": ""},
+          {"db_001": {"id": "db_001", "filepath": "prisma/schema.prisma", "description": ""},
+           "be_001": {"id": "be_001", "filepath": "src/services/parcels.js", "description": ""},
+           "be_002": {"id": "be_002", "filepath": "src/routes/parcels.js", "description": ""}}))
+      == ["be_001", "db_001"])
+check("express file kinds map onto the backend recipe vocabulary",
+      [EX.file_kind(p) for p in ("prisma/schema.prisma", "src/server.js",
+                                 "src/lib/prisma.js", "src/routes/p.js",
+                                 "src/services/p.js")]
+      == ["model", "main", "config", "router", "schema"])
+# A service module IS this stack's "schema" role: the same-resource file whose
+# exact exported names the router must import. Classified as "service" the
+# recipe injects only a symbol summary, and a generated router imported a name
+# the service does not export (measured 2026-08-08).
+check("express services get full-content injection as schema-role files",
+      EX.file_kind("src/services/parcels.js") == "schema")
+
+# Neither new profile inherits the React reviewer
+check("new profiles do not claim React review support",
+      SS.review_supported is False and EX.review_supported is False)
+
+# Every profile must be self-consistent enough to actually run
+for prof in PROFILES.values():
+    for spec in prof.phases:
+        check(f"{prof.name}/{spec.name}: prompt file exists",
+              (PROMPTS_DIR / spec.prompt_file).is_file())
+    check(f"{prof.name}: has a plan example", bool(prof.plan_example.strip()))
+    check(f"{prof.name}: has a summary", bool(prof.summary.strip()))
+    check(f"{prof.name}: prompt injects cleanly",
+          "{PHASE_TABLE}" not in _system_prompt(prof))
+    check(f"{prof.name}: example plan validates against its own profile",
+          _plan_shape(parse_and_validate_plan(prof.plan_example)[0], prof) == [])
+
+# ── Node infra renderers ────────────────────────────────────────────────────
+from app.utils.node_infra import (  # noqa: E402
+    render_package_json, render_prisma_client, render_server)
+
+pkg, warns = render_package_json("Parcel Tracking API", {
+    "src/routes/parcels.js": "import express from 'express';\n"
+                             "import { prisma } from '../lib/prisma.js';\n"
+                             "import helmet from 'helmet';\n",
+})
+pkg_data = json.loads(pkg)
+check("package.json declares ES modules", pkg_data["type"] == "module")
+check("package.json always pins the core stack",
+      all(p in pkg_data["dependencies"]
+          for p in ("express", "@prisma/client", "cors", "dotenv")))
+check("package.json pins a detected known package",
+      "helmet" in pkg_data["dependencies"])
+check("package.json never invents a version",
+      all(v != "" and v.startswith("^") for v in pkg_data["dependencies"].values()))
+check("package.json ignores relative imports", "../lib/prisma.js" not in pkg)
+check("package.json name is npm-safe",
+      pkg_data["name"] == "parcel-tracking-api")
+
+pkg2, warns2 = render_package_json("x", {"a.js": "import weird from 'not-a-real-pkg';"})
+check("unknown package is warned about, not fabricated",
+      "not-a-real-pkg" not in json.loads(pkg2)["dependencies"]
+      and any("not-a-real-pkg" in w for w in warns2))
+
+check("shared prisma client is a single instance",
+      "new PrismaClient" in render_prisma_client()
+      and "globalForPrisma" in render_prisma_client())
+
+server = render_server("Parcel API", ["src/routes/parcels.js", "src/routes/scans.js"])
+check("server mounts every delivered route",
+      "parcelsRouter" in server and "scansRouter" in server
+      and "/api/parcels" in server and "/api/scans" in server)
+check("server imports routes with the .js extension",
+      "'./routes/parcels.js'" in server)
+check("server keeps the 4-arg error middleware",
+      "(err, req, res, next)" in server)
+empty_server = render_server("Parcel API", [])
+check("server with no delivered routes still starts",
+      "no routes to mount" in empty_server and "app.listen" in empty_server)
+
 print(f"\n{PASS} passed, {FAIL} failed. (0 API calls)")
 sys.exit(1 if FAIL else 0)

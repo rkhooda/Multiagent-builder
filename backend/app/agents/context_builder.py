@@ -174,12 +174,20 @@ def _same_resource(a: str, b: str) -> bool:
 def _resource_of(filepath: str) -> str:
     """The resource name a router/schema/model file is about — its filename stem
     (`routers/invoices.py` -> `invoices`). Used to pick the resource's API rows
-    and its matching model/schema files."""
+    and its matching model/schema files.
+
+    Any extension is stripped, not just `.py`: profiles in other languages use
+    the same resource-matching (`routes/parcels.js` -> `parcels`), and leaving
+    `.js` attached made a router match its service only by the accident of both
+    keeping the same suffix.
+    """
     stem = filepath.rsplit("/", 1)[-1]
+    base, dot, _ = stem.rpartition(".")
+    stem = base if dot else stem
     for suf in ("_router", "_routes", "_schema", "_schemas", "_model", "_models"):
-        if stem.endswith(suf + ".py"):
-            return stem[: -(len(suf) + 3)]
-    return stem[:-3] if stem.endswith(".py") else stem
+        if stem.endswith(suf):
+            return stem[: -len(suf)]
+    return stem
 
 
 def parse_api_table(section: str) -> list:
