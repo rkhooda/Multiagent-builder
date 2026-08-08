@@ -129,6 +129,68 @@ def active_profile(state: dict) -> StackProfile:
     return get_profile(state.get("stack_profile", "") if isinstance(state, dict) else "")
 
 
+# ── Selection from a TechStackSchema recommendation (ponytail #3) ────────────
+#
+# The requirements agent recommends a stack in prose; this maps that
+# recommendation onto a profile DETERMINISTICALLY. It is deliberately not an
+# LLM call: the mapping is a fixed lookup over a three-entry registry, and a
+# model asked to pick would introduce a failure mode where a table cannot.
+#
+# Signals are matched against the whole recommendation blob. Ordered
+# most-specific first, because "Express + React" must not match on "react"
+# alone — a project with both is a full-stack app, which react-fastapi serves.
+AUTO = "auto"
+
+_SIGNALS = (
+    # (profile, positive signals, disqualifying signals)
+    ("node-express-api", ("express", "nestjs", "fastify", "koa"),
+     ("react", "vue", "svelte", "angular", "next.js", "nuxt")),
+    ("static-site", ("static site", "static website", "plain html", "html/css",
+                     "no backend", "jekyll", "hugo", "eleventy", "11ty",
+                     "astro", "gatsby"),
+     ("database", "postgres", "mysql", "mongodb", "api server")),
+    ("react-fastapi", ("fastapi", "react", "vite", "django", "flask", "next.js"),
+     ()),
+)
+
+
+def _blob(tech_stack: dict) -> str:
+    if not isinstance(tech_stack, dict):
+        return str(tech_stack or "").lower()
+    parts = [str(tech_stack.get(k, "")) for k in
+             ("frontend", "backend", "database", "auth", "hosting")]
+    parts += [str(x) for x in (tech_stack.get("key_libraries") or [])]
+    return " ".join(parts).lower()
+
+
+def resolve_profile(tech_stack: dict) -> tuple:
+    """Map a TechStackSchema recommendation to (profile_name, mismatch_reason).
+
+    `mismatch_reason` is "" on a confident match and a human-readable sentence
+    otherwise. It is NEVER resolved by silently picking the nearest profile:
+    the caller records the reason on state and Gate 1 shows it, because a
+    human is already reading there and "we built the wrong shape quietly" is
+    the failure this exists to prevent. See docs/PROFILES.md.
+    """
+    blob = _blob(tech_stack)
+    if not blob.strip():
+        return DEFAULT_PROFILE, ""
+
+    for name, positives, disqualifiers in _SIGNALS:
+        if any(d in blob for d in disqualifiers):
+            continue
+        if any(p in blob for p in positives):
+            return name, ""
+
+    supported = ", ".join(f"{p.name} ({p.label})" for p in PROFILES.values())
+    return DEFAULT_PROFILE, (
+        f"The recommended stack does not match any stack this system can "
+        f"build. Supported targets: {supported}. Nothing has been generated "
+        f"for the recommended stack — choose a supported target to continue, "
+        f"or approve to build with {DEFAULT_PROFILE}."
+    )
+
+
 # Registry. Imported at the bottom so profile modules can import the
 # dataclasses from this package without a cycle.
 from . import node_express_api, react_fastapi, static_site  # noqa: E402

@@ -16,6 +16,32 @@ degrades honestly rather than silently — see
 
 ---
 
+## What it can build
+
+The pipeline builds to a **Stack Profile** — an explicit description of a
+target's phases, prompts, file conventions and infrastructure. Three exist:
+
+| Target | Builds | Status |
+|---|---|---|
+| `react-fastapi` (default) | React 19 + Vite + Tailwind front end, FastAPI + SQLAlchemy + Pydantic back end, relational DB, Docker Compose | The tuned stack — Days 18–21 A/B evidence, protected by golden fixtures |
+| `static-site` | Semantic HTML pages, one shared stylesheet, vanilla-JS behaviour. No build step, no server, no database | Works and measured (5/5 files usable); not tuned |
+| `node-express-api` | Express 4 on Node 20 (ES modules) + Prisma over PostgreSQL. API only, no front end | Works and measured (8/8 files usable); not tuned |
+
+A project only gets the phases its target needs: a static-site plan contains
+**zero** database and backend tasks, and that is correct rather than a gap.
+
+**Everything else is unsupported.** Mobile apps, other languages, other
+frameworks, desktop apps and data pipelines are not built. If the requirements
+agent recommends a stack with no profile, you are told at Gate 1 which targets
+exist — the system does not quietly build the nearest thing instead. Pick a
+target explicitly on the New Project form, or override it at Gate 1.
+
+Measurements and per-target verdicts:
+[docs/IMPROVEMENT_03_RESULTS.md](docs/IMPROVEMENT_03_RESULTS.md). Adding a
+target: [docs/PROFILES.md](docs/PROFILES.md).
+
+---
+
 ## Quick start
 
 **Prerequisites:** Docker Desktop (or Docker Engine + Compose v2), and at least
@@ -134,6 +160,9 @@ is spent, not as a replacement. Details in [docs/USAGE.md](docs/USAGE.md).
 |---|---|
 | **[docs/USAGE.md](docs/USAGE.md)** | Writing briefs, the four gates, reading the QA report and metrics, the run modes, using the output |
 | **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** | How the pipeline works, the state object, adding or changing an agent |
+| **[docs/PROFILES.md](docs/PROFILES.md)** | The supported targets, how one is selected, what happens on an unsupported stack, and how to add a profile |
+| [docs/IMPROVEMENT_03_RESULTS.md](docs/IMPROVEMENT_03_RESULTS.md) | Stack Profiles: plan-shape experiment, per-target generation scores and verdicts |
+| [docs/STACK_COUPLING_AUDIT.md](docs/STACK_COUPLING_AUDIT.md) | Where the React+FastAPI assumption was encoded, before it was extracted |
 | [docs/OBSERVABILITY.md](docs/OBSERVABILITY.md) | Metrics store and LangSmith tracing |
 | [docs/PROVIDERS.md](docs/PROVIDERS.md) | Dated agent→provider map, daily limits, which limit is scarce — update with every routing change |
 | [docs/CEILING_AUDIT.md](docs/CEILING_AUDIT.md) | Output-ceiling starvation audit: measured requirements per agent, verdicts, rerun via `scripts/audit_ceilings.py` |
@@ -150,7 +179,8 @@ backend/app/graph/      LangGraph pipeline: nodes, gates, routing, state
 backend/app/agents/     One module per pipeline stage
 backend/app/llm_router.py   Provider chain, retries, budgets, rate limits, cache
 backend/app/routers/    REST API and the WebSocket event stream
-prompts/                One system prompt per agent — the tuning surface
+backend/app/profiles/   Stack Profiles: one module per supported target
+prompts/                One system prompt per agent per target — the tuning surface
 frontend/src/           React UI: live event stream and the gate approval screens
 docs/                   Everything above
 data/                   Your databases and generated projects (git-ignored)

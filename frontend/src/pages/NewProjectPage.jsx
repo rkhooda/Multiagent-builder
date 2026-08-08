@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 
 const OPTIONAL_SECTION_CONFIG = [
@@ -93,11 +93,23 @@ export default function NewProjectPage() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [fastMode, setFastMode] = useState(false)
+  const [stackProfile, setStackProfile] = useState('auto')
+  const [profiles, setProfiles] = useState([])
   const [optionalSections, setOptionalSections] = useState({
     existing_solutions: false,
     target_users: false,
     market_risks: false,
   })
+
+  // The supported-target list comes from the backend registry rather than a
+  // copy here, so adding a profile cannot leave the form advertising a stale
+  // set. A failed fetch leaves only "Auto-detect", which still works.
+  useEffect(() => {
+    fetch('/api/projects/stack-profiles')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => setProfiles(d?.profiles ?? []))
+      .catch(() => setProfiles([]))
+  }, [])
 
   const toggleSection = (key) => {
     setOptionalSections((prev) => ({ ...prev, [key]: !prev[key] }))
@@ -139,6 +151,7 @@ export default function NewProjectPage() {
           project_name: projectName,
           brief: projectBrief,
           fast_mode: fastMode,
+          stack_profile: stackProfile,
           optional_sections: {
             existing_solutions: optionalSections.existing_solutions,
             target_users: optionalSections.target_users,
@@ -336,6 +349,56 @@ export default function NewProjectPage() {
                   </div>
                 </label>
               ))}
+            </div>
+          </div>
+
+          {/* Stack Profile — what shape of project to build */}
+          <div>
+            <p className="text-sm font-semibold text-ink mb-1">Target Stack</p>
+            <div className="bg-overlay border border-line rounded-lg p-4 space-y-3">
+              <label className="flex items-start gap-3 cursor-pointer">
+                <input
+                  type="radio"
+                  name="stack-profile"
+                  checked={stackProfile === 'auto'}
+                  onChange={() => setStackProfile('auto')}
+                  disabled={loading}
+                  className="mt-0.5 h-4 w-4 border-line-strong accent-accent focus:ring-accent cursor-pointer flex-shrink-0"
+                />
+                <div>
+                  <span className="block text-sm font-medium text-ink">Auto-detect</span>
+                  <span className="block text-xs text-ink-3 mt-0.5">
+                    Pick the target from the stack the requirements agent recommends.
+                    If it recommends something this system cannot build, you are told
+                    at the first approval gate &mdash; nothing is built silently.
+                  </span>
+                </div>
+              </label>
+
+              {profiles.map((p) => (
+                <label key={p.name} className="flex items-start gap-3 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="stack-profile"
+                    checked={stackProfile === p.name}
+                    onChange={() => setStackProfile(p.name)}
+                    disabled={loading}
+                    className="mt-0.5 h-4 w-4 border-line-strong accent-accent focus:ring-accent cursor-pointer flex-shrink-0"
+                  />
+                  <div>
+                    <span className="block text-sm font-medium text-ink">{p.label}</span>
+                    <span className="block text-xs text-ink-3 mt-0.5">{p.summary}</span>
+                    <span className="block text-xs text-ink-3 mt-0.5">
+                      Phases: {p.phases.map((s) => s.name).join(' → ')}
+                    </span>
+                  </div>
+                </label>
+              ))}
+
+              <p className="text-xs text-ink-3 border-t border-line pt-3">
+                These are the only targets this system builds. Anything else is
+                unsupported &mdash; it is not generated poorly, it is refused.
+              </p>
             </div>
           </div>
 

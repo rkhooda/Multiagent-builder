@@ -358,5 +358,63 @@ empty_server = render_server("Parcel API", [])
 check("server with no delivered routes still starts",
       "no routes to mount" in empty_server and "app.listen" in empty_server)
 
+# ── Selection & mismatch (ponytail #3) ──────────────────────────────────────
+from app.profiles import AUTO, resolve_profile  # noqa: E402
+
+for stack, expected in (
+    ({"frontend": "React 19 + Vite + TailwindCSS", "backend": "FastAPI (Python 3.11)",
+      "database": "PostgreSQL"}, "react-fastapi"),
+    ({"frontend": "None", "backend": "Express 4 (Node 20)",
+      "database": "PostgreSQL"}, "node-express-api"),
+    ({"frontend": "Plain HTML/CSS/JS static site", "backend": "None",
+      "database": "None"}, "static-site"),
+    # Both a React front end and Express behind it is a full-stack app, not an
+    # API-only project — the disqualifier list is what keeps "express" from
+    # winning on a substring.
+    ({"frontend": "React 19", "backend": "Express + Prisma",
+      "database": "Postgres"}, "react-fastapi"),
+):
+    got, mismatch = resolve_profile(stack)
+    check(f"resolve {stack.get('backend')!r} -> {expected}",
+          got == expected and mismatch == "")
+
+unsupported, reason = resolve_profile(
+    {"frontend": "SwiftUI (iOS)", "backend": "Vapor (Swift)", "database": "CoreData"})
+check("an unbuildable stack reports a mismatch", bool(reason))
+check("the mismatch names every supported target",
+      all(name in reason for name in PROFILES))
+check("the mismatch says nothing was built for the recommendation",
+      "Nothing has been generated" in reason)
+check("a mismatch still resolves to a runnable default",
+      unsupported in PROFILES)
+check("an empty recommendation is not a mismatch",
+      resolve_profile({}) == (DEFAULT_PROFILE, ""))
+
+# An explicit choice must never be second-guessed by the recommendation.
+from app.agents.requirements_agent import requirements_agent  # noqa: E402
+import inspect  # noqa: E402
+src = inspect.getsource(requirements_agent)
+check("explicit user choice bypasses auto-resolution",
+      'chosen in ("", AUTO)' in src)
+check("a mismatch increments degraded_events",
+      "profile_mismatch_defaulted" in src)
+
+# Changing the profile must reuse invalidate_downstream, never new logic.
+from app.routers import projects as projects_router  # noqa: E402
+change_src = inspect.getsource(projects_router.set_stack_profile)
+check("profile change routes through invalidate_downstream",
+      "invalidate_downstream(state" in change_src)
+check("profile change refuses 'auto' and unknown names",
+      "name == AUTO or name not in PROFILES" in change_src)
+check("an unknown profile on create is a 400, not a silent default",
+      "raise HTTPException" in inspect.getsource(projects_router._validated_profile))
+
+# Re-running requirements must not discard a profile the user chose at Gate 1.
+from app.graph.pipeline import STAGE_ARTIFACTS  # noqa: E402
+check("requirements invalidation never clears stack_profile",
+      "stack_profile" not in STAGE_ARTIFACTS["requirements"])
+check("requirements invalidation does clear a stale mismatch",
+      "profile_mismatch" in STAGE_ARTIFACTS["requirements"])
+
 print(f"\n{PASS} passed, {FAIL} failed. (0 API calls)")
 sys.exit(1 if FAIL else 0)

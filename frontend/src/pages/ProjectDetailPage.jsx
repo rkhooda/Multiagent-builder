@@ -518,6 +518,22 @@ export default function ProjectDetailPage() {
             <Dot tone={statusMeta(displayStatus).tone} />
             {statusMeta(displayStatus).label}
           </Badge>
+          {/* Which target is being built. Absent until requirements resolves
+              it, and flagged when the recommended stack matched nothing. */}
+          {projectMetadata?.stack_profile && (
+            <span
+              title={projectMetadata.profile_mismatch
+                || `Building as ${projectMetadata.stack_profile}`}
+              className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${
+                projectMetadata.profile_mismatch
+                  ? 'border-warn/35 bg-warn/10 text-warn'
+                  : 'border-line-strong bg-overlay text-ink-2'
+              }`}
+            >
+              {projectMetadata.stack_profile_label || projectMetadata.stack_profile}
+              {projectMetadata.profile_mismatch ? ' — unsupported stack' : ''}
+            </span>
+          )}
           {fileCount > 0 && (
             <span className="px-2.5 py-1 text-xs font-semibold rounded-full bg-ok/10 text-ok border border-ok/35">
               {fileCount} files generated

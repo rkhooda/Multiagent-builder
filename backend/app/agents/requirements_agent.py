@@ -126,6 +126,29 @@ At the very end of your response, output the tech stack as a JSON code block."""
 
     print(f"[RequirementsAgent] Tech stack: {tech_stack_dict.get('frontend')} / {tech_stack_dict.get('backend')} / {tech_stack_dict.get('database')}")
 
+    # ── Resolve the Stack Profile (Improvement 03, ponytail #3) ───
+    # Deterministic mapping, not a model call. An EXPLICIT user choice made on
+    # the New Project form always wins and is never second-guessed here; only
+    # the "auto" setting consults the recommendation. A recommendation that
+    # matches nothing we build is recorded as a mismatch and surfaced at
+    # Gate 1 — never silently resolved to the nearest profile.
+    from ..profiles import AUTO, resolve_profile
+    chosen = (state.get("stack_profile") or AUTO).strip().lower()
+    profile_update = {}
+    if chosen in ("", AUTO):
+        resolved, mismatch = resolve_profile(tech_stack_dict)
+        profile_update = {"stack_profile": resolved, "profile_mismatch": mismatch}
+        log.append(f"requirements_agent: stack profile resolved to '{resolved}'"
+                   + (" — MISMATCH, see gate 1" if mismatch else ""))
+        if mismatch:
+            print(f"[RequirementsAgent] PROFILE MISMATCH: {mismatch}")
+            # A build that proceeds on a stack nobody asked for is exactly the
+            # class of silent degradation Improvement 02 started counting.
+            from ..observability import degraded
+            degraded.record(project_id, "profile_mismatch_defaulted")
+    else:
+        log.append(f"requirements_agent: stack profile '{chosen}' set explicitly by the user")
+
     # ── Final logging ─────────────────────────────────────────────
     log.append(f"requirements_agent: completed — {len(response)} char doc, tech stack extracted")
     print(f"[RequirementsAgent] Completed. Doc length: {len(response)} chars")
@@ -147,6 +170,7 @@ At the very end of your response, output the tech stack as a JSON code block."""
     return {
         "requirements_doc": response,
         "tech_stack": tech_stack_json_str,
+        **profile_update,
         "log": log,
         "errors": errors,
         "current_stage": "architecture",

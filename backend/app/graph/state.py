@@ -8,6 +8,7 @@ class ProjectState(TypedDict):
     optional_sections: str  # JSON string of optional section flags — set at project creation
     fast_mode: bool         # lighter budgets + no LLM repairs — set at project creation
     stack_profile: str      # active Stack Profile name (Improvement 03); ""/absent = react-fastapi
+    profile_mismatch: str   # why the recommended stack matched no profile — shown at gate 1, never silent
 
     # Agent outputs (filled progressively as pipeline runs)
     research_report: str

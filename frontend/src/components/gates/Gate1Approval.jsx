@@ -47,6 +47,103 @@ function TechStackCard({ techStackStr }) {
   )
 }
 
+// The target being built, and the override. This is the gate where the
+// recommended stack first exists, so it is where a mismatch has to be visible
+// and where changing the target is still cheap — everything downstream of
+// requirements is stack-shaped, so a change re-runs from architecture.
+function StackProfileCard({ projectId, profileName, profileLabel, mismatch, onRefresh, disabled }) {
+  const [profiles, setProfiles] = useState([])
+  const [changing, setChanging] = useState(false)
+  const [error, setError] = useState('')
+  const [open, setOpen] = useState(false)
+
+  useEffect(() => {
+    fetch('/api/projects/stack-profiles')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => setProfiles(d?.profiles ?? []))
+      .catch(() => setProfiles([]))
+  }, [])
+
+  const change = async (name) => {
+    if (name === profileName) { setOpen(false); return }
+    if (!window.confirm(
+      `Build this project as "${name}" instead?\n\n` +
+      'The architecture, plan and any generated code are for the current ' +
+      'target and will be discarded, then regenerated from the requirements.'
+    )) return
+
+    setChanging(true)
+    setError('')
+    try {
+      const res = await fetch(`/api/projects/${projectId}/stack-profile`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ stack_profile: name }),
+      })
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}))
+        throw new Error(body.detail || `Request failed (${res.status})`)
+      }
+      setOpen(false)
+      onRefresh?.()
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setChanging(false)
+    }
+  }
+
+  if (!profileName && !mismatch) return null
+
+  return (
+    <div className={`mb-4 rounded border p-3 text-xs ${
+      mismatch ? 'border-warn/40 bg-warn/10' : 'border-line bg-overlay'
+    }`}>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <span className={`font-semibold uppercase tracking-wide ${
+            mismatch ? 'text-warn' : 'text-ink-3'
+          }`}>
+            {mismatch ? 'Stack not supported' : 'Building as'}
+          </span>
+          <span className="ml-2 text-ink">{profileLabel || profileName}</span>
+        </div>
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          disabled={disabled || changing}
+          className="rounded border border-line-strong px-2 py-1 font-medium text-ink hover:bg-raised disabled:opacity-50"
+        >
+          {open ? 'Cancel' : 'Change target'}
+        </button>
+      </div>
+
+      {mismatch && <p className="mt-2 text-ink">{mismatch}</p>}
+
+      {open && (
+        <div className="mt-3 space-y-2 border-t border-line pt-3">
+          {profiles.map((p) => (
+            <button
+              key={p.name}
+              type="button"
+              onClick={() => change(p.name)}
+              disabled={changing}
+              className={`block w-full rounded border px-3 py-2 text-left hover:bg-raised disabled:opacity-50 ${
+                p.name === profileName ? 'border-accent/50 bg-accent-soft' : 'border-line'
+              }`}
+            >
+              <span className="block font-medium text-ink">{p.label}</span>
+              <span className="block text-ink-3">{p.summary}</span>
+            </button>
+          ))}
+        </div>
+      )}
+
+      {error && <p className="mt-2 text-err">{error}</p>}
+    </div>
+  )
+}
+
 // decision -> the stage its regeneration targets (drives retry-cap warnings)
 const TARGET_STAGE = { edit: 'requirements', back: 'research' }
 const TARGET_LABEL = { edit: 'Requirements', back: 'Research' }
@@ -229,6 +326,17 @@ export default function Gate1Approval({ projectId, projectState, status, onResum
                 )}
               </div>
             </div>
+
+            {!editing && (
+              <StackProfileCard
+                projectId={projectId}
+                profileName={projectState?.stack_profile}
+                profileLabel={projectState?.stack_profile_label}
+                mismatch={projectState?.profile_mismatch}
+                onRefresh={onRefresh}
+                disabled={!!submitting || !!regenAction}
+              />
+            )}
 
             {!editing && <TechStackCard techStackStr={techStack} />}
 

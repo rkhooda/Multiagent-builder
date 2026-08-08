@@ -87,7 +87,10 @@ def route_after_architecture(state: ProjectState) -> str:
 STAGE_ORDER = ["research", "requirements", "architecture", "planning", "code"]
 STAGE_ARTIFACTS = {
     "research": {"research_report": ""},
-    "requirements": {"requirements_doc": "", "tech_stack": ""},
+    # stack_profile is NOT listed here on purpose: re-running requirements must
+    # not silently discard a profile the user chose at Gate 1. The agent itself
+    # leaves an explicit choice alone and only recomputes an "auto" one.
+    "requirements": {"requirements_doc": "", "tech_stack": "", "profile_mismatch": ""},
     "architecture": {"architecture_doc": "", "file_list": []},
     "planning": {"implementation_plan": "", "excluded_tasks": []},
     "code": {"generated_files": {}, "qa_report": "", "qa_issues_count": 0,

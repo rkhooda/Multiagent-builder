@@ -24,6 +24,7 @@ from app.core.database import (
     record_failure, clear_failure, get_failure,
 )
 from app.models import status as status_vocab
+from app.profiles import get_profile
 from app.utils.file_writer import OUTPUTS_ROOT
 from app.observability import llm_cache, metrics_store
 
@@ -39,6 +40,9 @@ class ProjectCreateRequest(BaseModel):
     project_name: str
     optional_sections: Optional[OptionalSections] = None
     fast_mode: bool = False
+    # "auto" defers to the requirements agent's recommendation via the
+    # deterministic mapping; any registered profile name pins it explicitly.
+    stack_profile: str = "auto"
 
 class ProjectResumeRequest(BaseModel):
     decision: str = Field(..., description="Decision: approve, edit, back, or reject")
@@ -466,6 +470,12 @@ def serialize_project_state(state_snapshot, project_id: str) -> dict:
         "research_report": values.get("research_report", ""),
         "requirements_doc": values.get("requirements_doc", ""),
         "tech_stack": values.get("tech_stack", ""),
+        # Improvement 03. stack_profile is the target being built;
+        # profile_mismatch is non-empty only when the recommendation matched
+        # nothing we build, and Gate 1 renders it as an unresolved choice.
+        "stack_profile": values.get("stack_profile", ""),
+        "stack_profile_label": get_profile(values.get("stack_profile", "")).label,
+        "profile_mismatch": values.get("profile_mismatch", ""),
         "architecture_doc": values.get("architecture_doc", ""),
         "implementation_plan": values.get("implementation_plan", ""),
         "excluded_tasks": values.get("excluded_tasks", []),
@@ -524,6 +534,87 @@ def list_projects(status: Optional[str] = None, sort: str = "created_at"):
         )
     return {"projects": rows, "total": len(rows)}
 
+def _validated_profile(name: str) -> str:
+    """A registered profile name, or "auto". Anything else is a 400 rather than
+    a silent fallback — a typo'd profile must not quietly build react-fastapi,
+    which is exactly the failure the mismatch path exists to prevent."""
+    from app.profiles import AUTO, PROFILES
+
+    value = (name or AUTO).strip().lower()
+    if value == AUTO or value in PROFILES:
+        return value
+    raise HTTPException(
+        status_code=400,
+        detail=f"Unknown stack profile '{name}'. Supported: "
+               f"{AUTO}, {', '.join(sorted(PROFILES))}",
+    )
+
+
+@router.get("/stack-profiles")
+async def list_stack_profiles():
+    """The targets this system can actually build — the honest supported list.
+    Drives the New Project selector and the Gate 1 override."""
+    from app.profiles import AUTO, DEFAULT_PROFILE, PROFILES
+
+    return {
+        "default": DEFAULT_PROFILE,
+        "auto": AUTO,
+        "profiles": [
+            {
+                "name": p.name,
+                "label": p.label,
+                "summary": p.summary,
+                "phases": [{"name": s.name, "label": s.label} for s in p.phases],
+            }
+            for p in PROFILES.values()
+        ],
+    }
+
+
+class ProfileChangeRequest(BaseModel):
+    stack_profile: str = Field(..., description="A registered profile name")
+
+
+@router.post("/{project_id}/stack-profile")
+async def set_stack_profile(project_id: str, request: ProfileChangeRequest):
+    """Change the active profile while paused at a gate.
+
+    Everything downstream of requirements is stack-shaped — the architecture
+    names a folder tree and an API surface, and the plan and code follow from
+    it — so a profile change invalidates from requirements onward through the
+    EXISTING invalidate_downstream, rather than any new invalidation logic.
+    """
+    from app.graph.pipeline import graph, invalidate_downstream
+    from app.profiles import AUTO, PROFILES
+
+    name = (request.stack_profile or "").strip().lower()
+    if name == AUTO or name not in PROFILES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Choose a specific profile to build. Supported: "
+                   f"{', '.join(sorted(PROFILES))}",
+        )
+
+    config = {"configurable": {"thread_id": project_id}}
+    snapshot = graph.get_state(config)
+    state = snapshot.values or {}
+    if not state:
+        raise HTTPException(status_code=404, detail="Project not found")
+    if state.get("stack_profile") == name:
+        return {"stack_profile": name, "invalidated": [], "unchanged": True}
+
+    update = invalidate_downstream(state, "requirements")
+    update["stack_profile"] = name
+    update["profile_mismatch"] = ""     # the human just resolved it
+    graph.update_state(config, update)
+    return {
+        "stack_profile": name,
+        "invalidated": sorted(k for k in update
+                              if k not in ("previous_versions", "stack_profile",
+                                           "profile_mismatch")),
+    }
+
+
 @router.post("")
 async def create_project(request: ProjectCreateRequest):
     project_id = str(uuid.uuid4())
@@ -542,6 +633,8 @@ async def create_project(request: ProjectCreateRequest):
         project_name=request.project_name,
         optional_sections=json.dumps(optional_sections_dict),
         fast_mode=request.fast_mode,
+        stack_profile=_validated_profile(request.stack_profile),
+        profile_mismatch="",
         research_report="",
         requirements_doc="",
         tech_stack="",

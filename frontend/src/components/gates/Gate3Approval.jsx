@@ -721,6 +721,16 @@ export default function Gate3Approval({ projectId, projectState, status, onResum
       <p className="text-sm text-ink-2">
         Edit the plan below — uncheck tasks to skip them, edit descriptions, add or remove tasks.
         The coder agents will generate exactly what you approve here.
+        {projectState?.stack_profile && (
+          <>
+            {' '}Target:{' '}
+            <span className="font-medium text-ink">
+              {projectState.stack_profile_label || projectState.stack_profile}
+            </span>
+            . A phase this target does not need is absent from the plan, which is
+            correct — not a gap to fill.
+          </>
+        )}
       </p>
 
       {showArchBanner && (

@@ -133,10 +133,29 @@ def build_summary_pdf(state: dict, files: list, metrics: dict, project_id: str) 
         story.append(Paragraph("Brief", STYLES["h2"]))
         story.append(Paragraph(_escape(state["brief"]), STYLES["body"]))
 
+    # ── Target stack profile ─────────────────────────────────────────────────
+    # What was actually built, which is not always what was recommended — a
+    # reader holding this PDF needs to know which of the two they are looking
+    # at, and a mismatch must survive into the artifact rather than living only
+    # in a gate the reader never saw.
+    profile_name = (state.get("stack_profile") or "").strip()
+    if profile_name:
+        from app.profiles import get_profile
+        profile = get_profile(profile_name)
+        story.append(Paragraph("Target", STYLES["h2"]))
+        story.append(Paragraph(
+            _escape(f"{profile.label} ({profile.name}) — phases: "
+                    f"{' → '.join(profile.phase_names())}"), STYLES["body"]))
+        mismatch = (state.get("profile_mismatch") or "").strip()
+        if mismatch:
+            story.append(Paragraph(
+                _escape(f"NOTE — the recommended stack was not one this system "
+                        f"builds. {mismatch}"), STYLES["body"]))
+
     # ── Tech stack ───────────────────────────────────────────────────────────
     stack = (state.get("tech_stack") or "").strip()
     if stack:
-        story.append(Paragraph("Tech Stack", STYLES["h2"]))
+        story.append(Paragraph("Recommended Tech Stack", STYLES["h2"]))
         # tech_stack is sometimes a JSON blob, sometimes prose — render either.
         try:
             parsed = json.loads(stack)
