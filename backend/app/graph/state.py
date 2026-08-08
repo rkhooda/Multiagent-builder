@@ -26,6 +26,7 @@ class ProjectState(TypedDict):
     previous_versions: Dict[str, str]  # doc name -> prior content, set before an edit re-run overwrites it
     fix_counts: Dict[str, int]     # filepath -> AI fixes applied at gate 4 (capped per file)
     validation_report: dict        # Day 22 automated-checks report (counts, issues, failure_rate)
+    build_verification: dict       # Build Verification: per-target tier verdicts (install/build/boot)
     review_results: Dict[str, dict]  # filepath -> {reviewed, verdict, issues_found, revised} (Improvement 01)
     degraded_events: Dict[str, int]  # event -> count of silent fail-open degradations (Improvement 02)
     qa_overlap_ratio: float        # fraction of QA batches done before generation ended (Improvement 02)

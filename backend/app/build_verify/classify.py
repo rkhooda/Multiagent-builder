@@ -37,6 +37,41 @@ _ENV_PATTERNS = (
 )
 
 
+_TIER_PHRASE = {
+    PASS: {"install": "dependencies installed OK", "build": "build OK", "boot": "boot OK"},
+    FAIL_CODE: {"install": "dependency install failed (see error)",
+                "build": "build failed (see error)", "boot": "boot failed (see error)"},
+    FAIL_ENVIRONMENT: {"install": "dependency install failed (environment issue, not code)",
+                        "build": "build failed (environment issue, not code)",
+                        "boot": "boot failed (environment issue, not code)"},
+    TIMEOUT: {"install": "dependency install timed out", "build": "build timed out",
+              "boot": "boot timed out"},
+    SKIPPED: {"install": "install skipped", "build": "build skipped", "boot": "boot skipped"},
+}
+
+
+def render_qa_prefix(report: dict) -> str:
+    """Plain-language summary prepended to the QA report, the same mechanic
+    validation/report.py's render_summary already uses for automated checks
+    (qa_agent.py:494-498) — the machine's deterministic finding leads, before
+    the model's opinions."""
+    if not report or not report.get("enabled"):
+        return ""
+    targets = report.get("targets") or {}
+    if not targets:
+        return ""
+    lines = []
+    for name, r in targets.items():
+        tiers = r.get("tiers")
+        if not tiers:
+            lines.append(f"{name} — unverified ({r.get('unverified_reason', 'sandbox unavailable')})")
+            continue
+        phrases = [_TIER_PHRASE.get(v.get("verdict"), {}).get(tier, str(v.get("verdict")))
+                   for tier, v in tiers.items()]
+        lines.append(f"{name} — " + "; ".join(phrases) + ".")
+    return "**BUILD VERIFICATION**: " + " ".join(lines)
+
+
 def classify_failure(stderr: str) -> str:
     """Classify a completed, non-timed-out, nonzero-exit RunResult's stderr.
     Callers handle `pass` (exit_code == 0), `timeout` (RunResult.timed_out),
@@ -55,6 +90,17 @@ def demo() -> None:
     assert classify_failure("npm error code ECONNRESET") == FAIL_ENVIRONMENT
     assert classify_failure("Traceback (most recent call last):\nModuleNotFoundError: No module named 'app.foo'") == FAIL_CODE
     assert classify_failure("") == FAIL_CODE
+
+    prefix = render_qa_prefix({"enabled": True, "targets": {
+        "backend": {"target": "backend", "tiers": {
+            "install": {"verdict": "pass"}, "build": {"verdict": "pass"}, "boot": {"verdict": "pass"}}},
+        "frontend": {"target": "frontend", "tiers": {
+            "install": {"verdict": "pass"}, "build": {"verdict": "fail_code"}, "boot": {"verdict": "skipped"}}},
+    }})
+    assert "backend — dependencies installed OK; build OK; boot OK." in prefix, prefix
+    assert "frontend — dependencies installed OK; build failed (see error); boot skipped." in prefix, prefix
+    assert render_qa_prefix({"enabled": False}) == ""
+    assert render_qa_prefix({"enabled": True, "targets": {}}) == ""
     print("classify.demo: OK")
 
 

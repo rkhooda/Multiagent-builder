@@ -14,6 +14,7 @@ from app.agents.architecture_agent import architecture_agent
 from app.agents.planning_agent import planning_agent
 from app.agents.database_agent import database_agent
 from app.agents.devops_agent import devops_agent
+from app.agents.build_verify_agent import build_verify_agent
 from app.agents.qa_agent import qa_agent
 from app.agents.validation_pass import validation_pass
 from app.agents.frontend_coder_agent import frontend_coder_agent
@@ -287,6 +288,10 @@ workflow.add_node("database", stage_node("database", database_agent))
 workflow.add_node("validation", stage_node("validation", validation_pass))
 workflow.add_node("qa", stage_node("qa", qa_agent))
 workflow.add_node("devops", stage_node("devops", devops_agent))
+# Build Verification: runs generated code for real (install/build/boot) in a
+# disposable sandbox after devops produces the deploy files. Warn, never
+# block — build_verify_agent never raises, so this node cannot fail the run.
+workflow.add_node("build_verify", stage_node("build_verify", build_verify_agent))
 workflow.add_node("human_gate_4", human_gate_4)
 workflow.add_node("cancelled", cancelled)
 
@@ -343,7 +348,8 @@ workflow.add_edge("database", "backend_code")
 workflow.add_edge("backend_code", "validation")
 workflow.add_edge("validation", "qa")
 workflow.add_edge("qa", "devops")
-workflow.add_edge("devops", "human_gate_4")
+workflow.add_edge("devops", "build_verify")
+workflow.add_edge("build_verify", "human_gate_4")
 workflow.add_conditional_edges(
     "human_gate_4",
     make_gate_router("human_gate_4"),
