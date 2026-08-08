@@ -12,10 +12,9 @@ shared API client). Ordering, concurrency limits, per-file failure isolation,
 transitive blocking, and live progress broadcasts all live in the scheduler.
 The stage still fails as a whole only when > 50% of its files don't deliver.
 """
-from pathlib import Path
-
 from app.exceptions import LLMError
 from app.llm_router import call_llm
+from app.profiles import active_profile
 from app.utils.code_cleaner import strip_code_fences
 from app.utils.file_writer import process_generated_file
 from app.validation import call_validated, syntax_of
@@ -26,8 +25,6 @@ from .frontend_reviewer import (
 )
 from .parallel_runner import comment_safe, run_phase
 from .utils import get_tasks_for_phase
-
-SYSTEM_PROMPT = (Path(__file__).resolve().parents[3] / "prompts" / "frontend_coder_agent.md").read_text(encoding="utf-8")
 
 # Audited 2026-08-03: measured max complete file 829 (TaskForm.jsx, groq) —
 # 1.8x headroom. NOTE: 829 also exceeds the old fast-mode floor of 800, which
@@ -91,12 +88,6 @@ def _failure_stub(filepath: str, error: str) -> str:
     return note + "export default {};\n"
 
 
-def _is_lib_file(filepath: str) -> bool:
-    """The API client / shared lib everything imports — generate these first."""
-    low = filepath.lower()
-    return "/lib/" in low or low.endswith("api.js") or low.endswith("api.jsx")
-
-
 def frontend_coder_agent(state: dict) -> dict:
     """Reads: implementation_plan, architecture_doc, tech_stack, file_list,
     generated_files. Writes: generated_files (merged), log, errors,
@@ -128,12 +119,19 @@ def frontend_coder_agent(state: dict) -> dict:
         return {"generated_files": generated_files, "log": log, "errors": errors,
                 "current_stage": "backend_code"}
 
+    # Stack conventions come from the active profile (Improvement 03); the
+    # react-fastapi profile reproduces the pre-profile behaviour exactly.
+    # Resolved after the empty-phase early return so a profile that declares no
+    # frontend phase never needs one.
+    profile = active_profile(state)
+    spec = profile.phase("frontend")
+    system_prompt = profile.prompt_for("frontend")
+
     # Sections are invented at planning time and are absent from the
     # architecture-derived file_list, so the phase's own task filepaths are
     # unioned in — otherwise import_fixer and the folder map cannot see them.
     file_tree = sorted(set(state.get("file_list") or list(generated_files.keys()))
                        | {t.get("filepath") for t in fe_tasks if t.get("filepath")})
-    lib_ids = {t["id"] for t in fe_tasks if t.get("id") and _is_lib_file(t.get("filepath", ""))}
 
     # ── Improvement 01: reviewer wiring, resolved once per phase ─────────────
     # Live dict on state so the worker's atomic reservation and the coordinator's
@@ -148,8 +146,10 @@ def frontend_coder_agent(state: dict) -> dict:
             dependents[dep] = dependents.get(dep, 0) + 1
     # Fast mode already skips Day 22's repairs; a second opinion is the same kind
     # of spend, so it is withheld for the same reason and stated the same way.
+    # The reviewer prompt is React-specific, so profiles that don't declare
+    # review support keep it off regardless of the env switch.
     fast_mode = bool(state.get("fast_mode"))
-    mode = "off" if fast_mode else review_mode()
+    mode = "off" if (fast_mode or not profile.review_supported) else review_mode()
     if mode != "off":
         log.append(f"frontend_coder_agent: review mode {mode}, "
                    f"budget {vreport.repairs_spent_total(retry_counts)}/"
@@ -157,25 +157,24 @@ def frontend_coder_agent(state: dict) -> dict:
     elif fast_mode:
         log.append("frontend_coder_agent: fast mode — files generated without review")
 
-    def implicit_deps(task, by_id):
-        # Every non-lib file waits on the shared API client(s): a component that
-        # imports the client must not generate before it exists.
-        return [] if _is_lib_file(task.get("filepath", "")) else list(lib_ids)
-
     def build_context(task, st):
-        return build_file_context(task, st, phase_prefix="frontend/src")
+        return build_file_context(task, st, phase_prefix=spec.context_prefix,
+                                  phase=spec.context_recipe,
+                                  file_kind=profile.file_kind,
+                                  import_note=spec.import_note,
+                                  structure_note=spec.structure_note)
 
     def generate(task, context):
         # Pure worker (runs in a thread under one permit): primary + one repair
         # LLM call (call_validated, log=None so no shared-list mutation off-loop),
         # then the pure processor. No generated_files/errors/log touch here.
         messages = [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": system_prompt},
             {"role": "user", "content": context},
         ]
         tally = []  # worker-local: no shared-state mutation off the event loop
         raw = call_validated(
-            messages, "frontend_code", state, max_tokens=FRONTEND_FILE_MAX_TOKENS,
+            messages, spec.agent_type, state, max_tokens=FRONTEND_FILE_MAX_TOKENS,
             original_instruction="Output ONLY the file's code — no fences, no prose.",
             log=None,
             # Day 22: covers .json artifacts written by this phase. .jsx needs a
@@ -238,7 +237,7 @@ def frontend_coder_agent(state: dict) -> dict:
         fe_tasks, state, generate=generate, build_context=build_context,
         stub_for=lambda t, r: _failure_stub(t.get("filepath", ""), r),
         phase="frontend", project_id=project_id, file_tree=file_tree,
-        implicit_deps=implicit_deps)
+        implicit_deps=profile.implicit_deps.get("frontend"))
 
     files_ok, files_failed, blocked, total = (
         len(result.ok), len(result.failed), len(result.blocked), result.total)

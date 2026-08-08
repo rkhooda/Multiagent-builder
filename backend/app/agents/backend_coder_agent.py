@@ -9,27 +9,20 @@ router) is enforced as real dependency edges (backend_implicit_deps), not a sort
 
 Ownership (Day 19 ponytail #1): the database agent already generated the ORM
 models (it runs first now), so this agent generates schemas/routers/services and
-CONSUMES the models as full-content context. It also owns the deterministic
-Python infra (config.py, database.py, main.py, requirements.txt) — those are NOT
-LLM-generated (a hallucinated version or engine setup is unacceptable), rendered
-after the phase so main.py registers only the routers that actually delivered.
+CONSUMES the models as full-content context. Deterministic infra (config.py,
+database.py, main.py, requirements.txt for react-fastapi) is NOT LLM-generated —
+the active Stack Profile renders it after the phase so main.py registers only
+the routers that actually delivered. Stack conventions (prompt, context recipe,
+implicit dependency edges, infra set) all come from the profile since
+Improvement 03.
 """
-from pathlib import Path
-
 from app.exceptions import LLMError
-from app.utils.file_writer import process_generated_file, write_project_file
-from app.utils.backend_infra import (
-    render_config,
-    render_database,
-    render_main,
-    render_requirements,
-)
+from app.profiles import active_profile
+from app.utils.file_writer import process_generated_file
 from app.validation import call_validated, syntax_of
-from .context_builder import build_file_context, backend_file_kind, _resource_of, _same_resource
+from .context_builder import build_file_context
 from .parallel_runner import comment_safe, run_phase
 from .utils import get_tasks_for_phase, assert_single_owner
-
-SYSTEM_PROMPT = (Path(__file__).resolve().parents[3] / "prompts" / "backend_coder_agent.md").read_text(encoding="utf-8")
 
 # Audited 2026-08-03: NO real pipeline history (every TodoSimple attempt was
 # rate-limited). Direct model; frontend files (same shape) measured <= 829 —
@@ -38,18 +31,6 @@ BACKEND_FILE_MAX_TOKENS = 1500
 
 # Fraction of files that must fail before the whole stage is considered broken.
 STAGE_FAIL_THRESHOLD = 0.5
-
-# Infra files rendered deterministically (see backend_infra) — excluded from the
-# per-task LLM loop even if the planner lists them, so they are never
-# double-generated and never hallucinated.
-INFRA_BASENAMES = {"config.py", "database.py", "main.py", "requirements.txt"}
-
-# Backend structural ordering (config -> model -> schema -> router -> service ->
-# main) is enforced by the scheduler as real dependency edges, not a sort key:
-# every router/service implicitly depends on the schema (and model) tasks so it
-# generates only after them. See backend_implicit_deps below.
-STRUCTURAL_DEP_KINDS = {"model", "schema"}
-
 
 def _failure_stub(filepath: str, error: str) -> str:
     """Placeholder written when a file's generation fails, so it is visible in
@@ -63,68 +44,6 @@ def _failure_stub(filepath: str, error: str) -> str:
 
 def _basename(filepath: str) -> str:
     return filepath.rsplit("/", 1)[-1]
-
-
-def backend_implicit_deps(task: dict, by_id: dict) -> list:
-    """Structural edges the planner may have omitted: a router/service is
-    generated only after the SAME-resource model/schema tasks, so its FULL
-    model/schema context is real before it imports them. Same-resource (not
-    all-schemas) keeps blocking precise — one resource's schema failure blocks
-    only that resource's router, not every router. (ORM models live in the
-    database phase — already committed — so those edges fall outside this task
-    set and impose no wait here.)"""
-    kind = backend_file_kind(task.get("filepath", ""), task.get("description", ""))
-    if kind not in ("router", "service"):
-        return []
-    resource = _resource_of(task.get("filepath", ""))
-    return [tid for tid, t in by_id.items()
-            if backend_file_kind(t.get("filepath", ""), t.get("description", "")) in STRUCTURAL_DEP_KINDS
-            and _same_resource(_resource_of(t.get("filepath", "")), resource)]
-
-
-def _infra_path(file_list: list, basename: str, default: str) -> str:
-    """Resolve an infra file's path from the planned tree if present, else the
-    conventional default, so infra lands where the architecture expects it."""
-    for p in file_list or []:
-        if _basename(p) == basename:
-            return p
-    return default
-
-
-def _generate_infra(state: dict, generated_files: dict, ok_router_paths: list,
-                    project_id: str, project_name: str, log: list, errors: list) -> int:
-    """Render + write the deterministic Python infra files. Returns count written.
-    main.py registers ONLY the routers that generated successfully."""
-    file_list = state.get("file_list", [])
-    tech_stack = state.get("tech_stack", "")
-
-    req_content, req_warnings = render_requirements(tech_stack, generated_files)
-    for w in req_warnings:
-        errors.append(f"import_warning: {w}")
-
-    infra = [
-        (_infra_path(file_list, "config.py", "backend/app/config.py"), render_config()),
-        (_infra_path(file_list, "database.py", "backend/app/database.py"), render_database()),
-        (_infra_path(file_list, "main.py", "backend/app/main.py"),
-         render_main(project_name, ok_router_paths)),
-        (_infra_path(file_list, "requirements.txt", "backend/requirements.txt"), req_content),
-    ]
-
-    from ..core.connection_manager import manager
-    written = 0
-    for filepath, content in infra:
-        result = write_project_file(project_id, filepath, content)
-        if result["success"]:
-            generated_files[filepath] = content
-            written += 1
-            log.append(f"backend_coder_agent: wrote infra {filepath} ({result['size_bytes']} bytes)")
-            manager.broadcast_sync(project_id, {
-                "type": "file_written", "filename": _basename(filepath),
-                "filepath": filepath, "phase": "backend", "task_id": "infra",
-            })
-        else:
-            errors.append(f"backend_coder_agent: failed to write infra {filepath}: {result['error']}")
-    return written
 
 
 def backend_coder_agent(state: dict) -> dict:
@@ -150,8 +69,6 @@ def backend_coder_agent(state: dict) -> dict:
     assert_single_owner(implementation_plan)
 
     be_tasks = get_tasks_for_phase(implementation_plan, "backend")
-    # Infra files are rendered deterministically — never sent to the LLM.
-    llm_tasks = [t for t in be_tasks if _basename(t.get("filepath", "")) not in INFRA_BASENAMES]
 
     if not be_tasks:
         warning = "backend_coder_agent: no backend tasks in implementation plan"
@@ -160,22 +77,38 @@ def backend_coder_agent(state: dict) -> dict:
         return {"generated_files": generated_files, "log": log, "errors": errors,
                 "current_stage": "qa"}
 
+    # Stack conventions come from the active profile (Improvement 03); the
+    # react-fastapi profile reproduces the pre-profile behaviour exactly.
+    # Resolved after the empty-phase early return so a profile that declares no
+    # backend phase never needs one.
+    profile = active_profile(state)
+    spec = profile.phase("backend")
+    system_prompt = profile.prompt_for("backend")
+
+    # Infra files are rendered deterministically — never sent to the LLM.
+    llm_tasks = [t for t in be_tasks
+                 if _basename(t.get("filepath", "")) not in profile.infra_basenames]
+
     file_tree = state.get("file_list") or list(generated_files.keys())
 
     def build_context(task, st):
-        return build_file_context(task, st, phase_prefix="backend", phase="backend")
+        return build_file_context(task, st, phase_prefix=spec.context_prefix,
+                                  phase=spec.context_recipe,
+                                  file_kind=profile.file_kind,
+                                  import_note=spec.import_note,
+                                  structure_note=spec.structure_note)
 
     def generate(task, context):
         # Pure worker (thread, one permit): primary + one repair LLM call
         # (call_validated, log=None), then the pure processor WITH the AST import
         # fixer. commit_generated_file surfaces any import warnings into state.
         messages = [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": system_prompt},
             {"role": "user", "content": context},
         ]
         tally = []  # worker-local: no shared-state mutation off the event loop
         raw = call_validated(
-            messages, "backend_code", state, max_tokens=BACKEND_FILE_MAX_TOKENS,
+            messages, spec.agent_type, state, max_tokens=BACKEND_FILE_MAX_TOKENS,
             original_instruction="Output ONLY the file's code — no fences, no prose.",
             log=None,
             # Day 22: real ast/compile parse of THIS file, inside the existing
@@ -195,7 +128,7 @@ def backend_coder_agent(state: dict) -> dict:
         llm_tasks, state, generate=generate, build_context=build_context,
         stub_for=lambda t, r: _failure_stub(t.get("filepath", ""), r),
         phase="backend", project_id=project_id, file_tree=file_tree,
-        implicit_deps=backend_implicit_deps)
+        implicit_deps=profile.implicit_deps.get("backend"))
 
     files_ok, files_failed, blocked, total = (
         len(result.ok), len(result.failed), len(result.blocked), result.total)
@@ -203,14 +136,15 @@ def backend_coder_agent(state: dict) -> dict:
     # main.py registers only routers that actually delivered (never a failed or
     # blocked one) — the failed/blocked filepaths never reach ok_router_paths.
     ok_routers = [fp for fp in result.ok
-                  if backend_file_kind(fp, "") == "router"]
+                  if profile.file_kind and profile.file_kind(fp, "") == "router"]
 
     from ..core.connection_manager import manager
 
     # Deterministic infra — after the phase so main.py sees the real routers and
-    # requirements.txt sees every generated import.
-    infra_written = _generate_infra(state, generated_files, ok_routers,
-                                    project_id, project_name, log, errors)
+    # requirements.txt sees every generated import. Profile-owned: a stack with
+    # no deterministic infra declares none and writes nothing.
+    infra_written = profile.infra(state, generated_files, ok_routers,
+                                  project_id, project_name, log, errors) if profile.infra else 0
 
     log.append(f"backend_coder_agent: completed — {files_ok} ok, {files_failed} failed, "
                f"{blocked} blocked, {infra_written} infra files")

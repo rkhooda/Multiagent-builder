@@ -27,6 +27,22 @@ from .utils import truncate_for_context
 # ≤ 4K tokens; chars/4 heuristic → ~16K chars. Kept well under the free-tier
 # request caps that bit us on Days 12/14.
 MAX_CONTEXT_CHARS = 16000
+
+# Closing/structure lines for the two context recipes. Named constants (rather
+# than inline f-strings) because they are stack conventions, not recipe
+# mechanics: the active Stack Profile may override them per phase, and the
+# react-fastapi profile declares exactly these so extraction is byte-identical.
+# Templates — .format(filepath=..., resource=...) / .format(prefix=...).
+FRONTEND_IMPORT_NOTE = (
+    "This file is at {filepath}. Import the shared client and siblings "
+    "RELATIVE to this path. Output only the file's code.")
+FRONTEND_STRUCTURE_NOTE = (
+    "FOLDER MAP ({prefix}) — compute relative import paths from this")
+BACKEND_IMPORT_NOTE = (
+    "This file is at {filepath}. Use absolute `app.` imports "
+    "(e.g. from app.models.{resource} import ...). Output only the file's code.")
+BACKEND_STRUCTURE_NOTE = (
+    "PROJECT STRUCTURE ({prefix}) — import ONLY from files here, using the app. package root")
 FULL_DEP_THRESHOLD = 800  # deps smaller than this are injected whole, not summarised
 API_SECTION_CHARS = 1800
 COMPONENT_SECTION_CHARS = 1400
@@ -420,23 +436,32 @@ def _tasks_by_id(implementation_plan_str: str) -> dict:
 
 
 def build_file_context(task: dict, state: dict, phase_prefix: str = "frontend/src",
-                       phase: str = "frontend") -> str:
+                       phase: str = "frontend", file_kind=None,
+                       import_note: str = None, structure_note: str = None) -> str:
     """Assemble a focused, budget-bounded context string for ONE coder task.
 
-    Dispatches by `phase`: the frontend path (Day 18, default — unchanged) and
-    the backend path (Day 19). Both share the section splitter, budget, and
-    degradation-logging machinery.
+    Dispatches by `phase` (the RECIPE, not the plan phase name): the frontend
+    path (Day 18, default — unchanged) and the backend path (Day 19). Both
+    share the section splitter, budget, and degradation-logging machinery.
+
+    `file_kind` / `import_note` / `structure_note` come from the active Stack
+    Profile's PhaseSpec; None means the recipe's built-in react-fastapi
+    defaults, which keeps every pre-profile caller (and the test suite)
+    byte-identical.
 
     Returns the user-message body. Logs the final context size and any trims
     to state["log"] (Day 23 LangSmith / Day 26 optimisation depend on this
     data existing).
     """
     if phase == "backend":
-        return _build_backend_context(task, state, phase_prefix)
-    return _build_frontend_context(task, state, phase_prefix)
+        return _build_backend_context(task, state, phase_prefix, file_kind,
+                                      import_note, structure_note)
+    return _build_frontend_context(task, state, phase_prefix,
+                                   import_note, structure_note)
 
 
-def _build_frontend_context(task: dict, state: dict, phase_prefix: str = "frontend/src") -> str:
+def _build_frontend_context(task: dict, state: dict, phase_prefix: str = "frontend/src",
+                            import_note: str = None, structure_note: str = None) -> str:
     log = state.get("log")
     filepath = task.get("filepath", "")
     description = task.get("description", "")
@@ -498,9 +523,13 @@ def _build_frontend_context(task: dict, state: dict, phase_prefix: str = "fronte
 
     # The contract is computed once at planning time and carried on state; it is
     # rebuilt here only for checkpoints written before it existed, so old
-    # projects and the offline harness keep working.
-    ui_contract = state.get("ui_contract") or build_ui_contract(
-        tech_stack_str, implementation_plan)
+    # projects and the offline harness keep working. Key-presence, not
+    # truthiness: a profile that declares NO contract stores "" and must not
+    # have the react-fastapi contract rebuilt underneath it. Every pre-profile
+    # checkpoint lacking the key is implicitly react-fastapi, so the fallback
+    # builder stays this one.
+    ui_contract = (state.get("ui_contract", "") if "ui_contract" in state
+                   else build_ui_contract(tech_stack_str, implementation_plan))
 
     # Section decomposition invents files the ARCHITECTURE never listed, so
     # file_list alone no longer describes the tree. The folder map is what the
@@ -541,13 +570,13 @@ def _build_frontend_context(task: dict, state: dict, phase_prefix: str = "fronte
         if folder_map:
             parts += [
                 "",
-                f"FOLDER MAP ({phase_prefix}) — compute relative import paths from this",
+                (structure_note or FRONTEND_STRUCTURE_NOTE).format(prefix=phase_prefix),
                 folder_map,
             ]
         parts += [
             "",
-            f"This file is at {filepath}. Import the shared client and siblings "
-            f"RELATIVE to this path. Output only the file's code.",
+            (import_note or FRONTEND_IMPORT_NOTE).format(
+                filepath=filepath, resource=""),
         ]
         return "\n".join(parts)
 
@@ -599,7 +628,9 @@ def _build_frontend_context(task: dict, state: dict, phase_prefix: str = "fronte
 SQL_SECTION_CHARS = 2200
 
 
-def _build_backend_context(task: dict, state: dict, phase_prefix: str = "backend") -> str:
+def _build_backend_context(task: dict, state: dict, phase_prefix: str = "backend",
+                           file_kind=None, import_note: str = None,
+                           structure_note: str = None) -> str:
     """Backend per-file context (Day 19). Cross-file truth is the whole point:
     a router's imports must resolve against the ACTUAL generated model/schema,
     so their FULL bodies are injected (field names/types are exactly what gets
@@ -616,7 +647,8 @@ def _build_backend_context(task: dict, state: dict, phase_prefix: str = "backend
     generated_files = state.get("generated_files", {})
     file_list = state.get("file_list", [])
 
-    kind = backend_file_kind(filepath, description)
+    classify = file_kind or backend_file_kind
+    kind = classify(filepath, description)
     resource = _resource_of(filepath)
     sections = split_sections(architecture_doc)
 
@@ -648,7 +680,7 @@ def _build_backend_context(task: dict, state: dict, phase_prefix: str = "backend
         for p in file_list:
             if not _same_resource(_resource_of(p), resource):
                 continue
-            pk = backend_file_kind(p, "")
+            pk = classify(p, "")
             if pk == "model" or (pk == "schema" and kind != "schema"):
                 dep_paths[p] = True
 
@@ -657,7 +689,7 @@ def _build_backend_context(task: dict, state: dict, phase_prefix: str = "backend
         if not dep_task:
             continue
         dp = dep_task.get("filepath", dep_id)
-        pk = backend_file_kind(dp, "")
+        pk = classify(dp, "")
         dep_paths.setdefault(dp, pk in ("model", "schema"))
 
     def dep_block(path, full):
@@ -694,11 +726,11 @@ def _build_backend_context(task: dict, state: dict, phase_prefix: str = "backend
             parts += ["", "DEPENDENCY FILES (already generated — import from these, reuse exact names)"]
             parts += [text for _, text, _ in dep_render]
         if folder_map:
-            parts += ["", f"PROJECT STRUCTURE ({phase_prefix}) — import ONLY from files here, using the app. package root", folder_map]
+            parts += ["", (structure_note or BACKEND_STRUCTURE_NOTE).format(prefix=phase_prefix), folder_map]
         parts += [
             "",
-            f"This file is at {filepath}. Use absolute `app.` imports "
-            f"(e.g. from app.models.{resource} import ...). Output only the file's code.",
+            (import_note or BACKEND_IMPORT_NOTE).format(
+                filepath=filepath, resource=resource),
         ]
         return "\n".join(parts)
 

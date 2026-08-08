@@ -1,10 +1,9 @@
 import json
 from pathlib import Path
 from ..llm_router import call_llm
+from ..profiles import active_profile
 from ..utils.file_writer import write_project_file
 from .utils import get_tasks_for_phase, get_completed_file_content, truncate_for_context, assert_single_owner
-
-SYSTEM_PROMPT = (Path(__file__).resolve().parents[3] / "prompts" / "database_agent.md").read_text(encoding="utf-8")
 
 # Audited 2026-08-03: NO real pipeline history (every TodoSimple attempt was
 # rate-limited); standalone dev-script calls measured <= 722. Direct model,
@@ -57,6 +56,11 @@ def database_agent(state: dict) -> dict:
 
     print(f"[DatabaseAgent] Found {len(db_tasks)} database tasks")
 
+    # Prompt comes from the active profile (Improvement 03) — resolved after
+    # the empty-phase early return so a profile with no database phase never
+    # needs one. react-fastapi points at the same prompts/database_agent.md.
+    system_prompt = active_profile(state).prompt_for("database")
+
     # ── Extract database schema section from architecture for context ─
     schema_context = ""
     if "## Database Schema" in architecture_doc:
@@ -108,7 +112,7 @@ Description: {description}
 Generate the complete file content now. Output ONLY the raw file code — no explanation, no markdown fences, no preamble. Start with the first import statement and end with the last line of code."""
 
         messages = [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_content}
         ]
 

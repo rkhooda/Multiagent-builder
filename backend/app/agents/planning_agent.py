@@ -2,7 +2,6 @@ import json
 from pathlib import Path
 
 from ..validation import call_validated
-from .context_builder import build_ui_contract
 from .utils import (build_feedback_prompt, decomposition_enabled, parse_and_validate_plan,
                     regeneration_target, truncate_for_context)
 
@@ -215,7 +214,11 @@ CRITICAL RULES:
     # from the plan that was just validated so it can never describe primitives
     # that are not in it. Stored on state so every frontend context reads one
     # identical string and Gate 3 can show what the sections are held to.
-    ui_contract = build_ui_contract(tech_stack_str, plan_json)
+    # Profile-owned (Improvement 03): a stack with no shared UI contract stores
+    # "" and the context builder injects nothing.
+    from ..profiles import active_profile
+    contract_builder = active_profile(state).ui_contract
+    ui_contract = contract_builder(tech_stack_str, plan_json) if contract_builder else ""
     log.append(f"planning_agent: ui contract derived ({len(ui_contract)} chars)")
 
     return {
