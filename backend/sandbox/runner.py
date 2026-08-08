@@ -111,29 +111,9 @@ def reap_orphans() -> list:
     return ids
 
 
-def run_in_sandbox(
-    workspace: Path,
-    command: list,
-    *,
-    image: str,
-    timeout_s: int = DEFAULT_TIMEOUT_S,
-    network: str = NETWORK,
-    disk_limit_mb: float = DISK_LIMIT_MB,
-) -> RunResult:
-    """Run `command` inside `image`, with `workspace` bind-mounted at
-    `/workspace` as the ONLY writable path (read-only root filesystem
-    elsewhere), non-root, all capabilities dropped, no new privileges, a PID
-    cap, a memory cap, and no network beyond `network`.
-
-    Always removes the container, however the run ends. Never raises for a
-    build failure (a nonzero exit is a normal, expected `RunResult`) — only
-    for a setup problem (docker unreachable, image missing), which the caller
-    must treat as `unverified`, never `pass`.
-    """
-    ensure_network(network)
-    name = f"sandbox-build-{uuid.uuid4().hex[:12]}"
-    cmd = [
-        "docker", "run", "--rm", "--name", name,
+def _base_flags(name: str, workspace: Path, workdir: str, network: str, env: dict) -> list:
+    flags = [
+        "--name", name,
         "--label", f"{LABEL}=1",
         "--network", network,
         "--user", "1000:1000",
@@ -145,9 +125,42 @@ def run_in_sandbox(
         "--read-only",
         "--tmpfs", "/tmp:size=256m",
         "-v", f"{workspace}:/workspace",
-        "-w", "/workspace",
-        image, *command,
+        "-w", f"/workspace/{workdir}".rstrip("/") or "/workspace",
     ]
+    for k, v in (env or {}).items():
+        flags += ["-e", f"{k}={v}"]
+    return flags
+
+
+def run_in_sandbox(
+    workspace: Path,
+    command: list,
+    *,
+    image: str,
+    timeout_s: int = DEFAULT_TIMEOUT_S,
+    network: str = NETWORK,
+    disk_limit_mb: float = DISK_LIMIT_MB,
+    workdir: str = "",
+    env: dict = None,
+) -> RunResult:
+    """Run `command` inside `image`, with `workspace` bind-mounted at
+    `/workspace` as the ONLY writable path (read-only root filesystem
+    elsewhere), non-root, all capabilities dropped, no new privileges, a PID
+    cap, a memory cap, and no network beyond `network`. `workdir` is a
+    subdirectory of `/workspace` (e.g. "frontend"); `env` is extra
+    environment for the command — e.g. PYTHONPATH so a later tier can see
+    what an earlier tier `pip install --target`ed into the workspace, since
+    system site-packages die with the container that installed into them but
+    anything under `/workspace` survives across separate `docker run` calls.
+
+    Always removes the container, however the run ends. Never raises for a
+    build failure (a nonzero exit is a normal, expected `RunResult`) — only
+    for a setup problem (docker unreachable, image missing), which the caller
+    must treat as `unverified`, never `pass`.
+    """
+    ensure_network(network)
+    name = f"sandbox-build-{uuid.uuid4().hex[:12]}"
+    cmd = ["docker", "run", "--rm", *_base_flags(name, workspace, workdir, network, env), image, *command]
 
     disk_exceeded = threading.Event()
     stop_watch = threading.Event()
@@ -193,6 +206,100 @@ def run_in_sandbox(
     )
 
 
+@dataclass
+class BootResult:
+    healthy: bool
+    crashed: bool          # exited on its own before ever becoming healthy
+    exit_code: Optional[int]
+    logs: str
+    duration_s: float
+
+
+def probe_boot(
+    workspace: Path,
+    command: list,
+    *,
+    image: str,
+    port: int,
+    health_path: str,
+    ready_timeout_s: int = 30,
+    network: str = NETWORK,
+    workdir: str = "",
+    env: dict = None,
+) -> BootResult:
+    """Tier 3: start `command` detached, poll `health_path` until it answers
+    or `ready_timeout_s` runs out, then unconditionally stop the container —
+    a smoke test, not a lasting server. A healthy long-running process never
+    exits on its own, so this cannot reuse `run_in_sandbox`'s
+    subprocess-timeout-means-failure shape: here a full `ready_timeout_s`
+    with nothing happening is the SUCCESS path if health comes back late, and
+    an early container exit is the interesting failure, not a timeout.
+
+    Polls via `docker exec ... python3`, not a published host port — keeps
+    the container off any host-reachable port, consistent with the sandbox
+    never exposing build output to the host network. Requires python3 in the
+    boot image; every react-fastapi boot image (python:3.11-slim) has it.
+    `ponytail: not a generic prober — the one profile that exists needs only
+    this, revisit if a future profile's boot image lacks python3.`
+    """
+    ensure_network(network)
+    name = f"sandbox-boot-{uuid.uuid4().hex[:12]}"
+    run_cmd = [
+        "docker", "run", "-d", *_base_flags(name, workspace, workdir, network, env),
+        image, *command,
+    ]
+    start = time.monotonic()
+    started = subprocess.run(run_cmd, capture_output=True, text=True)
+    if started.returncode != 0:
+        return BootResult(healthy=False, crashed=True, exit_code=None,
+                           logs=_truncate(started.stderr), duration_s=time.monotonic() - start)
+
+    probe = [
+        "docker", "exec", name, "python3", "-c",
+        "import urllib.request,sys\n"
+        f"urllib.request.urlopen('http://localhost:{port}{health_path}', timeout=2)\n"
+        "sys.exit(0)\n",
+    ]
+    healthy = False
+    try:
+        deadline = time.monotonic() + ready_timeout_s
+        while time.monotonic() < deadline:
+            if subprocess.run(probe, capture_output=True, timeout=5).returncode == 0:
+                healthy = True
+                break
+            inspect = subprocess.run(
+                ["docker", "inspect", "-f", "{{.State.Running}}", name],
+                capture_output=True, text=True,
+            )
+            if inspect.returncode != 0 or inspect.stdout.strip() != "true":
+                break  # the process exited on its own — a crash, not a slow start
+            time.sleep(1)
+
+        logs = subprocess.run(["docker", "logs", name], capture_output=True, text=True)
+        inspect_exit = subprocess.run(
+            ["docker", "inspect", "-f", "{{.State.Running}}", name],
+            capture_output=True, text=True,
+        )
+        still_running = inspect_exit.returncode == 0 and inspect_exit.stdout.strip() == "true"
+        exit_code = None
+        crashed = False
+        if not still_running and not healthy:
+            crashed = True
+            code = subprocess.run(
+                ["docker", "inspect", "-f", "{{.State.ExitCode}}", name],
+                capture_output=True, text=True,
+            )
+            exit_code = int(code.stdout.strip()) if code.returncode == 0 and code.stdout.strip().isdigit() else None
+    finally:
+        subprocess.run(["docker", "kill", name], capture_output=True)
+        subprocess.run(["docker", "rm", "-f", name], capture_output=True)
+
+    return BootResult(
+        healthy=healthy, crashed=crashed, exit_code=exit_code,
+        logs=_truncate(logs.stdout + logs.stderr), duration_s=time.monotonic() - start,
+    )
+
+
 def demo() -> None:
     """ponytail self-check: a benign run must produce sane output; a container
     that outlives its timeout must be killed and removed."""
@@ -208,6 +315,19 @@ def demo() -> None:
                                  image="python:3.11-slim", timeout_s=2)
         assert result.timed_out
         assert result.exit_code is None
+
+        boot = probe_boot(
+            ws, ["python3", "-m", "http.server", "8000"],
+            image="python:3.11-slim", port=8000, health_path="/", ready_timeout_s=10,
+        )
+        assert boot.healthy, boot
+        assert not boot.crashed, boot
+
+        boot = probe_boot(
+            ws, ["python3", "-c", "import sys; sys.exit(1)"],
+            image="python:3.11-slim", port=8000, health_path="/", ready_timeout_s=5,
+        )
+        assert not boot.healthy and boot.crashed, boot
     finally:
         cleanup_workspace(ws)
     print("runner.demo: OK")

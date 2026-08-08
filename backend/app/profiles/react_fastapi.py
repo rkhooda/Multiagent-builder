@@ -21,7 +21,7 @@ from app.agents.context_builder import (
     _same_resource,
 )
 
-from . import PhaseSpec, StackProfile
+from . import PhaseSpec, StackProfile, TierSpec, VerifyTarget
 
 # ── Structural dependency shapes (moved from the coder agents, Day 19/20) ────
 
@@ -175,6 +175,53 @@ PLAN_EXAMPLE = '''[
 ]'''
 
 
+# ── Build verification recipes (Build Verification improvement) ─────────────
+#
+# Two independently-verified units: the deterministic infra above guarantees
+# `backend/requirements.txt` and `backend/app/main.py` (with a `/health`
+# route, backend_infra.py:230) exist on every project this profile builds, so
+# both targets' recipes can assume the same fixed shape every time.
+#
+# `pip install --target .deps` rather than a plain install: each tier is a
+# SEPARATE container (Phase 1's isolation boundary — a fresh disposable
+# container per `docker run`, never a lasting one), so packages installed to
+# system site-packages would die with the container that installed them.
+# Anything under /workspace survives across tiers because it's the same bind
+# mount; PYTHONPATH=.deps is how build/boot see what install produced. npm
+# needs no such trick — `npm ci` already installs into `node_modules` inside
+# the project directory by default.
+VERIFY_TARGETS = (
+    VerifyTarget(
+        name="backend", root="backend",
+        install=TierSpec(
+            command=("pip", "install", "--target", ".deps", "-r", "requirements.txt"),
+            image="python:3.11-slim", timeout_s=180),
+        build=TierSpec(
+            command=("python3", "-c", "import app.main"),
+            image="python:3.11-slim", timeout_s=60, env={"PYTHONPATH": ".deps"}),
+        boot=TierSpec(
+            command=("python3", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"),
+            image="python:3.11-slim", timeout_s=30, env={"PYTHONPATH": ".deps"},
+            port=8000, health_path="/health", ready_timeout_s=20),
+    ),
+    VerifyTarget(
+        name="frontend", root="frontend",
+        install=TierSpec(
+            command=("npm", "ci"), image="node:20-slim", timeout_s=180),
+        build=TierSpec(
+            command=("npm", "run", "build"), image="node:20-slim", timeout_s=180),
+        boot=TierSpec(
+            # Serving dist/ needs no node_modules, so python:3.11-slim (already
+            # pulled for the backend targets) covers it — one fewer image to
+            # pull, and it's what the exec-based health probe needs anyway
+            # (runner.probe_boot requires python3 in the boot image).
+            command=("python3", "-m", "http.server", "8000"), workdir="dist",
+            image="python:3.11-slim", timeout_s=30,
+            port=8000, health_path="/", ready_timeout_s=15),
+    ),
+)
+
+
 PROFILE = StackProfile(
     name="react-fastapi",
     label="React + FastAPI full-stack app",
@@ -220,4 +267,5 @@ PROFILE = StackProfile(
     infra_basenames=INFRA_BASENAMES,
     devops_files=DEVOPS_FILES,
     review_supported=True,
+    verify_targets=VERIFY_TARGETS,
 )

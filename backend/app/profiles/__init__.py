@@ -49,6 +49,36 @@ class PhaseSpec:
 
 
 @dataclass(frozen=True)
+class TierSpec:
+    """One tier of one verify target's build-verification ladder — Build
+    Verification improvement. `command` is an argv tuple, `image` a Docker
+    image tag the sandbox pulls, `timeout_s` this tier's wall-clock ceiling.
+    `workdir` is relative to the target's own root (e.g. "" or "dist").
+    `port`/`health_path`/`ready_timeout_s` are read only for a boot tier —
+    see docs/SANDBOX_THREAT_MODEL.md and backend/sandbox/runner.probe_boot."""
+    command: tuple
+    image: str
+    timeout_s: int
+    workdir: str = ""
+    env: Optional[dict] = None
+    port: Optional[int] = None
+    health_path: str = "/health"
+    ready_timeout_s: int = 30
+
+
+@dataclass(frozen=True)
+class VerifyTarget:
+    """One independently installable/buildable/bootable unit of a project —
+    a react-fastapi project has two (backend, frontend), each with its own
+    three-tier ladder. `root` is relative to the project root."""
+    name: str
+    root: str
+    install: Optional[TierSpec] = None
+    build: Optional[TierSpec] = None
+    boot: Optional[TierSpec] = None
+
+
+@dataclass(frozen=True)
 class StackProfile:
     name: str
     label: str
@@ -84,6 +114,10 @@ class StackProfile:
     #: magnitude: a full-stack app below 8 tasks is a truncated plan, a static
     #: site of 5 files is complete.
     min_tasks: int = 8
+    #: Build Verification improvement: independently-verified units (backend,
+    #: frontend, ...). Empty = this profile declares no verification recipe
+    #: yet — the verify stage treats that as nothing to check, not a failure.
+    verify_targets: tuple = ()
 
     def phase(self, name: str) -> Optional[PhaseSpec]:
         return next((p for p in self.phases if p.name == name), None)
