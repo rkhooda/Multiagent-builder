@@ -424,3 +424,46 @@ output contract**, not fluency or length. That is a sharper and more actionable
 statement than Day 29's "local output is thin", which was an artifact of the
 truncation bug. Whether a larger local model clears the contract is the obvious
 next experiment, and it costs nothing but time and RAM.
+
+---
+
+## 2026-08-08 — Cross-reference: Build Verification's retroactive baseline
+
+Every `% usable` figure on this page was inferred — parsed, not run. The Build
+Verification improvement (`docs/SANDBOX_THREAT_MODEL.md`,
+`docs/BUILD_VERIFICATION_BASELINE.md`) ran the two named projects above through
+a real install/build/boot in a disposable sandbox for the first time. This note
+adds that finding; it does not revise the figures above, which stand as
+originally measured under the rubric current at the time.
+
+- **`2901fb46` TodoSimple** (21.9% usable above; re-scored today at 21.6% — a
+  small drift from the rubric evolving since Day 25, not a correction of this
+  page's number). Backend `pip install` **passed** — every dependency this
+  quota-starved partial run declared actually resolves. Backend `python -c
+  "import app.main"` **failed**: `IndentationError: unexpected indent` in a
+  file `score_project.py`'s own per-file syntax check did not flag. That
+  discrepancy is itself a finding, not yet root-caused — recorded here rather
+  than silently reconciled, and worth a follow-up look at why the two checks
+  disagree on the same file. Frontend was never verifiable: no
+  `frontend/package.json` was ever generated for this run, so `npm ci` fails
+  before evaluating any dependency (`npm error code EUSAGE` — no lockfile to
+  install from).
+- **`113cf67c` NotesTags (Day 15 era)** (14.1% usable above; re-scored today
+  at 15.4%, same rubric-drift caveat). Backend `pip install` **failed**:
+  `ERROR: Could not open requirements file` — this run never produced a
+  `backend/requirements.txt` at all. This is the pre-Day-18 baseline this page
+  scored specifically to sanity-check the rubric against a known-weak
+  project; build verification confirms "known-weak" extends past file
+  presence to installability.
+
+**The wider retroactive run** (22 persisted projects, full methodology and
+per-project detail in `docs/BUILD_VERIFICATION_BASELINE.md`) found the same
+two defect classes recurring across nearly every candidate: no
+`frontend/package.json`/lockfile ever generated (17/17 projects with a
+frontend target), and no `backend/requirements.txt` on disk (12/17 candidates
+predating real backend infra). Only two runs — both from Day 19 — passed a
+complete backend install→build→boot cycle for real. That is the honest
+current number: of every persisted project checked, **2 have ever been proven
+to actually boot.** Nothing here contradicts this page's own conclusion that
+provider quota, not model capability, was Day 25/30's binding constraint —
+it adds a second, independent axis these runs never got far enough to test.
