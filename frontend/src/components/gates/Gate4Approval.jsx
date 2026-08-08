@@ -108,6 +108,77 @@ function QualityThresholdBanner({ report }) {
   )
 }
 
+// Build Verification: did the generated code actually install/build/boot, in
+// a disposable sandbox — the first check in this pipeline that proves the
+// code runs rather than inferring it from parsing. WARNS, never blocks, same
+// stance as every banner here: download stays enabled, the human decides.
+const TIER_LABELS = { install: 'Install', build: 'Build', boot: 'Boot' }
+const VERDICT_LABELS = {
+  pass: 'OK', fail_code: 'Failed', fail_environment: 'Failed (environment)',
+  timeout: 'Timed out', skipped: 'Skipped', unverified: 'Unverified',
+}
+
+function buildVerificationSummary(bv) {
+  if (!bv || !bv.enabled) return null
+  const targets = bv.targets || {}
+  const names = Object.keys(targets)
+  if (names.length === 0) return null
+  const allPass = names.every((name) => {
+    const tiers = targets[name].tiers
+    return tiers && Object.values(tiers).every((t) => t.verdict === 'pass')
+  })
+  return { targets, allPass }
+}
+
+function BuildVerificationBanner({ buildVerification }) {
+  const [openTarget, setOpenTarget] = useState(null)
+  const summary = buildVerificationSummary(buildVerification)
+  if (!summary || summary.allPass) return null
+
+  return (
+    <div className="rounded-lg border border-warn/45 bg-warn/10 p-3">
+      <div className="flex items-start gap-2">
+        <span aria-hidden="true" className="text-base leading-none">⚠</span>
+        <div className="flex-1">
+          <p className="text-sm font-semibold text-warn">
+            Build verification found a problem — the generated code did not fully install/build/boot.
+          </p>
+          <p className="mt-0.5 text-xs text-warn">Download remains available. Review the error below before shipping.</p>
+          {Object.entries(summary.targets).map(([name, r]) => {
+            const tiers = r.tiers
+            return (
+              <div key={name} className="mt-1.5">
+                <button
+                  type="button"
+                  onClick={() => setOpenTarget((cur) => (cur === name ? null : name))}
+                  aria-expanded={openTarget === name}
+                  className="text-xs font-semibold text-warn underline hover:brightness-110"
+                >
+                  {name}: {tiers
+                    ? Object.entries(tiers).map(([t, v]) => `${TIER_LABELS[t] || t}=${VERDICT_LABELS[v.verdict] || v.verdict}`).join(', ')
+                    : `unverified (${r.unverified_reason || 'sandbox unavailable'})`}
+                  {' '}{openTarget === name ? '— hide error' : '— show error'}
+                </button>
+                {openTarget === name && tiers && (
+                  <div className="mt-1 space-y-1.5">
+                    {Object.entries(tiers)
+                      .filter(([, v]) => v.verdict && v.verdict !== 'pass' && v.verdict !== 'skipped')
+                      .map(([t, v]) => (
+                        <pre key={t} className="max-h-40 overflow-y-auto whitespace-pre-wrap rounded border border-warn/35 bg-raised p-2 font-mono text-[10px] text-ink-2">
+                          {TIER_LABELS[t] || t}: {(v.stderr || v.logs || v.error || 'no output captured').slice(-2000)}
+                        </pre>
+                      ))}
+                  </div>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // Human-readable labels for degraded_events keys; unknown keys render raw so a
 // new backend event is never invisible while waiting for a label here.
 const DEGRADED_LABELS = {
@@ -185,6 +256,7 @@ function DegradedEventsBanner({ events }) {
 function SummaryCard({ filesData, projectState, severityCounts }) {
   const totalIssues = severityCounts.critical + severityCounts.warnings + severityCounts.info
   const models = [...new Set(Object.values(projectState?.agent_models || {}))]
+  const buildSummary = buildVerificationSummary(projectState?.build_verification)
 
   return (
     <div className="rounded-lg border border-line bg-raised p-4">
@@ -208,6 +280,15 @@ function SummaryCard({ filesData, projectState, severityCounts }) {
         <Stat label="Total Pipeline Time">
           {formatDuration(projectState?.generation_seconds)}
           <span className="ml-1 text-[10px] font-normal text-ink-3">incl. reviews</span>
+        </Stat>
+        <Stat label="Build">
+          {!buildSummary ? (
+            <span className="text-ink-3">n/a</span>
+          ) : buildSummary.allPass ? (
+            <span className="text-run">✓ Pass</span>
+          ) : (
+            <span className="text-warn">⚠ Issues</span>
+          )}
         </Stat>
         {/* The old "Token Cost $0.00" stat moved to MetricsPanel below: on free
             tiers the dollar figure is always zero and says nothing, while the
@@ -499,6 +580,7 @@ export default function Gate4Approval({ projectId, projectState, status, onResum
       )}
 
       <QualityThresholdBanner report={projectState?.validation_report} />
+      <BuildVerificationBanner buildVerification={projectState?.build_verification} />
       <DegradedEventsBanner events={projectState?.degraded_events} />
 
       <SummaryCard filesData={filesData} projectState={projectState} severityCounts={severityCounts} />
