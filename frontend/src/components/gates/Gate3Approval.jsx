@@ -4,13 +4,42 @@ import FeedbackInput from './FeedbackInput'
 import RegeneratingOverlay from './RegeneratingOverlay'
 import RetryWarning, { RETRY_SOFT_CAP, retryCount, cappedButtonClass } from './RetryWarning'
 
-const PHASES = ['frontend', 'backend', 'database', 'devops']
+// Canonical display order. Which of these a plan actually contains varies by
+// stack profile (Improvement 03) — a static site has no database or backend
+// phase — so this array orders the phases that ARE present rather than
+// declaring the ones that must be.
+const PHASE_ORDER = ['database', 'backend', 'frontend', 'devops']
 
 const PHASE_CONFIG = {
   frontend: { label: 'Frontend', prefix: 'fe', color: 'bg-ok', light: 'bg-ok/10', border: 'border-ok/35', text: 'text-ok' },
   backend: { label: 'Backend', prefix: 'be', color: 'bg-run', light: 'bg-run/10', border: 'border-run/35', text: 'text-run' },
   database: { label: 'Database', prefix: 'db', color: 'bg-alt', light: 'bg-alt/10', border: 'border-alt/35', text: 'text-alt' },
   devops: { label: 'DevOps', prefix: 'dv', color: 'bg-accent', light: 'bg-accent-soft', border: 'border-accent/35', text: 'text-accent' },
+}
+
+// A phase name we have no config for still has to render — labelled as itself,
+// never silently folded into another phase's card.
+function phaseConfig(phase) {
+  return (
+    PHASE_CONFIG[phase] || {
+      label: phase ? phase.charAt(0).toUpperCase() + phase.slice(1) : 'Other',
+      prefix: (phase || 'xx').slice(0, 2),
+      color: 'bg-ink-3',
+      light: 'bg-ink-3/10',
+      border: 'border-ink-3/35',
+      text: 'text-ink-3',
+    }
+  )
+}
+
+// The phases this plan actually contains, in canonical order, with any
+// unrecognised phase appended rather than dropped.
+function phasesInPlan(tasks) {
+  const present = new Set(tasks.map((t) => t.phase).filter(Boolean))
+  return [
+    ...PHASE_ORDER.filter((p) => present.has(p)),
+    ...[...present].filter((p) => !PHASE_ORDER.includes(p)).sort(),
+  ]
 }
 
 const COMPLEXITY_CONFIG = {
@@ -54,7 +83,7 @@ function groupSectionsUnderShell(phaseTasks) {
 }
 
 function nextTaskId(phase, allTasks) {
-  const prefix = PHASE_CONFIG[phase].prefix
+  const prefix = phaseConfig(phase).prefix
   const max = allTasks.reduce((m, t) => {
     const match = /^([a-z]{2})_(\d+)$/.exec(t.id || '')
     return match && match[1] === prefix ? Math.max(m, parseInt(match[2], 10)) : m
@@ -67,9 +96,7 @@ function nextTaskId(phase, allTasks) {
 // order within each phase so requires-based context injection stays sane.
 function serializePlan(tasks, excluded) {
   const included = tasks.filter((t) => !excluded.has(t.id))
-  const ordered = ['database', 'backend', 'frontend', 'devops'].flatMap((phase) =>
-    included.filter((t) => t.phase === phase)
-  )
+  const ordered = PHASE_ORDER.flatMap((phase) => included.filter((t) => t.phase === phase))
   // Anything with an unknown phase shouldn't be silently dropped
   const known = new Set(ordered.map((t) => t.id))
   return JSON.stringify([...ordered, ...included.filter((t) => !known.has(t.id))], null, 2)
@@ -127,8 +154,9 @@ function SummaryBar({ tasks, excluded, extraActions }) {
           {included.length} task{included.length === 1 ? '' : 's'}
         </span>
         <span className="text-ink-3">
-          {phaseCount('frontend')} frontend · {phaseCount('backend')} backend · {phaseCount('database')} database ·{' '}
-          {phaseCount('devops')} devops
+          {phasesInPlan(included)
+            .map((phase) => `${phaseCount(phase)} ${phase}`)
+            .join(' · ') || 'no tasks'}
         </span>
         {excluded.size > 0 && (
           <span className="font-medium text-accent">{excluded.size} excluded</span>
@@ -492,7 +520,7 @@ export default function Gate3Approval({ projectId, projectState, status, onResum
   }
 
   const renderTaskCard = (task) => {
-    const cfg = PHASE_CONFIG[task.phase] || PHASE_CONFIG.backend
+    const cfg = phaseConfig(task.phase)
     const compCfg = COMPLEXITY_CONFIG[task.estimated_complexity] || COMPLEXITY_CONFIG.medium
     const isExcluded = excluded.has(task.id)
     const dependents = isExcluded ? includedDependentsOf(task.id) : []
@@ -764,8 +792,8 @@ export default function Gate3Approval({ projectId, projectState, status, onResum
         {regenAction && <RegeneratingOverlay label={regenLabel} />}
 
         <div className="space-y-3">
-          {PHASES.map((phase) => {
-            const cfg = PHASE_CONFIG[phase]
+          {phasesInPlan(tasks).map((phase) => {
+            const cfg = phaseConfig(phase)
             const phaseTasks = groupSectionsUnderShell(tasks.filter((t) => t.phase === phase))
             const phaseIncluded = phaseTasks.filter((t) => !excluded.has(t.id))
             const isCollapsed = collapsed.has(phase)

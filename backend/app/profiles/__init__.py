@@ -43,6 +43,9 @@ class PhaseSpec:
     context_prefix: str = ""  # folder-map prefix (e.g. 'frontend/src')
     import_note: Optional[str] = None     # template: {filepath} {resource}
     structure_note: Optional[str] = None  # template: {prefix}
+    #: one line telling the planner what belongs in this phase FOR THIS STACK —
+    #: "frontend" means something different in a React app and a static site.
+    plan_guidance: str = ""
 
 
 @dataclass(frozen=True)
@@ -71,12 +74,34 @@ class StackProfile:
     #: whether the Improvement-01 selective reviewer understands this stack's
     #: output (its prompt is React-specific).
     review_supported: bool = False
+    #: worked example task array injected into the planning prompt — a plan for
+    #: THIS stack's file conventions. The single biggest planner-quality lever,
+    #: same as the coders' few-shot examples.
+    plan_example: str = ""
+    #: what this profile is for, shown at Gate 1 / in the selector.
+    summary: str = ""
+    #: plan-size floor. Per-profile because scope differs by an order of
+    #: magnitude: a full-stack app below 8 tasks is a truncated plan, a static
+    #: site of 5 files is complete.
+    min_tasks: int = 8
 
     def phase(self, name: str) -> Optional[PhaseSpec]:
         return next((p for p in self.phases if p.name == name), None)
 
     def phase_names(self) -> list:
         return [p.name for p in self.phases]
+
+    def phase_table(self) -> str:
+        """The planner's phase vocabulary, DERIVED from the declarations above
+        rather than authored, so the prompt cannot drift from what the
+        validator enforces."""
+        rows = "\n".join(
+            f"| `{p.name}` | `{p.id_prefix}_` | {p.plan_guidance} |" for p in self.phases)
+        order = " → ".join(p.name for p in self.phases)
+        return (
+            f"| Phase | ID prefix | What belongs in it |\n"
+            f"|---|---|---|\n{rows}\n\n"
+            f"Execution order: {order}.")
 
     def prompt_for(self, phase_name: str) -> str:
         spec = self.phase(phase_name)

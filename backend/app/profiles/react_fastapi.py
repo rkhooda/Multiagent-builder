@@ -149,26 +149,69 @@ DEVOPS_FILES = (
 )
 
 
+# The planner's worked example — the same shape the pre-profile prompt's §5
+# template showed, kept verbatim so plan output does not drift.
+PLAN_EXAMPLE = '''[
+  {
+    "id": "db_001",
+    "phase": "database",
+    "filename": "models.py",
+    "filepath": "backend/app/models.py",
+    "description": "Detailed description of exactly what this file must contain, referencing specific tables, fields, relationships, and any business logic from the architecture document.",
+    "requires": [],
+    "context_sections": ["Database Schema"],
+    "estimated_complexity": "medium"
+  },
+  {
+    "id": "be_001",
+    "phase": "backend",
+    "filename": "auth.py",
+    "filepath": "backend/app/routers/auth.py",
+    "description": "Implement authentication endpoints, login, register, token generation, matching the requirements document specifications.",
+    "requires": ["db_001"],
+    "context_sections": ["Database Schema", "API Endpoints"],
+    "estimated_complexity": "high"
+  }
+]'''
+
+
 PROFILE = StackProfile(
     name="react-fastapi",
     label="React + FastAPI full-stack app",
+    summary=("A full-stack web application: React 19 + Vite + TailwindCSS front "
+             "end, FastAPI + SQLAlchemy + Pydantic back end, a relational "
+             "database, containerised with Docker Compose."),
     phases=(
         PhaseSpec(name="database", id_prefix="db", label="Database",
                   agent_type="database", prompt_file="database_agent.md",
-                  context_recipe="backend", context_prefix="backend"),
+                  context_recipe="backend", context_prefix="backend",
+                  plan_guidance=("SQLAlchemy ORM model files and Alembic "
+                                 "migrations under `backend/app/models/`.")),
         PhaseSpec(name="backend", id_prefix="be", label="Backend",
                   agent_type="backend_code", prompt_file="backend_coder_agent.md",
                   context_recipe="backend", context_prefix="backend",
                   import_note=BACKEND_IMPORT_NOTE,
-                  structure_note=BACKEND_STRUCTURE_NOTE),
+                  structure_note=BACKEND_STRUCTURE_NOTE,
+                  plan_guidance=("Pydantic schemas, FastAPI routers and service "
+                                 "modules under `backend/app/`. Do NOT plan "
+                                 "config.py, database.py, main.py or "
+                                 "requirements.txt — those are generated "
+                                 "deterministically.")),
         PhaseSpec(name="frontend", id_prefix="fe", label="Frontend",
                   agent_type="frontend_code", prompt_file="frontend_coder_agent.md",
                   context_recipe="frontend", context_prefix="frontend/src",
                   import_note=FRONTEND_IMPORT_NOTE,
-                  structure_note=FRONTEND_STRUCTURE_NOTE),
+                  structure_note=FRONTEND_STRUCTURE_NOTE,
+                  plan_guidance=("React components, pages, hooks and the shared "
+                                 "axios client under `frontend/src/`.")),
         PhaseSpec(name="devops", id_prefix="dv", label="DevOps",
-                  agent_type="devops", prompt_file="devops_agent.md"),
+                  agent_type="devops", prompt_file="devops_agent.md",
+                  plan_guidance=("Deployment and CI files at the project root. "
+                                 "The devops stage generates a fixed set "
+                                 "itself, so plan devops tasks only for files "
+                                 "beyond it.")),
     ),
+    plan_example=PLAN_EXAMPLE,
     file_kind=backend_file_kind,
     implicit_deps={"frontend": frontend_implicit_deps,
                    "backend": backend_implicit_deps},

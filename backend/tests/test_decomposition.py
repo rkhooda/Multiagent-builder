@@ -135,10 +135,18 @@ def test_atomised_page_is_rejected():
 def test_duplicate_filepath_is_rejected():
     """The Day 19 single-owner assertion. Decomposition is the likeliest way to
     break it: a section and the shell both claiming the page's path would be
-    generated twice, each 'working' in isolation while clobbering the other."""
+    generated twice, each 'working' in isolation while clobbering the other.
+
+    Improvement 03 moved this check from _decomposition_integrity to
+    _plan_shape, so it now runs for EVERY plan and every profile rather than
+    only when decomposition is enabled — a strictly wider guarantee. The test
+    asserts it where it now lives."""
+    from app.profiles import get_profile
+    from app.validation import _plan_shape
+
     tasks = [dict(t) for t in GOOD_PLAN]
     tasks[1] = {**tasks[1], "filepath": "frontend/src/pages/LandingPage.jsx"}
-    errors = _errors(tasks)
+    errors = _plan_shape(_plan_of(tasks), get_profile("react-fastapi"))
     assert any("Duplicate filepath" in e for e in errors), errors
 
 

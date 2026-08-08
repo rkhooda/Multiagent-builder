@@ -180,9 +180,11 @@ def _decomposition_integrity(plan) -> list:
       3. the shell is actually a page — a section hanging off a component means
          the model decomposed the wrong thing;
       4. fan-out stays in 2..5 — one section is not a decomposition, six is
-         atomisation, and each one is a whole generation call;
-      5. filepaths are unique — the Day 19 single-owner assertion still holds,
-         and decomposition is the most likely way to break it.
+         atomisation, and each one is a whole generation call.
+
+    Filepath uniqueness used to be rule 5 here. It moved to _plan_shape, which
+    runs for every profile whether or not decomposition is on — the assertion
+    was never decomposition-specific, it was just most likely to break there.
     """
     from app.agents.utils import (MAX_SECTIONS_PER_PAGE, MIN_SECTIONS_PER_PAGE,
                                   is_page_task)
@@ -221,25 +223,101 @@ def _decomposition_integrity(plan) -> list:
                 f"{MAX_SECTIONS_PER_PAGE}. Merge them back into the page or into "
                 f"fewer, larger sections.")
 
-    seen: dict = {}
+    return errors
+
+
+def _plan_shape(plan, profile) -> list:
+    """Improvement 03: is this plan a legal SHAPE for the active profile?
+
+    Four questions, each with a concrete failure behind it. Absent phases are
+    deliberately NOT one of them — a static-site plan with no database tasks is
+    the feature working, so only *declared* phases and *resolvable, acyclic*
+    edges are enforced.
+
+      1. every task's phase is one the profile declares — otherwise the plan
+         contains work no node will ever run, and the tasks vanish silently at
+         phase-filtering time with nothing said;
+      2. the task id prefix matches its phase — the id encodes the phase
+         everywhere else in the system (Gate 3 grouping, ordering, logs), so a
+         `be_003` filed under `frontend` corrupts all of them;
+      3. no dependency cycle — parallel_runner raises on one mid-generation,
+         after the earlier phases have already been paid for. Catching it here
+         puts it in front of the human at Gate 3 instead;
+      4. exactly one task owns each filepath — the Day 19 single-owner rule,
+         checked for every profile rather than only across db/backend.
+
+    Loud at plan time, by design (ponytail #2): Gate 3 is where a human is
+    already reading the plan, and every one of these is cheap to fix there.
+    """
+    declared = {p.name: p for p in profile.phases}
+    errors = []
+
+    for task in plan.tasks:
+        spec = declared.get(task.phase)
+        if spec is None:
+            errors.append(
+                f"Task {task.id} is in phase '{task.phase}', which the "
+                f"'{profile.name}' profile does not build. Allowed phases: "
+                f"{', '.join(declared)}. Drop the task or move it to a phase "
+                f"that exists.")
+        elif not task.id.startswith(spec.id_prefix + "_"):
+            errors.append(
+                f"Task {task.id} is in phase '{task.phase}', whose id prefix is "
+                f"'{spec.id_prefix}_'. Renumber it as {spec.id_prefix}_NNN.")
+
+    # Cycle detection over the plan's own edges — the same Kahn pass the
+    # scheduler runs, done here where it is still free to fix. Unknown ids are
+    # treated as satisfied: parse_and_validate_plan already reports them, and a
+    # dangling edge is not a cycle.
+    edges = {t.id: [d for d in t.requires if d != t.id] for t in plan.tasks}
+    remaining = dict(edges)
+    resolved = set()
+    while True:
+        ready = [tid for tid, deps in remaining.items()
+                 if all(d in resolved or d not in edges for d in deps)]
+        if not ready:
+            break
+        resolved.update(ready)
+        for tid in ready:
+            remaining.pop(tid)
+    if remaining:
+        errors.append(
+            f"Dependency cycle among tasks {sorted(remaining)[:6]} — a task "
+            f"depends, directly or transitively, on itself. Break the cycle: "
+            f"`requires` must form a directed acyclic graph.")
+
+    seen = {}
     for task in plan.tasks:
         if task.filepath in seen:
             errors.append(
-                f"Duplicate filepath '{task.filepath}' owned by both {seen[task.filepath]} "
-                f"and {task.id}. Exactly one task may own a file.")
+                f"Duplicate filepath '{task.filepath}' owned by both "
+                f"{seen[task.filepath]} and {task.id}. Exactly one task may "
+                f"own a file.")
         seen[task.filepath] = task.id
     return errors
 
 
 def _valid_plan(text, state):
     from app.agents.utils import decomposition_enabled, parse_and_validate_plan
-    from app.agents.planning_agent import MIN_TASKS
+    from app.profiles import active_profile
     plan, errors = parse_and_validate_plan(text)
     if plan is None:
         return errors or ["No valid JSON task array found"]
-    if len(plan.tasks) < MIN_TASKS:
-        errors.append(f"Only {len(plan.tasks)} tasks found, need at least {MIN_TASKS}")
+
+    profile = active_profile(state)
     required = set(state.get("file_list") or [])
+
+    # The floor exists to catch a TRUNCATED plan, not to impose a size. Against
+    # a project that genuinely has fewer files than the floor it does the
+    # opposite: measured 2026-08-08, a 6-file static site and a 3-file CLI tool
+    # both produced correctly-shaped plans that this check rejected, and the
+    # repair padded one into a truncated 4,495-token response. Coverage of
+    # file_list is the real invariant (checked below) and it is exact, so the
+    # floor yields to it whenever the file list is known.
+    floor = min(profile.min_tasks, len(required)) if required else profile.min_tasks
+    if len(plan.tasks) < floor:
+        errors.append(f"Only {len(plan.tasks)} tasks found, need at least {floor}")
+    errors.extend(_plan_shape(plan, profile))
     missing = sorted(required - {t.filepath for t in plan.tasks})
     if missing:
         errors.append(f"Plan is missing {len(missing)} required file tasks. Examples: {missing[:5]}")

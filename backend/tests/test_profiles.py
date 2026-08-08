@@ -7,6 +7,7 @@ pin the equivalences that make that claim mechanical rather than hopeful:
 prompt bytes, context bytes, implicit-edge sets, infra/devops declarations.
 Offline, zero API calls.
 """
+import json
 import os
 import sys
 
@@ -135,6 +136,94 @@ check("ui contract builder is the Day-26 one",
       RF.ui_contract is not None and
       "Tokens — use these exact classes" in RF.ui_contract(_STATE["tech_stack"], "[]"))
 check("review supported on the tuned stack only", RF.review_supported is True)
+
+
+# ── Planning prompt: profile vocabulary is injected, not hard-coded ──────────
+from app.agents.planning_agent import _system_prompt  # noqa: E402
+from app.validation import _valid_plan  # noqa: E402
+
+prompt = _system_prompt(RF)
+check("no placeholder survives injection",
+      "{PHASE_TABLE}" not in prompt and "{PLAN_EXAMPLE}" not in prompt
+      and "{PROFILE_LABEL}" not in prompt and "{PROFILE_NAME}" not in prompt)
+check("prompt names every declared phase",
+      all(f"`{p.name}`" in prompt for p in RF.phases))
+check("prompt states absent phases are valid",
+      "MUST BE ABSENT" in prompt and "not a failure" in prompt)
+check("prompt carries the profile's worked example",
+      RF.plan_example in prompt)
+
+
+def _plan(*tasks):
+    return json.dumps(list(tasks))
+
+
+def _t(tid, phase, filepath, requires=None):
+    return {
+        "id": tid, "phase": phase, "filename": filepath.rsplit("/", 1)[-1],
+        "filepath": filepath, "requires": requires or [],
+        "context_sections": ["Database Schema"], "estimated_complexity": "low",
+        "description": "A sufficiently long description of exactly what this "
+                       "file contains, naming concrete tables and endpoints.",
+    }
+
+
+_BASE = [_t(f"fe_{i:03d}", "frontend", f"frontend/src/components/C{i}.jsx")
+         for i in range(1, 9)]
+_ST = {"file_list": [], "stack_profile": "react-fastapi"}
+
+check("a well-formed single-phase plan passes shape checks",
+      _valid_plan(_plan(*_BASE), _ST) == [])
+
+# 1. a phase the profile does not declare. Two distinct rejections, both loud:
+#    a NON-canonical name never survives the TaskSchema Literal, and a
+#    canonical name the active profile omits is caught by _plan_shape. The
+#    second is the case Improvement 03 introduces, so it is checked against a
+#    profile trimmed to one phase rather than waiting for a real second target.
+bad_phase = _BASE[:-1] + [dict(_BASE[-1], phase="mobile", id="mb_001")]
+errs = _valid_plan(_plan(*bad_phase), _ST)
+check("non-canonical phase never validates",
+      any("mb_001" in e or "phase" in e.lower() for e in errs))
+
+from dataclasses import replace  # noqa: E402
+from app.agents.utils import parse_and_validate_plan  # noqa: E402
+from app.validation import _plan_shape  # noqa: E402
+
+frontend_only = replace(RF, phases=(RF.phase("frontend"),))
+mixed, _ = parse_and_validate_plan(_plan(
+    *_BASE[:-1],
+    _t("db_001", "database", "backend/app/models/note.py")))
+errs = _plan_shape(mixed, frontend_only)
+check("canonical phase the profile omits is rejected at plan time",
+      any("does not build" in e for e in errs))
+check("...and the message names the allowed phases",
+      any("frontend" in e for e in errs))
+
+# 2. id prefix disagreeing with phase
+bad_prefix = _BASE[:-1] + [dict(_BASE[-1], id="be_001")]
+errs = _valid_plan(_plan(*bad_prefix), _ST)
+check("id prefix must match its phase",
+      any("id prefix" in e for e in errs))
+
+# 3. dependency cycle
+cyc = _BASE[:-2] + [
+    _t("fe_007", "frontend", "frontend/src/components/A.jsx", ["fe_008"]),
+    _t("fe_008", "frontend", "frontend/src/components/B.jsx", ["fe_007"]),
+]
+errs = _valid_plan(_plan(*cyc), _ST)
+check("dependency cycle is caught before generation",
+      any("cycle" in e.lower() for e in errs))
+
+# 4. two tasks owning one filepath
+dup = _BASE[:-1] + [dict(_BASE[-1], filepath=_BASE[0]["filepath"])]
+errs = _valid_plan(_plan(*dup), _ST)
+check("duplicate filepath rejected regardless of decomposition flag",
+      any("Duplicate filepath" in e for e in errs))
+
+# 5. absent phases are NOT an error — the whole point of Phase 2
+check("a plan with only frontend tasks is legal",
+      not any("database" in e or "absent" in e.lower()
+              for e in _valid_plan(_plan(*_BASE), _ST)))
 
 print(f"\n{PASS} passed, {FAIL} failed. (0 API calls)")
 sys.exit(1 if FAIL else 0)
