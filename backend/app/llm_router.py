@@ -945,7 +945,7 @@ def call_llm(messages: list, agent_type: str, max_tokens=4000, timeout=None,
     # are both visible in the same table as everything else.
     cache_key = llm_cache.make_key(agent_type, messages, max_tokens) if use_cache else None
     if cache_key:
-        hit = llm_cache.get(cache_key)
+        hit = llm_cache.get(cache_key, project_id)
         if hit is not None:
             _log_attempt(agent_type, "cache", 1, "ok", time.monotonic(),
                          project_id=project_id, label=label,

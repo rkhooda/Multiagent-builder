@@ -119,15 +119,18 @@ def test_hits_are_counted_for_the_hit_rate_line():
     _clear()
 
 
-def _stub_provider():
+def _stub_provider(content="GENERATED"):
     """Replace the completion call with a counter, so 'did this cost a request?'
-    is answerable without spending quota."""
+    is answerable without spending quota. `content` is what the fake model
+    returns — pass validator-passing content when calling through an agent."""
     from app import llm_router as R
 
     calls = []
 
     class _Msg:
-        content = "GENERATED"
+        pass
+
+    _Msg.content = content
 
     class _Choice:
         finish_reason = "stop"
@@ -187,6 +190,114 @@ def test_end_to_end_use_cache_false_always_spends():
         R.call_llm(msgs, "frontend_code", max_tokens=4000, use_cache=False)
         R.call_llm(msgs, "frontend_code", max_tokens=4000, use_cache=False)
         assert len(calls) == 2, "bypass replayed a cached answer"
+    finally:
+        restore()
+        del os.environ["LLM_DAILY_TOKENS_GROQ"], os.environ["LLM_DAILY_TOKENS_GEMINI"]
+        R._spent_today.clear()
+        _clear()
+
+
+def test_cache_read_fault_is_counted_as_degradation():
+    """A broken cache degrades to live calls — correct, but it must be COUNTED
+    (Improvement 02): a cache that dies silently looks like a healthy 0% run."""
+    from unittest import mock
+    from app.observability import degraded, llm_cache as C
+
+    degraded.drain("cache-fault-test")
+    with mock.patch.object(C, "_connect", side_effect=RuntimeError("disk gone")):
+        assert C.get("some-key", project_id="cache-fault-test") is None
+        C.put("some-key", "architecture", "DOC", "cache-fault-test")
+    events = degraded.drain("cache-fault-test")
+    assert events.get("cache_fault:read") == 1, events
+    assert events.get("cache_fault:write") == 1, events
+
+
+# A stub architecture doc that passes the real validation registry (sections,
+# parseable tree >= 5 files, mermaid blocks, Response JSON per endpoint row,
+# props annotations) — so the agent-level test exercises the same code path a
+# real run does, repair branch included only if this ever regresses.
+_VALID_ARCH_DOC = """# Architecture
+
+## Folder Structure
+```text
+frontend/src/App.jsx
+frontend/src/pages/NotesPage.jsx
+frontend/src/components/NoteList.jsx
+backend/app/main.py
+backend/app/models/note.py
+backend/app/routers/notes.py
+```
+
+## Database Schema
+```sql
+CREATE TABLE notes (id INTEGER PRIMARY KEY, title TEXT NOT NULL, body TEXT);
+```
+```mermaid
+erDiagram
+    NOTES {
+        int id
+        string title
+        string body
+    }
+```
+
+## API Endpoints
+| Method | Path | Auth | Description | Response |
+|---|---|---|---|---|
+| GET | /api/notes | none | List notes | [{"id": 1, "title": "string"}] |
+| POST | /api/notes | none | Create a note | {"id": 1, "title": "string"} |
+| DELETE | /api/notes/1 | none | Delete a note | {"ok": true} |
+
+## Component Hierarchy
+- App (props: none)
+  - NotesPage (props: none)
+    - NoteList (props: notes, onDelete)
+
+## Security
+Input validation on every endpoint; parameterised SQL only; no secrets in the
+repository. CORS restricted to the frontend origin. Rate limiting on writes.
+""" + "x" * 800  # padding over the 1,500-char quality floor
+
+
+def test_agent_level_restart_replay_is_free():
+    """The restart endpoint clears the target stage's artifacts and re-enters
+    with decision='edit', feedback=''. The AGENT must then rebuild
+    byte-identical messages so the replay is a cache hit — this is the
+    end-to-end proof (state -> agent -> messages -> cache), not just the
+    call_llm-level one above. Measured claim: the second run costs ZERO
+    provider calls."""
+    _clear()
+    R, calls, restore = _stub_provider(content=_VALID_ARCH_DOC)
+    os.environ["LLM_DAILY_TOKENS_GROQ"] = "999999"
+    os.environ["LLM_DAILY_TOKENS_GEMINI"] = "999999"
+    try:
+        R._budget_day[0] = R._utc_day()
+        R._spent_today.clear()
+        R._next_allowed.clear()
+        from app.agents.architecture_agent import architecture_agent
+
+        def fresh_state():
+            # What the restart endpoint leaves behind: upstream artifacts kept,
+            # the target stage's own artifacts cleared, decision pressed.
+            return {
+                "project_id": "restart-replay-test",
+                "project_name": "Notes",
+                "brief": "a notes app",
+                "requirements_doc": "## Functional Requirements\n- CRUD notes",
+                "tech_stack": '{"frontend": "React", "backend": "FastAPI", "database": "SQLite"}',
+                "architecture_doc": "",
+                "human_decision": "edit",
+                "human_feedback": "",
+                "log": [], "errors": [],
+            }
+
+        first = architecture_agent(fresh_state())
+        assert len(calls) == 1, f"first run should cost exactly one call, cost {len(calls)}"
+
+        second = architecture_agent(fresh_state())
+        assert len(calls) == 1, f"restart replay cost {len(calls) - 1} provider calls — must be 0"
+        assert second["architecture_doc"] == first["architecture_doc"], \
+            "replay must reproduce the identical artifact"
     finally:
         restore()
         del os.environ["LLM_DAILY_TOKENS_GROQ"], os.environ["LLM_DAILY_TOKENS_GEMINI"]

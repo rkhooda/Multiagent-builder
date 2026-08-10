@@ -79,9 +79,21 @@ def make_key(agent_type: str, messages: list, max_tokens: int) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
-def get(key: str):
+def _count_fault(project_id, kind: str):
+    """A cache fault degrades to a live call — correct, but it must be COUNTED
+    (Improvement 02): a cache that silently stops working looks exactly like a
+    healthy run with a 0% hit rate. Rides the existing degraded_events drain."""
+    try:
+        from . import degraded
+        degraded.record(project_id, f"cache_fault:{kind}")
+    except Exception:                           # noqa: BLE001 — accounting never fails a call
+        pass
+
+
+def get(key: str, project_id: str = None):
     """Cached response, or None. Never raises — a cache fault must degrade to a
-    normal call, never fail one."""
+    normal call, never fail one. `project_id` is attribution for the fault
+    counter only; it plays no part in the lookup."""
     if not enabled():
         return None
     conn = None
@@ -96,6 +108,7 @@ def get(key: str):
         return row["response"] if row is not None else None
     except Exception as e:                      # noqa: BLE001
         print(f"[Cache] read failed (falling back to a live call): {e}", flush=True)
+        _count_fault(project_id, "read")
         return None
     finally:
         if conn is not None:
@@ -118,6 +131,7 @@ def put(key: str, agent: str, response: str, project_id: str = None):
         conn.close()
     except Exception as e:                      # noqa: BLE001
         print(f"[Cache] write failed (run unaffected): {e}", flush=True)
+        _count_fault(project_id, "write")
 
 
 def clear(project_id: str = None) -> int:
