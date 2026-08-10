@@ -85,6 +85,42 @@ fragmentation note).
 - **Task 4 (budgets)**: no starvation defect exists; the remaining work is
   keeping the pin green and not inventing cuts the measurements don't ask for.
 
+## Task 2 decision record (2026-08-10) — dominant payload, and why no content was cut
+
+The dominant payload is the fixed preamble repeated on every coder call
+(system prompt ~940 tok frontend / ~1,700 tok backend, 37–60% of each call's
+prompt), times the call count. The three remedies, priced:
+
+1. **Native provider prompt caching — VERIFIED UNAVAILABLE on the scarce
+   pool.** Groq supports it only on GPT-OSS models (cached tokens exempt from
+   rate limits there — see `PROVIDERS.md`, dated 2026-08-10); the coders'
+   primary llama-3.3-70b is not supported. Gemini 2.5 Flash implicit caching
+   needs a 2048-token common prefix; today's task-first message shape never
+   reaches it. **No action possible without a routing change**, which is out
+   of scope here (routing drift has invalidated premises twice).
+2. **Trim the coder system prompts** (backend −~850 tok/call ≈ 25–34k
+   tok/run; frontend −~300 tok/call ≈ 18k tok/run). NOT DONE: the prompt
+   bulk is worked examples that encode measured defect classes (Pydantic v2
+   traps, `app.` import convention), and a prompt change's quality effect
+   cannot be verified offline — golden `--rescore` re-scores *saved*
+   outputs; scoring *new* generations needs live quota, the very resource
+   that is blocked. Shipping a blind trim would trade a measured quality
+   basis for an unmeasured saving — the exact failure mode this project has
+   twice paid for. **Deferred with review-by 2026-08-24**: if Task 3's
+   call-count reduction makes a single-agent A/B affordable (~90–110k
+   tokens, one day's Groq), run it then.
+3. **Trim per-call context blocks** (tech-stack block ~40 tok, API section
+   for non-fetching leaf components ~450 tok). NOT DONE, same reason — the
+   API block is the Day 18 anti-hallucination anchor; cutting it for
+   "obviously non-fetching" files is a heuristic whose failure mode is the
+   exact defect it fixed. The ≤4K context budget is already enforced,
+   logged, and has never been violated on a real run (section 4b).
+
+The measurable, quality-safe reduction is **whole-call elimination**
+(Task 3): a call not made saves its entire 2.6k-token prompt, needs no
+quality proof beyond the emitted files being deterministic, and the
+fragmentation numbers already price it.
+
 ## Suites baseline (2026-08-10, before any change)
 
 - Offline gate: **23/23 green** (includes QA-stream, crafted-breakage

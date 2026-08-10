@@ -103,6 +103,33 @@ local daemon is detected; `LLM_MODE=prefer-local` puts it first, ahead of
 every cloud tier. `LLM_MODE=cloud-only` excludes only Ollama — NVIDIA and
 OpenRouter stay in, since they are cloud too.
 
+## Prompt caching (verified against provider docs, 2026-08-10)
+
+Checked because the token audit found Groq spend is 90% prompt-side and the
+repeated per-call preamble is the dominant payload — native prompt caching
+would make that preamble nearly free **if** it applied. It does not, today:
+
+- **Groq**: prompt caching exists and is automatic, and cached tokens **do
+  not count toward rate limits** — but it is only available on the GPT-OSS
+  models (`gpt-oss-20b`, `gpt-oss-120b`, `gpt-oss-safeguard-20b`). The
+  coders' primary `llama-3.3-70b-versatile` is **not supported**. Caching
+  requires exact prefix matches (static content first, variable content
+  last).
+- **Gemini 2.5 Flash**: implicit caching is on by default, minimum prefix
+  **2048 tokens**. Today's coder messages put the per-file TASK block first,
+  so the cross-call common prefix is only the system prompt (~940–1,700
+  tokens) — below the threshold; implicit caching never triggers. The
+  documented benefit is billing (moot at $0); rate-limit treatment is not
+  documented.
+
+**Consequence for designs:** the repeated coder preamble is not free on any
+pool in the current routing. Moving the coders' primary to `groq/gpt-oss-20b`
+(a slug already live-verified in the fallback tiers) would make cached prefix
+tokens rate-limit-free on the scarce pool — but that is a routing change with
+its own quality evaluation, not a config tweak. If it is ever made, reorder
+the coder context to shared-prefix-first at the same time, or the cache never
+matches.
+
 ## Which limit is currently scarce
 
 **Groq's 100,000 tokens/day** — it is the primary for all four file-producing
