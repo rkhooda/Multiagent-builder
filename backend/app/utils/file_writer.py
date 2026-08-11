@@ -45,15 +45,24 @@ def get_header_comment(filepath: str) -> str:
     return comment_styles.get(ext, "")
 
 
-def write_project_file(project_id: str, filepath: str, content: str, add_header: bool = True) -> dict:
+def write_project_file(project_id: str, filepath: str, content: str, add_header: bool = True,
+                       strip_fences: bool = True) -> dict:
     """
     Writes a generated file to outputs/{project_id}/{filepath}.
     Strips markdown code fences, adds a header comment, creates directories as needed.
 
+    `strip_fences=False` writes the content verbatim. Needed for documents that
+    LEGITIMATELY contain a fenced block — the docs/ mirror wraps the plan and the
+    validation/build reports in ```json, and stripping treats that closing fence
+    as a model artifact and deletes it, leaving markdown with an unterminated
+    code block. Every implementation-plan.md written since 2026-08-05 has that
+    defect. Generated SOURCE files must keep the default: a model wrapping a .jsx
+    file in fences is exactly the artifact this exists to remove.
+
     Returns a dict with: success, full_path, size_bytes, error (if any)
     """
     try:
-        clean_content = strip_code_fences(content)
+        clean_content = strip_code_fences(content) if strip_fences else content
 
         if not clean_content.strip():
             return {

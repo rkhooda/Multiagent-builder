@@ -1,3 +1,4 @@
+import json
 import sqlite3
 import os
 import traceback
@@ -139,30 +140,137 @@ STAGE_PRIMARY_OUTPUT = {
     "planning": "implementation_plan",
 }
 
-# Stage -> (output field, docs/ filename) mirrored to outputs/{project_id}/docs/
-# as markdown so the existing ZIP/PDF export picks them up from gate 1 onward,
-# not just after code generation writes files. planning's field is JSON, not
-# prose, so it gets fenced rather than written raw.
-STAGE_DOC_FILE = {
-    "research": ("research_report", "research.md"),
-    "requirements": ("requirements_doc", "requirements.md"),
-    "architecture": ("architecture_doc", "architecture.md"),
-    "planning": ("implementation_plan", "implementation-plan.md"),
-    "qa": ("qa_report", "qa-report.md"),
+def _prose(value):
+    """Agent output that is already markdown. Written through untouched."""
+    return value if isinstance(value, str) and value.strip() else None
+
+
+def _structured(title: str):
+    """Renderer for a field the pipeline holds as JSON or as a Python
+    dict/list — plan, validation report, build verdicts, tech stack.
+
+    Fenced rather than flattened into prose: these are consumed by people
+    checking exact values (which task, which file, which verdict), and a
+    prettified narrative of a data structure invites the reader to trust a
+    paraphrase. `default=str` because build verdicts carry non-JSON types and a
+    docs file must never be the thing that fails a run.
+    """
+    def render(value):
+        if not value:
+            return None
+        if isinstance(value, str):
+            # The plan and tech stack arrive as JSON STRINGS, usually on one
+            # line. Re-indent them so the document is readable; fall back to the
+            # raw string if it does not parse, because an unreadable document
+            # still beats no document.
+            try:
+                text = json.dumps(json.loads(value), indent=2, default=str)
+            except (ValueError, TypeError):
+                text = value
+        else:
+            text = json.dumps(value, indent=2, default=str)
+        return f"# {title}\n\n```json\n{text}\n```\n"
+    return render
+
+
+# Stage -> the documents it contributes to outputs/{project_id}/docs/, as
+# (state field, filename, renderer). Mirrored to disk as each stage completes so
+# the existing ZIP/PDF export picks them up from gate 1 onward, not only after
+# code generation has written files.
+#
+# WHY a renderer per document rather than the `if stage == "planning"` branch
+# this replaces: the pipeline holds these in three different shapes — markdown
+# prose, JSON strings, and live dicts — and a per-stage special case worked only
+# while there were exactly two. A list per stage also lets one agent contribute
+# more than one document, which planning and research both do.
+#
+# The zip already ships whatever is on disk (walk_generated_files), so nothing
+# in the export path needs to know these exist.
+STAGE_DOCS = {
+    "research": [
+        ("research_report", "research.md", _prose),
+        ("tech_stack", "tech-stack.md", _structured("Recommended Tech Stack")),
+    ],
+    "requirements": [
+        ("requirements_doc", "requirements.md", _prose),
+    ],
+    "architecture": [
+        ("architecture_doc", "architecture.md", _prose),
+    ],
+    "planning": [
+        ("implementation_plan", "implementation-plan.md",
+         _structured("Implementation Plan")),
+        ("ui_contract", "ui-contract.md", _prose),
+        # The audit trail for what was CUT at gate 3. Worth shipping precisely
+        # because it explains absences in the code — a reader who cannot find a
+        # feature should be able to see it was excluded rather than lost.
+        ("excluded_tasks", "excluded-tasks.md",
+         _structured("Tasks Excluded at Gate 3")),
+    ],
+    "validation": [
+        ("validation_report", "validation-report.md",
+         _structured("Automated Validation Report")),
+    ],
+    "qa": [
+        ("qa_report", "qa-report.md", _prose),
+    ],
+    "build_verify": [
+        ("build_verification", "build-verification.md",
+         _structured("Build Verification")),
+    ],
 }
+
+_DOCS_README = """# Project documents
+
+Written by the agents that designed this project, in pipeline order. They are
+the reasoning behind the code in `frontend/` and `backend/` — read them to find
+out WHY something is built the way it is.
+
+| File | Produced by | What it is |
+|---|---|---|
+| `research.md` | research agent | Domain findings and prior art behind the brief |
+| `tech-stack.md` | research agent | The recommended stack, and why |
+| `requirements.md` | requirements agent | Functional and non-functional requirements |
+| `architecture.md` | architecture agent | System design: components, data model, endpoints |
+| `implementation-plan.md` | planning agent | Every file to build, with dependencies |
+| `ui-contract.md` | planning agent | Shared UI tokens and conventions given to every frontend file |
+| `excluded-tasks.md` | gate 3 | Tasks deliberately cut — absences here are decisions, not losses |
+| `validation-report.md` | validation pass | Automated syntax/import checks over the generated code |
+| `qa-report.md` | QA agent | Review findings across the generated files |
+| `build-verification.md` | build verification | Whether install, build and boot actually succeeded |
+
+A file missing from this folder means that stage did not run or produced
+nothing — the pipeline never writes a placeholder, so absence is information.
+"""
 
 
 def _persist_stage_doc(stage: str, project_id: str, result: dict) -> None:
-    spec = STAGE_DOC_FILE.get(stage)
-    if not spec or not project_id:
+    """Mirror this stage's documents into outputs/{project_id}/docs/.
+
+    Never raises: a documentation write must not be able to fail a run that has
+    already produced its artifacts. A failed write is logged and the stage still
+    returns — the state field remains the source of truth either way.
+    """
+    specs = STAGE_DOCS.get(stage)
+    if not specs or not project_id:
         return
-    field, filename = spec
-    content = result.get(field)
-    if not content:
-        return
-    if stage == "planning":
-        content = f"# Implementation Plan\n\n```json\n{content}\n```\n"
-    write_project_file(project_id, f"docs/{filename}", content, add_header=False)
+    wrote = False
+    for field, filename, render in specs:
+        try:
+            content = render(result.get(field))
+        except Exception as e:                   # noqa: BLE001
+            print(f"[Docs] could not render {filename} for {stage}: {e}", flush=True)
+            continue
+        if not content:
+            continue
+        write_project_file(project_id, f"docs/{filename}", content,
+                           add_header=False, strip_fences=False)
+        wrote = True
+    # Written alongside the first real document rather than at run start, so a
+    # project that never reached an agent does not ship an index of nothing.
+    if wrote:
+        write_project_file(project_id, "docs/README.md", _DOCS_README,
+                           add_header=False, strip_fences=False)
 
 def invalidate_downstream(state: dict, from_stage: str) -> dict:
     """State update that marks everything produced AFTER from_stage stale:
