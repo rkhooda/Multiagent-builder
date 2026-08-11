@@ -136,12 +136,51 @@ slug. Any DeepSeek admission must use catalogue-confirmed slugs.
 
 | Claim | Source quality | What would settle it |
 |---|---|---|
-| **Cerebras free tier caps context at 8,192 tokens** across all models | Secondary blogs only; **absent from the primary rate-limit doc** | One live call with a >8k-token prompt once a key exists. **Decisive for coder eligibility** — the coders' assembled prompts exceed 8k, so if true, Cerebras is prose/judgment-only and cannot serve the scarce coder pool at all. This single fact determines whether the capacity win is real for the constraint that actually binds. |
+| **Cerebras free tier caps context at 8,192 tokens** across all models | Secondary blogs only; **absent from the primary rate-limit doc** | One live call with a >8k-token prompt once a key exists. Measured below: even if true, it excludes only `planning`, so the capacity win survives the worst case. |
 | DeepSeek "5M free tokens on signup, no credit card" | Secondary (OmniRoute provider reference); contradicted by the absence of any free tier in DeepSeek's own docs | Sign up and read the console credit balance |
 | Mistral "Experiment" free tier ≈1B tokens/month, 2 RPM, no card | Secondary; Mistral **no longer publishes free-tier numbers publicly** | Admin Console → Limits, after signup |
 | Whether each provider returns `usage` token counts | Not checked | One live call each; absence must be handled as `null`, never `0` (`_extract_usage`, `llm_router.py:772`) |
 | Per-provider rate-limit / context-overflow error shapes | Not checked | Live probing; needed so errors are *classified*, not string-matched |
 | Live model catalogue per provider (`GET /v1/models`) | Not checked — needs keys | Fetch per provider once keyed |
+
+## Measured: what an 8,192-token cap would actually cost
+
+The 8k cap above is unverified, but its *consequence* is measurable today from
+`metrics.db` (`agent_runs`, 753 calls with recorded prompt tokens). This is
+banked data, not a projection — it makes the worst case cheap to reason about
+before spending anything on signup.
+
+| Agent | n | avg prompt | max prompt | calls over 8,192 |
+|---|---|---|---|---|
+| planning | 92 | 1,324 | **22,695** | 2 |
+| architecture | 136 | 240 | 7,448 | 0 |
+| backend_code | 40 | 2,638 | 4,897 | 0 |
+| frontend_review | 48 | 3,452 | 4,431 | 0 |
+| research | 71 | 463 | 4,409 | 0 |
+| qa | 52 | 1,209 | 4,097 | 0 |
+| frontend_code | 240 | 1,302 | 3,973 | 0 |
+| requirements | 67 | 332 | 2,803 | 0 |
+| database | 6 | 1,683 | 2,581 | 0 |
+| devops | 1 | 24 | 24 | 0 |
+
+**Overall: 2 of 753 calls (0.3%) exceed 8,192 prompt tokens, both `planning`.**
+
+This corrects an inference made earlier in this document's first revision, that
+the coders' prompts exceed 8k — that came from reading "11–15k characters" in
+`backend/.env.example` as tokens. At ~3.5 chars/token those prompts are 3–4k
+tokens, which is what the table measures.
+
+Two consequences that matter:
+
+- **The worst case is survivable.** Even if the cap is real, all four
+  file-producing agents — the ones on the scarce Groq pool — fit under it with
+  room to spare. Cerebras remains usable for the constraint that actually
+  binds. Only `planning` (already on Gemini's non-scarce 1M/day) would be
+  excluded, and `architecture` at 7,448 max has thin headroom.
+- **Context-window filtering is load-bearing, not theoretical.** Architecture
+  sits within 10% of an 8k ceiling and prompt size grows with project
+  complexity, so the Phase 3 filter must skip a too-small model *before*
+  attempting it rather than discovering the overflow as an error.
 
 ## What I chose NOT to build, and why
 
