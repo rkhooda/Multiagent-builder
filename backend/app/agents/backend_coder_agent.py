@@ -89,6 +89,17 @@ def backend_coder_agent(state: dict) -> dict:
     llm_tasks = [t for t in be_tasks
                  if _basename(t.get("filepath", "")) not in profile.infra_basenames]
 
+    # Package markers too (token audit, 2026-08-10): an __init__.py is derivable
+    # from the package's actual modules, so spending a full coder call (~2.6k
+    # prompt tokens each, 9 of them on the frozen plan) on one is pure waste —
+    # and an LLM marker can re-export names that don't exist. Rendered after the
+    # phase so the derived re-exports see every module that really delivered.
+    from app.utils.backend_infra import llm_generates_inits
+    init_tasks = []
+    if not llm_generates_inits():
+        init_tasks = [t for t in llm_tasks if _basename(t.get("filepath", "")) == "__init__.py"]
+        llm_tasks = [t for t in llm_tasks if _basename(t.get("filepath", "")) != "__init__.py"]
+
     file_tree = state.get("file_list") or list(generated_files.keys())
 
     def build_context(task, st):
@@ -145,6 +156,13 @@ def backend_coder_agent(state: dict) -> dict:
     # no deterministic infra declares none and writes nothing.
     infra_written = profile.infra(state, generated_files, ok_routers,
                                   project_id, project_name, log, errors) if profile.infra else 0
+
+    if init_tasks:
+        from app.utils.backend_infra import write_package_inits
+        infra_written += write_package_inits(
+            [t.get("filepath", "") for t in init_tasks], generated_files,
+            project_id=project_id, phase="backend",
+            agent_name="backend_coder_agent", log=log, errors=errors)
 
     log.append(f"backend_coder_agent: completed — {files_ok} ok, {files_failed} failed, "
                f"{blocked} blocked, {infra_written} infra files")

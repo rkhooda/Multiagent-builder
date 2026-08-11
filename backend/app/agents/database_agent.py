@@ -56,6 +56,18 @@ def database_agent(state: dict) -> dict:
 
     print(f"[DatabaseAgent] Found {len(db_tasks)} database tasks")
 
+    # Package markers are rendered deterministically after the loop (token
+    # audit, 2026-08-10) — same rationale as the backend coder: an __init__.py
+    # is derivable from the package's actual modules, not judgement work worth
+    # a ~2.6k-token coder call. LLM_INIT_FILES=true restores the old path.
+    from ..utils.backend_infra import llm_generates_inits
+    init_tasks = []
+    if not llm_generates_inits():
+        init_tasks = [t for t in db_tasks
+                      if t.get("filepath", "").endswith("__init__.py")]
+        db_tasks = [t for t in db_tasks
+                    if not t.get("filepath", "").endswith("__init__.py")]
+
     # Prompt comes from the active profile (Improvement 03) — resolved after
     # the empty-phase early return so a profile with no database phase never
     # needs one. react-fastapi points at the same prompts/database_agent.md.
@@ -165,6 +177,13 @@ Generate the complete file content now. Output ONLY the raw file code — no exp
             error_msg = f"database_agent: LLM call failed for {filepath}: {e}"
             errors.append(error_msg)
             print(f"[DatabaseAgent] ERROR: {error_msg}")
+
+    if init_tasks:
+        from ..utils.backend_infra import write_package_inits
+        files_written += write_package_inits(
+            [t.get("filepath", "") for t in init_tasks], generated_files,
+            project_id=project_id, phase="database",
+            agent_name="database_agent", log=log, errors=errors)
 
     # ── Final summary ────────────────────────────────────────────────
     log.append(f"database_agent: completed — {files_written} files written, {files_failed} failed")

@@ -13,6 +13,7 @@ router that failed to generate is never registered.
 """
 import ast
 import json
+import os
 
 
 # Curated known-good, real, installable versions for the core FastAPI stack and
@@ -231,3 +232,86 @@ app.add_middleware(
 async def health():
     return {{"status": "ok"}}
 '''
+
+
+# ── Deterministic package markers (token audit, 2026-08-10) ──────────────────
+# The frozen TodoSimple plan spends 11 of 96 tasks on `__init__.py` files —
+# each a full LLM call carrying the ~2.6k-token coder preamble to produce a
+# near-empty file (~29k prompt tokens per run, on the scarce pool). A package
+# marker is not judgement work: like main.py above, the correct content is
+# DERIVABLE from what was actually generated. An LLM __init__ can hallucinate
+# re-exports of names that do not exist; a derived one cannot.
+#
+# Re-exports cover the one import shape the AST import fixer leaves untouched:
+# `from app.models import Note` resolves `app.models` as a known package and
+# is never rewritten, so it silently depends on __init__ content. Deriving
+# `from .note import Note` for every class that really exists makes both
+# import shapes work by construction.
+
+def _top_level_classes(code: str) -> list:
+    """Top-level class names of one module, in order; [] when unparseable
+    (a failure stub or broken file must not break the package marker)."""
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:
+        return []
+    return [n.name for n in tree.body if isinstance(n, ast.ClassDef)]
+
+
+def render_package_inits(init_filepaths: list, generated_files: dict) -> list:
+    """[(filepath, content)] for the plan's __init__.py tasks, derived from the
+    package's ACTUAL generated modules. Deterministic: sorted modules, first
+    definition wins on a (pathological) cross-module name collision."""
+    out = []
+    for init_path in sorted(init_filepaths or []):
+        pkg_dir = init_path.rsplit("/", 1)[0]
+        lines = []
+        exported = set()
+        modules = sorted(
+            p for p in generated_files
+            if p.rsplit("/", 1)[0] == pkg_dir and p.endswith(".py")
+            and not p.endswith("__init__.py"))
+        for mod_path in modules:
+            mod = mod_path.rsplit("/", 1)[-1][:-3]
+            names = [n for n in _top_level_classes(generated_files[mod_path])
+                     if n not in exported]
+            if names:
+                exported.update(names)
+                lines.append(f"from .{mod} import {', '.join(names)}")
+        body = ("\n".join(lines) + "\n") if lines else ""
+        out.append((init_path,
+                    '"""Package marker (generated deterministically; re-exports '
+                    'derived from the package\'s modules)."""\n' + body))
+    return out
+
+
+def write_package_inits(init_filepaths: list, generated_files: dict, *,
+                        project_id: str, phase: str, agent_name: str,
+                        log: list, errors: list) -> int:
+    """Render + write the package markers, mirroring the infra write path
+    (disk + generated_files + log + file_written broadcast). Returns count
+    written. Never offered to the QA stream — there is nothing to review."""
+    from app.core.connection_manager import manager
+    from app.utils.file_writer import write_project_file
+
+    written = 0
+    for filepath, content in render_package_inits(init_filepaths, generated_files):
+        result = write_project_file(project_id, filepath, content)
+        if result["success"]:
+            generated_files[filepath] = content
+            written += 1
+            log.append(f"{agent_name}: wrote package marker {filepath} (deterministic)")
+            manager.broadcast_sync(project_id, {
+                "type": "file_written", "filename": "__init__.py",
+                "filepath": filepath, "phase": phase, "task_id": "infra",
+            })
+        else:
+            errors.append(f"{agent_name}: failed to write {filepath}: {result['error']}")
+    return written
+
+
+def llm_generates_inits() -> bool:
+    """Escape hatch: LLM_INIT_FILES=true restores LLM-generated __init__.py.
+    Exists so the old behaviour is one env var away if a stack ever genuinely
+    needs authored package markers; default is the deterministic path."""
+    return os.getenv("LLM_INIT_FILES", "").lower() in ("true", "1", "yes")

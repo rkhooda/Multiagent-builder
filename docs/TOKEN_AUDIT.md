@@ -121,6 +121,37 @@ The measurable, quality-safe reduction is **whole-call elimination**
 quality proof beyond the emitted files being deterministic, and the
 fragmentation numbers already price it.
 
+## Task 3 decision record (2026-08-10) — call-count reduction
+
+**Shipped: deterministic `__init__.py` package markers** (default on;
+`LLM_INIT_FILES=true` restores the old path). The frozen TodoSimple plan
+spends 11 of its 96 tasks on `__init__.py` files — at the measured ~2.6k
+prompt tokens per backend/database call that is **~29k prompt tokens per cold
+run (~30% of a day's Groq allowance)** for near-empty files. A package marker
+is not judgement work: like `main.py`, its correct content is derivable from
+what was actually generated, and the derived form re-exports every class that
+really exists — covering `from app.models import Note`, the one local import
+shape the AST fixer cannot rewrite — while an LLM marker can hallucinate
+re-exports that crash at startup. Quality effect measured within budget:
+10-test offline suite asserts the rendered markers parse, re-export only real
+names, survive broken/stub siblings, and leave every non-`__init__` task
+untouched. Only other `__init__` tasks depend on `__init__` tasks in the
+frozen plan, and `run_phase` drops out-of-set dependency edges, so scheduling
+is unaffected.
+
+**Not built: batching several trivial files into one call.** Ponytail #3
+conclusion: a multi-file response breaks the one-file-per-call machinery
+(`process_generated_file`, `fix_imports`, the single-owner assertion, per-file
+QA offer) unless the response is split before processing — new parsing surface
+with its own failure modes — and whether a model writing four files in one
+response does each worse is exactly the kind of quality question that needs a
+live A/B this budget cannot fund. The remaining batchable clusters after the
+`__init__` fix (config stubs, the 7-file UI kit) are worth ~15–25 calls ≈
+40–65k prompt tokens/run — real, but priced and deferred rather than shipped
+unproven. **Review-by 2026-09-10**, or sooner if a planning-prompt change
+regroups tasks at the source (the fragmentation is planner-made: its
+one-task-per-file rule maps plan granularity 1:1 onto filesystem granularity).
+
 ## Suites baseline (2026-08-10, before any change)
 
 - Offline gate: **23/23 green** (includes QA-stream, crafted-breakage
