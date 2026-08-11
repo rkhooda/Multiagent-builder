@@ -212,9 +212,39 @@ def render_main(project_name: str, router_filepaths: list) -> str:
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
+from app.database import Base, engine
 {imports_block}
 
 app = FastAPI(title={title})
+
+
+@app.on_event("startup")
+def _create_tables() -> None:
+    """Create the SQLite schema on first boot.
+
+    WHY this exists: the shipped default is `sqlite:///./app.db` and nothing
+    else creates the schema, so without this the app starts cleanly and then
+    fails every request with "no such table" — the worst shape of broken,
+    because /health passes and the failure only appears on real use.
+
+    Importing app.models is what populates Base.metadata: the generated package
+    marker re-exports every model class, so this one import registers all of
+    them. Without it create_all runs against an empty metadata and silently
+    creates nothing.
+
+    SQLITE ONLY, deliberately. create_all cannot alter an existing table, so on
+    a real database it would quietly diverge from the models the moment a column
+    changes. Postgres deployments use the generated Alembic migrations instead —
+    this is the zero-setup path for running the project locally, not a migration
+    strategy.
+    """
+    if not settings.database_url.startswith("sqlite"):
+        return
+    try:
+        import app.models  # noqa: F401 — import registers models on Base.metadata
+    except ImportError:
+        pass               # a project with no ORM models has no schema to create
+    Base.metadata.create_all(bind=engine)
 
 _origins = ["*"] if settings.cors_origins == "*" else [o.strip() for o in settings.cors_origins.split(",")]
 app.add_middleware(
