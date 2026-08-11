@@ -132,16 +132,40 @@ the *older* `deepseek-chat` / `deepseek-reasoner`. This is the same failure
 shape as the dead NVIDIA `qwen/*` namespace — a mapped slug is not a live
 slug. Any DeepSeek admission must use catalogue-confirmed slugs.
 
-## UNVERIFIED — do not build on these
+## SETTLED BY LIVE PROBE — 2026-08-11
 
-| Claim | Source quality | What would settle it |
+Every row below was open when this document was first written and is now closed
+by an actual call, made by `backend/scripts/probe_models.py`. **Two of the three
+providers the plan was built on do not work.**
+
+| Claim | Verdict | Evidence |
 |---|---|---|
-| **Cerebras free tier caps context at 8,192 tokens** across all models | Secondary blogs only; **absent from the primary rate-limit doc** | One live call with a >8k-token prompt once a key exists. Measured below: even if true, it excludes only `planning`, so the capacity win survives the worst case. |
-| DeepSeek "5M free tokens on signup, no credit card" | Secondary (OmniRoute provider reference); contradicted by the absence of any free tier in DeepSeek's own docs | Sign up and read the console credit balance |
-| Mistral "Experiment" free tier ≈1B tokens/month, 2 RPM, no card | Secondary; Mistral **no longer publishes free-tier numbers publicly** | Admin Console → Limits, after signup |
-| Whether each provider returns `usage` token counts | Not checked | One live call each; absence must be handled as `null`, never `0` (`_extract_usage`, `llm_router.py:772`) |
-| Per-provider rate-limit / context-overflow error shapes | Not checked | Live probing; needed so errors are *classified*, not string-matched |
-| Live model catalogue per provider (`GET /v1/models`) | Not checked — needs keys | Fetch per provider once keyed |
+| Cerebras free tier is usable (1M tokens/day per model) | **REFUTED for this account** | Every model returns *"Payment required to access this resource"* on a valid `csk-` key. `/v1/models` returns HTTP 403. The published allowance is real; free access to it is not. |
+| Cerebras caps free-tier context at 8,192 tokens | **UNRESOLVABLE** — cannot be tested without inference access | Moot: no traffic routes there |
+| DeepSeek "5M free tokens on signup" | **REFUTED** | Every model returns *"Insufficient Balance"*. As suspected, the claim appears nowhere in DeepSeek's own docs. |
+| Mistral "Experiment" tier ≈2 RPM | **REFUTED — wrong by 25×** | Mistral's own response headers: `x-ratelimit-limit-req-minute: 50`, `x-ratelimit-limit-tokens-minute: 50000`. TPM is the binding shape, and 50k/min is **4× Groq's 12k**. |
+| Whether each provider returns `usage` token counts | **Mistral: yes** | `usage_reported: true` on every admitted row. Untestable for the other two. |
+| Live model catalogue per provider | **Fetched** | Mistral 55 ids, DeepSeek 2 (`deepseek-v4-pro`/`-flash`), Cerebras 403. |
+| DeepSeek slug drift | **CONFIRMED** | litellm maps `deepseek-chat`/`deepseek-reasoner`; neither exists in the live catalogue. Same shape as the dead NVIDIA `qwen/*` namespace — a mapped slug is not a live slug. |
+
+The lesson generalises past this expansion: **a valid key is not access.** Both
+failures returned billing errors, not auth errors, so nothing short of an
+inference call would have exposed them — not the docs, not the key format, not
+`/v1/models` (DeepSeek happily listed models it refuses to serve).
+
+### Mistral, measured
+
+13 of 22 chat candidates admitted. The quality floor did real work:
+
+| Model | Verdict |
+|---|---|
+| `codestral-latest`, `mistral-code-latest` | **Barred from code agents.** Both *code-specialist* models wrap output in markdown fences when told not to — they would emit `.jsx` that does not parse. Admitted for JSON/prose only. |
+| `devstral-latest`, `devstral-medium-latest`, `ministral-{3b,8b,14b}-latest`, `mistral-large-latest`, `mistral-code-agent-latest` | Failed both contract probes. Route nowhere. |
+| `labs-leanstral-1-5{,-1}` | Listed in the catalogue, refused on call |
+| `mistral-medium*`, `mistral-small-latest`, `mistral-vibe-cli-*`, `glm-5-2`, `zai-glm-5-2`, `magistral-small-latest` | Admitted for all agents |
+
+That a *code* model fails the *code* contract while a general model passes is
+the case for probing rather than reasoning from a model's name.
 
 ## Measured: what an 8,192-token cap would actually cost
 
@@ -212,14 +236,46 @@ Two consequences that matter:
 8. **A context-window database.** `litellm.get_model_info()` covers mapped
    slugs; the probe fills gaps into the matrix for the rest.
 
+## BLOCKING: the four incumbent keys are placeholders
+
+Found by the same probe run, and far more serious than anything above.
+`backend/.env` currently holds the literal string `your_key_here` for:
+
+    GEMINI_API_KEY   GROQ_API_KEY   OPENROUTER_API_KEY   NVIDIA_API_KEY
+
+All four return authentication errors on a live call. The file was overwritten
+from `.env.example` while adding the three expansion keys, which replaced the
+working values; `.env` is gitignored, so there is no backup and they must be
+re-issued from each provider's console. All four are free.
+
+Consequence: **the pipeline currently cannot run.** Mistral alone is admitted,
+and it is a fallback tier — every agent's primary and fallback are dead. This is
+an environment fault, not a code fault; nothing in the router needs changing.
+
+It also means these remain **unverified against live traffic**: matrix-admitted
+models serving a real generation, the context filter firing on a real overflow,
+and the whole payoff measurement below.
+
+## Not yet measured
+
+- **The verbosity baseline.** `baseline_output_tokens` is null in the matrix
+  because the incumbent probe could not authenticate, so no `verbosity_ratio`
+  exists yet. Until it does, the ceiling pin cannot assert that an admitted
+  model's output requirement fits the agent's budget — the guard against the
+  ceiling-starvation defect is designed and unarmed. Re-running the probe with
+  restored keys fills this in.
+- **The payoff number.** Whether a two-arm A/B now fits in a day's budget, and
+  which UNPROVEN verdicts (Improvements 01 and 02) can finally be settled,
+  cannot be answered until a full run completes.
+
 ## Status
 
-Phase 0 verification only. **No routing change has been made.** Offline
-regression gate re-run at this commit: **24/24 green**
+Phases 1–3 shipped: providers registered, probe and committed capability matrix,
+matrix-driven routing with the context pre-flight filter, the contract-based
+quality floor, and `ROUTING_MODE=pinned|auto`. Phase 4 (provenance surfacing and
+the numeric payoff) is blocked on the keys above.
+
+Offline regression gate at the latest commit: **25/25 green**
 (`test_build_verify` and `test_sandbox_hostile` SKIPPED — no docker daemon on
 this host, so the build-verification ladder and sandbox isolation are not
 covered by this run).
-
-Blocked on account creation before Phase 1 can be completed and Phase 2 can
-begin: the providers cannot be admitted without keys, and no model may route
-without a probed matrix row.
