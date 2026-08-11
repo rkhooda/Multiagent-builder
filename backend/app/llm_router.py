@@ -224,11 +224,15 @@ _PACE_DEFAULTS = {
     # pacing does not model. Kept nominal so the pacer is not pretending to
     # enforce a limit that was never stated.
     "deepseek": 2.0,
-    # Derived from an UNVERIFIED 2 RPM. Deliberately the most conservative value
-    # in this table: if the real limit is higher this costs only depth we rarely
-    # reach, whereas guessing low costs a 429 storm on a tier that exists to
-    # catch overflow. Lower it once Admin Console -> Limits shows the real number.
-    "mistral": 30.0,
+    # MEASURED 2026-08-11 from Mistral's own response headers, which is the
+    # primary source the published docs no longer are:
+    #   x-ratelimit-limit-req-minute:    50
+    #   x-ratelimit-limit-tokens-minute: 50000
+    # The widely reported "2 RPM" free tier is wrong by 25x. This value is
+    # TPM-derived, not RPM-derived, for the same reason groq's is: 50k tokens/min
+    # against ~4k-token coder calls is ~12 requests/min (4.8s), which binds long
+    # before the 50 RPM (1.2s) does.
+    "mistral": 5.0,
     "ollama": 0.0,   # local, unmetered
 }
 _pace_lock = threading.Lock()
@@ -558,10 +562,19 @@ NVIDIA_PROSE = [
     "nvidia_nim/nvidia/nemotron-3-super-120b-a12b",  # 0.7s, reasoning
     "nvidia_nim/nvidia/nemotron-3-nano-30b-a3b",    # 1.1s, reasoning
 ]
-NVIDIA_FALLBACKS = {agent: NVIDIA_CODE for agent in
-                    ("frontend_code", "backend_code", "database", "devops", "architecture")}
-NVIDIA_FALLBACKS.update({agent: NVIDIA_PROSE for agent in
-                         ("research", "requirements", "planning", "qa", "frontend_review")})
+# The cloud split between agents that emit SOURCE and agents that emit prose or
+# strict JSON. Named because three tier tables and the capability probe all key
+# off it, and three copies of the same tuple is three chances to disagree.
+#
+# NOT the same split as LOCAL_FALLBACKS, deliberately: architecture sits with the
+# coders here (it emits a technical document that cloud coding models handle
+# well) but with prose locally, where the binding cost is the model SWAP rather
+# than capability. Two different constraints, two different groupings.
+CODE_AGENTS = ("frontend_code", "backend_code", "database", "devops", "architecture")
+PROSE_AGENTS = ("research", "requirements", "planning", "qa", "frontend_review")
+
+NVIDIA_FALLBACKS = {agent: NVIDIA_CODE for agent in CODE_AGENTS}
+NVIDIA_FALLBACKS.update({agent: NVIDIA_PROSE for agent in PROSE_AGENTS})
 
 # OpenRouter's free pool is a FOURTH cloud tier drawn from a different account
 # and different upstreams, so it survives an NVIDIA account-wide limit. It was
@@ -581,10 +594,8 @@ OPENROUTER_PROSE = [
     "openrouter/openai/gpt-oss-20b:free",           # 3.1s
     "openrouter/nvidia/nemotron-3-super-120b-a12b:free",  # 1.6s
 ]
-OPENROUTER_FALLBACKS = {agent: OPENROUTER_CODE for agent in
-                        ("frontend_code", "backend_code", "database", "devops", "architecture")}
-OPENROUTER_FALLBACKS.update({agent: OPENROUTER_PROSE for agent in
-                             ("research", "requirements", "planning", "qa", "frontend_review")})
+OPENROUTER_FALLBACKS = {agent: OPENROUTER_CODE for agent in CODE_AGENTS}
+OPENROUTER_FALLBACKS.update({agent: OPENROUTER_PROSE for agent in PROSE_AGENTS})
 
 
 # ── Per-model cooldown ───────────────────────────────────────────────────────
