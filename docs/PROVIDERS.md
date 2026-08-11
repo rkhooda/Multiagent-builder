@@ -103,6 +103,41 @@ local daemon is detected; `LLM_MODE=prefer-local` puts it first, ahead of
 every cloud tier. `LLM_MODE=cloud-only` excludes only Ollama — NVIDIA and
 OpenRouter stay in, since they are cloud too.
 
+## Provider expansion — registered, not yet routing (2026-08-11)
+
+Three free-tier providers are now **configured** in `llm_router.py`, and route
+**no traffic at all**. That split is the point: a key alone must not put a
+provider into rotation, because an unmeasured model serving a real file is the
+defect this project keeps paying for. Admission happens only via the probed
+capability matrix (Phase 2) — see `docs/PROVIDER_EXPANSION.md` for the dated
+verification record, including what is verified and what is not.
+
+| Provider | Pacing (`_PACE_DEFAULTS`) | Daily budget | Cooldown | Basis |
+|---|---|---|---|---|
+| `cerebras` | 12.0s | **1,000,000** | 1m (default) | VERIFIED 5 RPM / 1M TPD **per model**, free trial |
+| `deepseek` | 2.0s | 0 (untracked) | 1m (default) | Concurrency limits only; no daily allowance documented |
+| `mistral` | 30.0s | 0 (untracked) | 1m (default) | UNVERIFIED ~2 RPM; reported allowance is monthly, not daily |
+
+Three deliberate non-entries, so a later reader does not read them as drift:
+
+- **No cooldown rows.** All three limit per *minute*, so the existing 1-minute
+  `_DEFAULT_COOLDOWN_MINUTES` is already the right window. A row repeating the
+  default is a second place to drift, not documentation.
+- **Cerebras' 1M is tracked per PROVIDER though the allowance is per MODEL.**
+  This understates real capacity and never overspends it — the safe direction.
+- **DeepSeek and Mistral are budget-untracked for the same reason NVIDIA is**:
+  a UTC-midnight counter models the wrong *shape*. DeepSeek's grant, if it
+  exists, is a credit balance that never resets (a daily counter would clear a
+  spent grant every night and keep sending at a dead account); Mistral's pool
+  is monthly.
+
+**Cerebras is the capacity win and the reason for the expansion**: 1M tokens/day
+against Groq's 100k. Its constraint is **5 RPM, not tokens** — one call per 12s
+against a 3-worker parallel coder phase — which is why it belongs as *depth
+behind* Groq rather than as a replacement for it.
+
+`SCARCE_PROVIDERS` is unchanged (`{"groq"}`): none of the three is scarce.
+
 ## Prompt caching (verified against provider docs, 2026-08-10)
 
 Checked because the token audit found Groq spend is 90% prompt-side and the

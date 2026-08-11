@@ -215,6 +215,20 @@ _PACE_DEFAULTS = {
     # newly added tier. Zero pacing on a brand-new tier risks an immediate 429
     # storm on first real use. Tune via LLM_MIN_INTERVAL_NVIDIA_NIM.
     "nvidia_nim": 2.0,
+    # Provider expansion (2026-08-11). These three are paced from their PUBLISHED
+    # request limits rather than from observed 429s, because none has run here
+    # yet — and an unpaced brand-new tier meets the 3-worker coder pool with a
+    # burst it cannot absorb. _penalise() still tightens any of them on evidence.
+    "cerebras": 12.0,   # VERIFIED 5 RPM free trial -> one call per 12s
+    # No published RPM: DeepSeek documents CONCURRENCY only (500/2500), which
+    # pacing does not model. Kept nominal so the pacer is not pretending to
+    # enforce a limit that was never stated.
+    "deepseek": 2.0,
+    # Derived from an UNVERIFIED 2 RPM. Deliberately the most conservative value
+    # in this table: if the real limit is higher this costs only depth we rarely
+    # reach, whereas guessing low costs a 429 storm on a tier that exists to
+    # catch overflow. Lower it once Admin Console -> Limits shows the real number.
+    "mistral": 30.0,
     "ollama": 0.0,   # local, unmetered
 }
 _pace_lock = threading.Lock()
@@ -315,6 +329,25 @@ _DAILY_TOKEN_LIMITS = {
     # 45 minutes in) — see the cooldown mechanism below instead, which is
     # time-window-based to match.
     "nvidia_nim": 0,
+    # Provider expansion (2026-08-11).
+    #
+    # Cerebras is the reason this expansion exists: a VERIFIED 1M tokens/day
+    # against groq's 100k. The allowance is per MODEL and this counter is per
+    # PROVIDER, so tracking one provider-wide 1M UNDERSTATES real capacity while
+    # never overspending it. That is the safe direction to be wrong in, and it
+    # avoids a second counter grain for a bound we are nowhere near reaching.
+    "cerebras": 1_000_000,
+    # 0 = untracked, and for the same reason as nvidia_nim rather than by
+    # omission. DeepSeek documents NO daily allowance at all; if the reported
+    # signup grant exists it is a credit balance that never resets, which a
+    # UTC-midnight counter models exactly backwards — it would reset a spent
+    # grant every night and keep sending at a dead account.
+    "deepseek": 0,
+    # 0 = untracked. The reported Experiment-tier allowance is ~1B per MONTH.
+    # A daily counter is the wrong shape for a monthly pool, and 1B/30 is so far
+    # above anything this pipeline spends that tracking it would be theatre.
+    # Set LLM_DAILY_TOKENS_MISTRAL if a real daily ceiling ever appears.
+    "mistral": 0,
     "ollama": 0,            # local, unmetered
 }
 _MAX_BACKOFF_FACTOR = 8.0
@@ -577,6 +610,10 @@ _COOLDOWN_MINUTES = {
     "groq": 2.0,          # TPM window; the daily TPD ceiling is tracked separately
     "openrouter": 5.0,    # free pool limits requests per day, partly rolling
     "nvidia_nim": 12.0,   # midpoint of the observed 10-15 minute window
+    # cerebras/deepseek/mistral are absent DELIBERATELY, not by omission: all
+    # three limit per MINUTE, so the 1-minute default below is already the right
+    # window and an explicit entry repeating it would be a second place to drift.
+    # They get an entry here only if one is observed to hold a longer grudge.
 }
 _DEFAULT_COOLDOWN_MINUTES = 1.0
 _cooldown_until: dict = {}

@@ -21,7 +21,15 @@ os.environ["LLM_CACHE"] = "false"          # a cache hit would prove nothing
 
 from app import llm_router as R            # noqa: E402
 
-CLOUD_PROVIDERS = ("gemini", "groq", "openrouter")
+# DERIVED, not listed. The hardcoded tuple this replaces was
+# ("gemini", "groq", "openrouter") and had silently missed nvidia_nim since the
+# deep tiers landed on 2026-08-06, so "cloud disabled" was not true: the chain
+# reached NVIDIA and never fell through to local at all. A list of providers
+# maintained beside the router's own list is a standing drift bug, and this one
+# was already drifting — so take the router's tables as the source of truth.
+# Union of both, because a provider may appear in one and not the other.
+CLOUD_PROVIDERS = tuple(sorted(
+    (set(R._DAILY_TOKEN_LIMITS) | set(R._PACE_DEFAULTS)) - {"ollama"}))
 OUT_DIR = os.getenv("LOCAL_CHECK_OUT_DIR")     # set to keep the generated text
 
 
