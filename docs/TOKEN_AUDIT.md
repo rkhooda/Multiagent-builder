@@ -152,6 +152,34 @@ unproven. **Review-by 2026-09-10**, or sooner if a planning-prompt change
 regroups tasks at the source (the fragmentation is planner-made: its
 one-task-per-file rule maps plan granularity 1:1 onto filesystem granularity).
 
+## Task 4 decision record (2026-08-10) — budgets and fast mode: verified, not changed
+
+Reconciled `TOKEN_BUDGETS`/fast-mode against the ceiling audit's measured
+requirements (section 7b): **every fast-mode effective ceiling covers its
+measured requirement**, already pinned in BOTH profiles by
+`test_token_budgets.py::test_ceilings_cover_measured_requirements` — the QA
+starvation shape cannot recur under any current profile. No ceiling was
+lowered: the agents that look oversized (backend_code 1500 vs 96, database
+2500 vs 722, devops 2000 vs 64) have **dev-script-only measurements and no
+real pipeline history** (`docs/CEILING_AUDIT.md` marks all three NO_DATA);
+cutting on that basis is the halving-on-instinct defect this project already
+paid for once. They keep conservative ceilings and rely on the truncation
+flag + failover accounting, as the ceiling audit decided.
+
+Fast mode is already selectable per project at creation with the intended
+explanation ("Faster, lighter outputs — good for quick iteration and testing,
+not final builds", `NewProjectPage.jsx`), and the metrics panel badges
+fast-mode runs. Its measured token/quality effect **cannot yet be recorded**:
+no real run has ever enabled it (section 6). Given completions average
+307–560 tokens against 1000+ ceilings, its token saving is structurally
+small; its real value is wall-clock (skipping review stages). Record its
+effect when the first real fast-mode run exists — nothing to fix until then.
+
+The known limitation stands unchanged: `max_tokens` is single-valued across
+the fallback chain, so a thinking-model fallback behind a direct-model
+ceiling can still truncate (ceiling audit finding 4). Visible via the
+truncation flag; per-tier budgets remain their own scoped change.
+
 ## Suites baseline (2026-08-10, before any change)
 
 - Offline gate: **23/23 green** (includes QA-stream, crafted-breakage
