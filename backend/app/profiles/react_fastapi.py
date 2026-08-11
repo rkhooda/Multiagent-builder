@@ -115,6 +115,85 @@ def generate_infra(state: dict, generated_files: dict, ok_router_paths: list,
     return written
 
 
+# ── Deterministic frontend infra (2026-08-11) ───────────────────────────────
+
+# Never planned, always rendered. Mirrors INFRA_BASENAMES for the backend: the
+# planner is told not to produce these (see the frontend PhaseSpec below), and
+# any that slip in are filtered out before generation.
+FRONTEND_INFRA_BASENAMES = frozenset({
+    "package.json", "vite.config.js", "index.html",
+    "tailwind.config.js", "postcss.config.js",
+})
+
+
+def generate_frontend_infra(state: dict, generated_files: dict, project_id: str,
+                            project_name: str, log: list, errors: list) -> int:
+    """Render + write the frontend manifest, build config and entry point.
+
+    Runs AFTER the frontend phase for the same reason the backend's runs after
+    its own: package.json's dependency list is derived from what the generated
+    files ACTUALLY import, so it cannot be written before they exist.
+
+    Two classes of file, and the distinction matters:
+      * always written — manifest, build config, HTML entry, Tailwind config.
+        The planner is instructed not to produce these, so there is nothing to
+        overwrite and a stale one would break the build.
+      * written only if ABSENT — src/main.jsx, src/index.css, src/App.jsx. A
+        coder that produced its own entry point knows things this template does
+        not (route setup, providers, layout), and clobbering it would discard
+        real work to install a worse version.
+    """
+    from app.utils import frontend_infra as FI
+    from app.utils.file_writer import write_project_file
+    from app.core.connection_manager import manager
+
+    pkg_content, pkg_warnings = FI.render_package_json(project_name, generated_files)
+    for w in pkg_warnings:
+        errors.append(f"import_warning: {w}")
+
+    always = [
+        ("frontend/package.json", pkg_content),
+        ("frontend/vite.config.js", FI.render_vite_config()),
+        ("frontend/index.html", FI.render_index_html(project_name)),
+        ("frontend/tailwind.config.js", FI.render_tailwind_config()),
+        ("frontend/postcss.config.js", FI.render_postcss_config()),
+    ]
+
+    # An App component may live at any of these; only fall back when the coder
+    # produced none of them, and point main.jsx at whichever one exists.
+    app_candidates = ("frontend/src/App.jsx", "frontend/src/App.js",
+                      "frontend/src/App.tsx")
+    existing_app = next((p for p in app_candidates if p in generated_files), None)
+    if_absent = [
+        ("frontend/src/index.css", FI.render_index_css()),
+        ("frontend/src/main.jsx",
+         FI.render_main_jsx(f"./{existing_app.split('/')[-1]}" if existing_app
+                            else "./App.jsx")),
+    ]
+    if not existing_app:
+        if_absent.append(("frontend/src/App.jsx", FI.render_fallback_app()))
+        errors.append("frontend_infra: no App component was generated — a "
+                      "placeholder was written so the build still succeeds")
+
+    written = 0
+    for filepath, content in always + [(p, c) for p, c in if_absent
+                                       if p not in generated_files]:
+        # strip_fences stays ON: these are source files, and the guard costs
+        # nothing on template output that contains no fences.
+        result = write_project_file(project_id, filepath, content, add_header=False)
+        if result["success"]:
+            generated_files[filepath] = content
+            written += 1
+            log.append(f"frontend_infra: wrote {filepath} ({result['size_bytes']} bytes)")
+            manager.broadcast_sync(project_id, {
+                "type": "file_written", "filename": filepath.rsplit("/", 1)[-1],
+                "filepath": filepath, "phase": "frontend", "task_id": "infra",
+            })
+        else:
+            errors.append(f"frontend_infra: failed to write {filepath}: {result['error']}")
+    return written
+
+
 # ── DevOps file set (moved verbatim from devops_agent) ───────────────────────
 
 DEVOPS_FILES = (
@@ -206,8 +285,14 @@ VERIFY_TARGETS = (
     ),
     VerifyTarget(
         name="frontend", root="frontend",
+        # `npm install`, NOT `npm ci`. ci refuses to run without a
+        # package-lock.json and this pipeline cannot produce a truthful one —
+        # a lockfile pins a fully resolved transitive tree, which is only
+        # knowable by actually resolving it against the registry. Fabricating
+        # one would be worse than having none. So the manifest is deterministic
+        # and resolution happens at install time.
         install=TierSpec(
-            command=("npm", "ci"), image="node:20-slim", timeout_s=180),
+            command=("npm", "install"), image="node:20-slim", timeout_s=240),
         build=TierSpec(
             command=("npm", "run", "build"), image="node:20-slim", timeout_s=180),
         boot=TierSpec(
@@ -250,7 +335,11 @@ PROFILE = StackProfile(
                   import_note=FRONTEND_IMPORT_NOTE,
                   structure_note=FRONTEND_STRUCTURE_NOTE,
                   plan_guidance=("React components, pages, hooks and the shared "
-                                 "axios client under `frontend/src/`.")),
+                                 "axios client under `frontend/src/`. Do NOT "
+                                 "plan package.json, vite.config.js, "
+                                 "index.html, tailwind.config.js, "
+                                 "postcss.config.js, main.jsx or index.css — "
+                                 "those are generated deterministically.")),
         PhaseSpec(name="devops", id_prefix="dv", label="DevOps",
                   agent_type="devops", prompt_file="devops_agent.md",
                   plan_guidance=("Deployment and CI files at the project root. "
@@ -265,6 +354,8 @@ PROFILE = StackProfile(
     ui_contract=build_ui_contract,
     infra=generate_infra,
     infra_basenames=INFRA_BASENAMES,
+    frontend_infra=generate_frontend_infra,
+    frontend_infra_basenames=FRONTEND_INFRA_BASENAMES,
     devops_files=DEVOPS_FILES,
     review_supported=True,
     verify_targets=VERIFY_TARGETS,

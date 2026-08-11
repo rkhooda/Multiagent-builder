@@ -127,6 +127,22 @@ def frontend_coder_agent(state: dict) -> dict:
     spec = profile.phase("frontend")
     system_prompt = profile.prompt_for("frontend")
 
+    # Infra files are rendered deterministically — never sent to the LLM, the
+    # same rule the backend phase already applies. A planner that slipped
+    # package.json in would otherwise spend a coder call producing a manifest
+    # with invented versions, which the deterministic render then overwrites.
+    if profile.frontend_infra_basenames:
+        dropped = [t.get("filepath", "") for t in fe_tasks
+                   if t.get("filepath", "").rsplit("/", 1)[-1]
+                   in profile.frontend_infra_basenames]
+        if dropped:
+            fe_tasks = [t for t in fe_tasks if t.get("filepath", "") not in dropped]
+            log.append(f"frontend_coder_agent: skipping {len(dropped)} planned "
+                       f"infra file(s), rendered deterministically instead: "
+                       f"{', '.join(dropped)}")
+        if not fe_tasks:
+            log.append("frontend_coder_agent: plan contained only infra files")
+
     # Sections are invented at planning time and are absent from the
     # architecture-derived file_list, so the phase's own task filepaths are
     # unioned in — otherwise import_fixer and the folder map cannot see them.
@@ -241,9 +257,25 @@ def frontend_coder_agent(state: dict) -> dict:
 
     files_ok, files_failed, blocked, total = (
         len(result.ok), len(result.failed), len(result.blocked), result.total)
+
+    # Deterministic frontend infra — after the phase, so package.json's
+    # dependency list is derived from what the generated files ACTUALLY import
+    # and the entry point can target the App component that really exists.
+    # Profile-owned: a stack with no deterministic frontend infra declares none
+    # and writes nothing (static-site has no manifest at all).
+    #
+    # Runs even when the phase delivered nothing: a project with no manifest,
+    # no build config and no HTML entry cannot be installed or started, and
+    # shipping the source without them is what made every previous react-fastapi
+    # download unrunnable.
+    infra_written = profile.frontend_infra(
+        state, generated_files, project_id, project_name, log,
+        errors) if profile.frontend_infra else 0
+
     log.append(f"frontend_coder_agent: completed — {files_ok} ok, "
-               f"{files_failed} failed, {blocked} blocked")
-    print(f"[FrontendCoder] Done. {files_ok} ok, {files_failed} failed, {blocked} blocked")
+               f"{files_failed} failed, {blocked} blocked, {infra_written} infra files")
+    print(f"[FrontendCoder] Done. {files_ok} ok, {files_failed} failed, "
+          f"{blocked} blocked, {infra_written} infra")
 
     from ..core.connection_manager import manager
 

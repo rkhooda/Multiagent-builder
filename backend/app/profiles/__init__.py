@@ -99,6 +99,14 @@ class StackProfile:
     infra: Optional[Callable] = None
     #: basenames excluded from the per-task LLM loop because infra renders them.
     infra_basenames: frozenset = frozenset()
+    #: callable rendering deterministic infra after the FRONTEND phase
+    #: (state, generated_files, project_id, project_name, log, errors) -> files
+    #: written; None = no deterministic frontend infra. Separate from `infra`
+    #: because it must run after a different phase: a manifest's dependency list
+    #: is derived from what the frontend files actually import.
+    frontend_infra: Optional[Callable] = None
+    #: basenames excluded from the frontend LLM loop because infra renders them.
+    frontend_infra_basenames: frozenset = frozenset()
     #: devops stage output: tuple of {filepath, description} dicts.
     devops_files: tuple = ()
     #: whether the Improvement-01 selective reviewer understands this stack's

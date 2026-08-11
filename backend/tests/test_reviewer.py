@@ -372,6 +372,24 @@ import app.core.connection_manager as cm  # noqa: E402
 from app.utils.file_writer import OUTPUTS_ROOT  # noqa: E402
 
 LOOP_PROJECT = "__test_reviewer_loop__"
+
+# Files the frontend phase renders DETERMINISTICALLY (2026-08-11), never sent to
+# the LLM and never review candidates. Filtered out below so the reviewer
+# assertions keep measuring the reviewer, rather than becoming a count of
+# however many infra files the profile happens to render. App.jsx is here
+# because this fixture's plan contains no App component, so it is written as the
+# fallback placeholder — a plan that does include one keeps the coder's version.
+_INFRA_PATHS = frozenset({
+    "frontend/package.json", "frontend/vite.config.js", "frontend/index.html",
+    "frontend/tailwind.config.js", "frontend/postcss.config.js",
+    "frontend/src/index.css", "frontend/src/main.jsx", "frontend/src/App.jsx",
+})
+
+
+def _coder_files(out: dict) -> dict:
+    """Only the files the CODER produced, keyed path -> content."""
+    return {p: c for p, c in (out.get("generated_files") or {}).items()
+            if p not in _INFRA_PATHS}
 GOOD_FILE = (
     "import api from '../lib/api';\n"
     "export default function Panel() {\n"
@@ -491,7 +509,7 @@ def test_exhausted_budget_stops_revising_and_says_so():
     skipped = [r for r in out["review_results"].values()
                if "budget_exhausted" in (r.get("skipped_reason") or "")]
     assert skipped, out["review_results"]
-    assert len(out["generated_files"]) == 3, "every file still ships"
+    assert len(_coder_files(out)) == 3, "every file still ships"
 
 
 def test_a_broken_reviewer_never_blocks_a_file():
@@ -499,7 +517,7 @@ def test_a_broken_reviewer_never_blocks_a_file():
     out, _, revisions, _ = _run_loop([RuntimeError("down"), RuntimeError("down"),
                                       RuntimeError("down"), RuntimeError("down")],
                                      REVIEW_MODE="selective")
-    assert len(out["generated_files"]) == 3, out["generated_files"].keys()
+    assert len(_coder_files(out)) == 3, _coder_files(out).keys()
     assert revisions == []
     assert all(not r["reviewed"] for r in out["review_results"].values())
 
@@ -510,9 +528,9 @@ def test_a_rejected_revision_leaves_the_original_in_place():
                                      revision_response="// nope",
                                      REVIEW_MODE="selective")
     assert len(revisions) == 1
-    assert "PanelFixed" not in "".join(out["generated_files"].values())
+    assert "PanelFixed" not in "".join(_coder_files(out).values())
     assert all("export default function Panel" in c or "api.js" in p
-               for p, c in out["generated_files"].items())
+               for p, c in _coder_files(out).items())
     assert out["review_results"][revisions[0]]["revised"] is False
 
 
@@ -522,7 +540,7 @@ def test_review_off_restores_exact_v1_behaviour():
     assert reviews == [] and revisions == []
     assert out.get("review_results") == {}
     assert not any(e["type"].startswith("file_review") for e in events)
-    assert len(out["generated_files"]) == 3
+    assert len(_coder_files(out)) == 3
 
 
 def test_fast_mode_withholds_review_like_it_withholds_repairs():
@@ -549,7 +567,7 @@ def test_fast_mode_withholds_review_like_it_withholds_repairs():
         restore_env()
         shutil.rmtree(os.path.join(OUTPUTS_ROOT, LOOP_PROJECT), ignore_errors=True)
     assert reviews == [], "fast mode must not spend review calls"
-    assert len(out["generated_files"]) == 3
+    assert len(_coder_files(out)) == 3
 
 
 def _check(name, cond, detail=""):
