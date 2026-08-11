@@ -103,40 +103,99 @@ local daemon is detected; `LLM_MODE=prefer-local` puts it first, ahead of
 every cloud tier. `LLM_MODE=cloud-only` excludes only Ollama — NVIDIA and
 OpenRouter stay in, since they are cloud too.
 
-## Provider expansion — registered, not yet routing (2026-08-11)
+## Provider expansion (2026-08-11) — probed, and mostly refuted
 
-Three free-tier providers are now **configured** in `llm_router.py`, and route
-**no traffic at all**. That split is the point: a key alone must not put a
-provider into rotation, because an unmeasured model serving a real file is the
-defect this project keeps paying for. Admission happens only via the probed
-capability matrix (Phase 2) — see `docs/PROVIDER_EXPANSION.md` for the dated
-verification record, including what is verified and what is not.
+Three free-tier providers were added. **Only Mistral survived contact.** Each
+line below is a live call made on 2026-08-11, not a published claim:
 
-| Provider | Pacing (`_PACE_DEFAULTS`) | Daily budget | Cooldown | Basis |
+| Provider | Live result | Routing |
+|---|---|---|
+| `cerebras` | Every model: *"Payment required to access this resource"*, on a valid `csk-` key. `/v1/models` also 403s | **none** |
+| `deepseek` | Every model: *"Insufficient Balance"*. Live catalogue is `deepseek-v4-{pro,flash}` — litellm still maps the older `deepseek-chat`/`deepseek-reasoner` | **none** |
+| `mistral` | 55 catalogue ids → 22 chat candidates → **13 admitted** | **3 per agent** |
+
+The two failures are worth more than the success, because they were the two the
+plan was justified by. Cerebras' 1M tokens/day *per model* is real and correctly
+documented — it is simply not available on a free account any more, and no
+amount of reading the rate-limit page would have shown that. DeepSeek's "5M
+tokens on signup" was flagged UNVERIFIED in `docs/PROVIDER_EXPANSION.md` and is
+now settled as **false**.
+
+Both remain configured. Nothing needs writing if either is ever paid for or
+re-granted: add credit, re-run `scripts/probe_models.py`, and the matrix admits
+them.
+
+### Configuration
+
+| Provider | Pacing | Daily budget | Cooldown | Basis |
 |---|---|---|---|---|
-| `cerebras` | 12.0s | **1,000,000** | 1m (default) | VERIFIED 5 RPM / 1M TPD **per model**, free trial |
-| `deepseek` | 2.0s | 0 (untracked) | 1m (default) | Concurrency limits only; no daily allowance documented |
-| `mistral` | 30.0s | 0 (untracked) | 1m (default) | UNVERIFIED ~2 RPM; reported allowance is monthly, not daily |
+| `cerebras` | 12.0s | 1,000,000 | 1m (default) | Published 5 RPM / 1M TPD per model |
+| `deepseek` | 2.0s | 0 (untracked) | 1m (default) | Concurrency limits only; no daily allowance |
+| `mistral` | **5.0s** | 0 (untracked) | 1m (default) | **MEASURED** from response headers |
 
-Three deliberate non-entries, so a later reader does not read them as drift:
+Mistral's pacing is measured from its own API, which is now the only primary
+source — the published free-tier numbers were withdrawn:
 
-- **No cooldown rows.** All three limit per *minute*, so the existing 1-minute
-  `_DEFAULT_COOLDOWN_MINUTES` is already the right window. A row repeating the
-  default is a second place to drift, not documentation.
-- **Cerebras' 1M is tracked per PROVIDER though the allowance is per MODEL.**
-  This understates real capacity and never overspends it — the safe direction.
-- **DeepSeek and Mistral are budget-untracked for the same reason NVIDIA is**:
-  a UTC-midnight counter models the wrong *shape*. DeepSeek's grant, if it
-  exists, is a credit balance that never resets (a daily counter would clear a
-  spent grant every night and keep sending at a dead account); Mistral's pool
-  is monthly.
+```
+x-ratelimit-limit-req-minute:    50
+x-ratelimit-limit-tokens-minute: 50000
+```
 
-**Cerebras is the capacity win and the reason for the expansion**: 1M tokens/day
-against Groq's 100k. Its constraint is **5 RPM, not tokens** — one call per 12s
-against a 3-worker parallel coder phase — which is why it belongs as *depth
-behind* Groq rather than as a replacement for it.
+The widely reported **"2 RPM" is wrong by 25×**. The 5.0s value is TPM-derived
+like Groq's, not RPM-derived: 50k tokens/min against ~4k-token coder calls binds
+at ~12 req/min (4.8s) long before 50 RPM (1.2s) does. Note this is **4× Groq's
+12k TPM**, which is what makes Mistral real capacity rather than a token pool.
 
-`SCARCE_PROVIDERS` is unchanged (`{"groq"}`): none of the three is scarce.
+Deliberate non-entries, so a later reader does not read them as drift:
+
+- **No `_COOLDOWN_MINUTES` rows.** All three limit per *minute*, so the 1-minute
+  default is already the right window; a row repeating it is a second place to
+  drift.
+- **DeepSeek and Mistral are budget-untracked for the reason NVIDIA is** — a
+  UTC-midnight counter models the wrong *shape*. A credit balance never resets;
+  Mistral's pool is monthly.
+- **`SCARCE_PROVIDERS` unchanged** (`{"groq"}`): none of the three is scarce.
+
+### The chain, and where the matrix sits
+
+**primary → fallback → matrix-admitted expansion → NVIDIA NIM → OpenRouter free
+→ Ollama.**
+
+The expansion tier is ahead of NVIDIA/OpenRouter because its models were
+admitted on **measured contract compliance against this pipeline's own output
+shapes**, while those two lists were verified only for reachability and latency.
+It sits behind primary/fallback because a probe is one call and the incumbents
+have production history. The ordering is *how much evidence there is*.
+
+**No expansion model routes without a row in
+`backend/config/model_capabilities.json`.** The incumbents are exempt and stay
+hardcoded: their evidence is daily production use in `metrics.db` plus this
+file, which is stronger than one probe — and making the working chain contingent
+on a JSON file would mean one bad file deletes the pipeline. The matrix gates
+*adding* capacity, never removing it. A missing or unreadable matrix costs depth
+and nothing else.
+
+### The quality floor is a contract, not a score
+
+`codestral-latest` and `mistral-code-latest` — both **code-specialist** models —
+wrap output in markdown fences when explicitly told not to. They would emit
+`.jsx` files that do not parse. Both are admitted for JSON/prose agents and
+**barred from every code agent**. Five further models fail both probes and route
+nowhere. This is what stops "never stalls" from becoming "never stops producing
+garbage": depth is only admitted where it was measured to work.
+
+Depth is capped at **3 models per provider**. Thirteen Mistral models is not
+depth — they share one account and one rate limit, so a provider-wide 429 costs
+thirteen round trips to discover (cooldown is per *model*) and adds no capacity.
+Real depth comes from another provider.
+
+### `ROUTING_MODE=pinned|auto`
+
+`pinned` drops the expansion tier, restoring the exact pre-expansion chain. It
+exists for **measurement**: an A/B arm whose chain varies between runs measures
+whichever tier happened to answer. Improvements 01 and 02 both shipped UNPROVEN
+for want of budget, and re-running them against a silently varying chain would
+produce a number nobody should believe.
 
 ## Prompt caching (verified against provider docs, 2026-08-10)
 

@@ -9,6 +9,7 @@ from dotenv import load_dotenv
 from litellm import completion
 import litellm.exceptions as llm_exc
 
+from app import model_matrix
 from app.exceptions import LLMAuthError, LLMError, LLMRateLimitError, LLMTimeoutError
 from app.observability import llm_cache, metrics_store
 
@@ -920,15 +921,38 @@ def _record_failover(project_id, agent_type, from_model, to_model, cause, usage)
         pass
 
 
+def routing_mode() -> str:
+    """auto (matrix-admitted models included) | pinned (incumbents only).
+
+    `pinned` exists for MEASUREMENT, not for safety. An A/B arm whose chain can
+    differ between runs is not a controlled comparison — it measures whichever
+    tier happened to answer. Improvement 01 and 02 both shipped UNPROVEN because
+    a two-arm run did not fit in a day's budget, and re-running them against a
+    chain that silently varies would produce a number nobody should believe.
+    """
+    mode = (os.getenv("ROUTING_MODE") or "auto").strip().lower()
+    return mode if mode in ("auto", "pinned") else "auto"
+
+
 def build_chain(agent_type: str, mode: str) -> list:
     """Every model this agent may use, best first, deduped.
 
-    primary -> fallback -> NVIDIA NIM tiers -> OpenRouter free tiers -> Ollama.
-    A provider with no key configured contributes nothing, so a checkout with
-    only GEMINI_API_KEY behaves exactly as it did before the deep tiers existed.
+    primary -> fallback -> matrix-admitted expansion -> NVIDIA NIM ->
+    OpenRouter free -> Ollama. A provider with no key configured contributes
+    nothing, so a checkout with only GEMINI_API_KEY behaves exactly as it did
+    before any of the deep tiers existed.
+
+    The expansion tier sits AHEAD of NVIDIA and OpenRouter because its models
+    were admitted on measured contract compliance against this pipeline's own
+    output shapes, while those two lists were verified only for reachability and
+    latency. It sits BEHIND primary/fallback because a probe is one call and the
+    incumbents have production history — evidence, ranked by how much of it
+    there is. ROUTING_MODE=pinned removes this tier so A/B arms are comparable.
     """
     primary, fallback = MODELS.get(agent_type, MODELS["research"])
     chain = [primary, fallback]
+    if routing_mode() == "auto":
+        chain += model_matrix.models_for(agent_type)
     if os.getenv("NVIDIA_NIM_API_KEY"):
         chain += NVIDIA_FALLBACKS.get(agent_type, NVIDIA_PROSE)
     if os.getenv("OPENROUTER_API_KEY"):
@@ -1011,17 +1035,27 @@ def call_llm(messages: list, agent_type: str, max_tokens=4000, timeout=None,
     # pass happens only when the whole chain was rate-limited, which is the one
     # case where waiting changes the answer.
     for pass_no in range(1, MAX_CHAIN_PASSES + 1):
-        chain = [m for m in full_chain if not in_cooldown(m) and not budget_exhausted(m)]
+        # Three pre-flight filters, all of them cheaper than the round trip they
+        # replace. A spent daily allowance lasts until UTC midnight; a cooling
+        # model was refused moments ago; and a model whose context window cannot
+        # hold this prompt plus its output will overflow no matter how long we
+        # wait — that last one is not a rate limit and retrying never fixes it.
+        chain = [m for m in full_chain
+                 if not in_cooldown(m) and not budget_exhausted(m)
+                 and model_matrix.fits_context(m, context_chars, max_tokens)]
         if len(chain) < len(full_chain):
             print(f"[LLM] {agent_type}: skipping "
                   f"{', '.join(m for m in full_chain if m not in chain)} "
-                  f"(cooling down or out of daily budget)", flush=True)
+                  f"(cooling down, out of daily budget, or context too small)",
+                  flush=True)
         if not chain:
             wait = cooldown_remaining(full_chain)
             if wait > MAX_COOLDOWN_WAIT_SECONDS or pass_no == MAX_CHAIN_PASSES:
                 last_error = last_error or LLMRateLimitError(
-                    f"every model for {agent_type} is rate-limited or out of "
-                    f"daily budget: {', '.join(full_chain)}", agent_type,
+                    f"no model available for {agent_type} — every one is "
+                    f"rate-limited, out of daily budget, or too small for this "
+                    f"prompt ({context_chars} chars + {max_tokens} output): "
+                    f"{', '.join(full_chain)}", agent_type,
                     ",".join(full_chain))
                 break
             print(f"[LLM] {agent_type}: whole chain unavailable — waiting {wait:.0f}s "

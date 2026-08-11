@@ -354,7 +354,11 @@ def main():
             if row.get("output_tokens"):
                 row["verbosity_ratio"] = round(row["output_tokens"] / baseline, 2)
 
-    matrix["models"].sort(key=lambda r: (not r["admitted"], r.get("latency_ms") or 10 ** 9))
+    # Explicit None check rather than `or`: a measured 0 must not be demoted to
+    # "unknown" by being falsy.
+    matrix["models"].sort(key=lambda r: (
+        not r["admitted"],
+        10 ** 9 if r.get("latency_ms") is None else r["latency_ms"]))
     os.makedirs(os.path.dirname(MATRIX_PATH), exist_ok=True)
     with open(MATRIX_PATH, "w") as fh:
         json.dump(matrix, fh, indent=2, sort_keys=True)
