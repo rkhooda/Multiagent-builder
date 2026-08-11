@@ -1,0 +1,186 @@
+# Provider Expansion — Verification Record
+
+**Dated: 2026-08-11.** Written before any routing change. Everything here is
+split into **VERIFIED** (checked today against a primary source, with the
+source named) and **UNVERIFIED** (with the specific thing that would settle
+it). Nothing in the unverified section may be built on — that rule exists
+because this project's routing premises have been silently wrong three times
+(`docs/PROVIDERS.md`: the delisted `qwen3-coder:free`, the demoted nemotron,
+the whole-namespace-dead NVIDIA `qwen/*` slugs), and each cost a session.
+
+## Why this is not an OmniRoute integration
+
+The task began as "integrate OmniRoute, a gateway exposing 90+ providers and
+500+ models behind a single API key, with a large monthly free token
+allowance." That premise did not survive verification.
+
+| Premise | Verified finding (2026-08-11) |
+|---|---|
+| Hosted gateway; paste key + base URL | **Self-hosted local proxy.** Default `http://localhost:20128/v1`. README: *"OmniRoute is a local proxy that never phones home."* There is no vendor endpoint. |
+| A single vendor-issued API key | The key is **generated in its own local dashboard**. Self-issued. |
+| Large monthly free token allowance | **OmniRoute grants no tokens.** Free capacity comes from upstream provider accounts the operator signs up for and configures. The widely-quoted "1.6B tokens/month" is the arithmetic sum of ~90 providers' free tiers, realisable only by registering with all of them. |
+| 90+ providers / 500+ models available | Only those personally configured. With this repo's four existing keys, the pool would be **four providers**. |
+
+Source: [github.com/diegosouzapw/OmniRoute](https://github.com/diegosouzapw/OmniRoute)
+(MIT, 45,509 stars, last push 2026-08-11 — the project is real and active;
+it is the *description of what it does for us* that was wrong).
+
+**The decisive point is architectural, not factual.** The binding constraint
+is Groq's 100k tokens/day. OmniRoute is a router; pointing it at the existing
+keys yields the same 100k/day. This repository already owns a router —
+`build_chain()` (`backend/app/llm_router.py:875`) — with per-provider RPM/RPD
+tracking, per-model cooldowns, typed exceptions and failover accounting behind
+it.
+
+Routing through the gateway would have **actively degraded** that machinery.
+`_provider_of(model)` (`llm_router.py:224`) derives the provider from the model
+string; every gateway call becomes provider `omniroute`, collapsing
+`_DAILY_TOKEN_LIMITS`, the per-provider cooldown table and `SCARCE_PROVIDERS`
+failover accounting into one opaque bucket — destroying exactly the
+per-provider visibility that three drift incidents paid for.
+
+Secondary consideration, recorded but not decisive: OmniRoute v3.8.5 was
+flagged by Socket.dev for suspected MITM/root-CA behaviour. No malware was
+confirmed and the maintainer's response was rated responsible, but they
+acknowledged **2 of 6 flags as genuine vulnerabilities**, patched in 3.8.6 —
+a silent credential-overwrite path in Cloud Sync and a credential-exposure
+flaw in Keychain Import ([issue #2863](https://github.com/diegosouzapw/OmniRoute/issues/2863)).
+It is a single-maintainer project that would custody every key we hold.
+
+**Decision:** add free-tier providers *directly* to the existing chain. Capacity
+comes from the provider accounts either way; direct signup also preserves
+per-provider budget tracking instead of blinding it.
+
+## VERIFIED — 2026-08-11
+
+### Transport
+
+`litellm 1.83.9` is already installed (`backend/requirements.txt`) and
+**natively supports** the provider prefixes we need. Checked by enumerating
+`litellm.provider_list` in the project venv:
+
+| Provider | Native litellm support | Model-string form |
+|---|---|---|
+| `cerebras` | yes | `cerebras/<model>` |
+| `deepseek` | yes | `deepseek/<model>` |
+| `mistral` | yes | `mistral/<model>` |
+| `inception` | **no** | — |
+| `longcat` | **no** | — |
+
+Consequence: for Cerebras/DeepSeek/Mistral **no adapter code is needed at
+all** — they are model strings in the existing lists, and `_provider_of()`
+already derives the provider from the prefix. Inception and LongCat would each
+need custom OpenAI-compatible plumbing (`openai/` prefix plus `api_base`), so
+they are excluded for now — see "What I chose not to build".
+
+### Context windows
+
+`litellm.get_model_info()` already returns context windows, so no
+context-window database is needed for mapped slugs. Measured today:
+
+| Model | max_input_tokens | max_output_tokens |
+|---|---|---|
+| `cerebras/llama-3.3-70b` | 128,000 | 128,000 |
+| `deepseek/deepseek-chat` | 131,072 | 8,192 |
+| `deepseek/deepseek-reasoner` | 131,072 | 65,536 |
+| `mistral/mistral-large-latest` | 262,144 | 262,144 |
+| `mistral/codestral-latest` | 32,000 | 8,191 |
+| `groq/llama-3.3-70b-versatile` (existing) | 128,000 | 32,768 |
+| `gemini/gemini-2.5-flash` (existing) | 1,048,576 | 65,535 |
+
+**Unmapped slugs miss**: `cerebras/qwen-3-coder-480b` raises *"This model isn't
+mapped yet"*. So the Phase 3 context-window filter needs a fallback for
+unmapped models — the probe records the window into the capability matrix, and
+matrix value wins over `get_model_info()`.
+
+### Cerebras free tier
+
+Primary source: [inference-docs.cerebras.ai/support/rate-limits](https://inference-docs.cerebras.ai/support/rate-limits).
+Free Trial tier, **per model**:
+
+| Model | RPM | TPM | TPH | TPD |
+|---|---|---|---|---|
+| `gpt-oss-120b` | 5 | 30K | 1M | 1M |
+| `zai-glm-4.7` | 5 | 30K | 1M | 1M |
+| `gemma-4-31b` | 5 | 30K | 1M | 1M |
+
+Quoted verbatim: *"Every model on the public Model Catalog is available on the
+Free Trial tier, subject to the per-model Free Trial rate limits listed
+above."*
+
+**This is the headline capacity finding.** 1M tokens/day **per model** against
+Groq's 100k/day total — a 10× increase on a single model, and the allowance is
+per-model across the catalogue.
+
+**The catch is RPM 5, not the token ceiling.** One call per 12 seconds. The
+coders run 3 parallel workers (`GENERATION_MODE=parallel`), so Cerebras cannot
+absorb a parallel coder phase at full speed. This is already modelled by the
+existing `LLM_MIN_INTERVAL_{PROVIDER}` key — no new mechanism, but the pacing
+value must be set deliberately (`LLM_MIN_INTERVAL_CEREBRAS=12`), and Cerebras
+should sit as depth behind Groq rather than replacing it for parallel work.
+
+### DeepSeek
+
+Primary source: [api-docs.deepseek.com/quick_start/rate_limit](https://api-docs.deepseek.com/quick_start/rate_limit).
+Documents **concurrency** limits only — `deepseek-v4-pro` 500,
+`deepseek-v4-flash` 2500 concurrent connections; HTTP 429 when exceeded.
+**No free tier is documented anywhere in the official docs.**
+
+**Slug drift, live:** DeepSeek's current documented models are
+`deepseek-v4-pro` and `deepseek-v4-flash`. litellm's `get_model_info()` maps
+the *older* `deepseek-chat` / `deepseek-reasoner`. This is the same failure
+shape as the dead NVIDIA `qwen/*` namespace — a mapped slug is not a live
+slug. Any DeepSeek admission must use catalogue-confirmed slugs.
+
+## UNVERIFIED — do not build on these
+
+| Claim | Source quality | What would settle it |
+|---|---|---|
+| **Cerebras free tier caps context at 8,192 tokens** across all models | Secondary blogs only; **absent from the primary rate-limit doc** | One live call with a >8k-token prompt once a key exists. **Decisive for coder eligibility** — the coders' assembled prompts exceed 8k, so if true, Cerebras is prose/judgment-only and cannot serve the scarce coder pool at all. This single fact determines whether the capacity win is real for the constraint that actually binds. |
+| DeepSeek "5M free tokens on signup, no credit card" | Secondary (OmniRoute provider reference); contradicted by the absence of any free tier in DeepSeek's own docs | Sign up and read the console credit balance |
+| Mistral "Experiment" free tier ≈1B tokens/month, 2 RPM, no card | Secondary; Mistral **no longer publishes free-tier numbers publicly** | Admin Console → Limits, after signup |
+| Whether each provider returns `usage` token counts | Not checked | One live call each; absence must be handled as `null`, never `0` (`_extract_usage`, `llm_router.py:772`) |
+| Per-provider rate-limit / context-overflow error shapes | Not checked | Live probing; needed so errors are *classified*, not string-matched |
+| Live model catalogue per provider (`GET /v1/models`) | Not checked — needs keys | Fetch per provider once keyed |
+
+## What I chose NOT to build, and why
+
+1. **The OmniRoute gateway adapter.** It adds routing, not capacity, and would
+   blind the per-provider budget tracking. The capacity comes from provider
+   accounts either way.
+2. **A catalogue fetcher with a dated snapshot file and a refresh script.**
+   That machinery is sized for a 500-model gateway. Three providers is on the
+   order of ~20 candidate models, and the probe run must contact each model
+   anyway — so the **capability matrix is the catalogue**. One committed
+   artefact, not two. Add a separate fetcher when a provider's model list is
+   observed to churn faster than the probe cadence.
+3. **A ranking config separate from the matrix.** The matrix's `tier` column
+   *is* the ranking. A second file to keep in sync is a drift source.
+4. **A runtime capability service.** Committed JSON read at import. No process,
+   no cache invalidation, no network at boot.
+5. **A parallel budget ledger.** `_DAILY_TOKEN_LIMITS` + `_spend()` +
+   `budget_exhausted()` already do exactly this. New providers are dict
+   entries.
+6. **Lazy mid-run probing of unknown models.** "No model routes without a
+   matrix row" makes the admitted set closed. Lazy probing is a runtime
+   service wearing a different hat, and it would let an unmeasured model serve
+   production traffic — the precise thing the quality floor exists to prevent.
+7. **Inception and LongCat.** Not litellm-native, so each needs custom
+   OpenAI-compatible plumbing; both are one-time grants rather than renewing
+   allowances; neither has known model quality for these agents. Cost is real
+   and the capacity is not renewable. Revisit only if the renewing tiers prove
+   insufficient.
+8. **A context-window database.** `litellm.get_model_info()` covers mapped
+   slugs; the probe fills gaps into the matrix for the rest.
+
+## Status
+
+Phase 0 verification only. **No routing change has been made.** Offline
+regression gate re-run at this commit: **24/24 green**
+(`test_build_verify` and `test_sandbox_hostile` SKIPPED — no docker daemon on
+this host, so the build-verification ladder and sandbox isolation are not
+covered by this run).
+
+Blocked on account creation before Phase 1 can be completed and Phase 2 can
+begin: the providers cannot be admitted without keys, and no model may route
+without a probed matrix row.
