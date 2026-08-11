@@ -1,4 +1,10 @@
 .env
+# Any .env SIDE FILE — .env.local, .env.backup-1430, .env.save — carries the
+# same real keys as .env itself while matching none of the `.env` rule above,
+# so it lands in `git status` as an ordinary untracked file waiting to be added.
+# .env.example is the one deliberate exception and stays tracked.
+.env.*
+!.env.example
 __pycache__/
 node_modules/
 outputs/

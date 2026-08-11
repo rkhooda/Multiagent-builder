@@ -126,6 +126,69 @@ def test_ceilings_cover_measured_requirements():
             f"or raise FAST_MODE_FLOOR")
 
 
+def test_expansion_models_fit_every_agent_ceiling():
+    """Provider expansion (2026-08-11): an admitted model's output requirement
+    is pinned in EVERY profile, fast mode included.
+
+    A second model on an agent's chain is a second output requirement, and the
+    probe measures each one against a fixed task so the numbers are comparable.
+    Groq needs 230 tokens for it; every admitted Mistral model needs 0.91-1.17x
+    that. Scaling each agent's measured requirement by the WORST admitted ratio
+    is what turns "this model looks fine" into a bound.
+
+    The check runs in both directions, so this cannot go stale silently:
+    an agent that fits must fit, and an agent listed as saturated must genuinely
+    NOT fit — otherwise the exclusion is stale and should be deleted.
+
+    Skips when the matrix is absent or has no baseline (no probe has run here),
+    because an unmeasured ratio is not evidence of anything.
+    """
+    from app import model_matrix as M
+
+    admitted = [r for r in M._ROWS if r.get("verbosity_ratio")]
+    if not admitted or not M._MATRIX.get("baseline_output_tokens"):
+        print("    (skipped: no probed matrix with a baseline on this checkout)")
+        return
+    worst = max(r["verbosity_ratio"] for r in admitted)
+
+    from app.agents.architecture_agent import ARCHITECTURE_MAX_TOKENS
+    from app.agents.backend_coder_agent import BACKEND_FILE_MAX_TOKENS
+    from app.agents.database_agent import DATABASE_MAX_TOKENS
+    from app.agents.devops_agent import DEVOPS_MAX_TOKENS
+    from app.agents.frontend_coder_agent import FRONTEND_FILE_MAX_TOKENS
+
+    # Same measured requirements as the table above; only the agents the
+    # expansion tier can actually serve.
+    served = [
+        ("frontend_code", FRONTEND_FILE_MAX_TOKENS, 829),
+        ("backend_code",  BACKEND_FILE_MAX_TOKENS,   96),
+        ("database",      DATABASE_MAX_TOKENS,      722),
+        ("devops",        DEVOPS_MAX_TOKENS,         64),
+        ("architecture",  ARCHITECTURE_MAX_TOKENS, 11996),
+    ]
+    for agent, ceiling, requirement in served:
+        needed = requirement * worst
+        effective_fast = resolve_max_tokens(agent, ceiling, fast_mode=True)
+        excluded = agent in M.CEILING_SATURATED_AGENTS
+        if excluded:
+            # The exclusion must be EARNED. If headroom appears — the ceiling
+            # was raised, or a verbose model left the matrix — delete the entry
+            # rather than leaving capacity switched off for a reason that
+            # stopped being true.
+            assert effective_fast < needed, (
+                f"{agent} is in CEILING_SATURATED_AGENTS but now fits "
+                f"({effective_fast} >= {needed:.0f}) — the exclusion is stale, "
+                f"remove it and let the expansion tier serve this agent")
+            assert M.models_for(agent) == [], (
+                f"{agent} is excluded but models_for still returns models")
+            continue
+        assert effective_fast >= needed, (
+            f"{agent}: fast-mode ceiling {effective_fast} < {requirement} x "
+            f"{worst} = {needed:.0f} tokens needed by the most verbose admitted "
+            f"model — raise the ceiling or add {agent} to "
+            f"CEILING_SATURATED_AGENTS")
+
+
 def test_fast_mode_respects_the_floor():
     """Halving a coder file's 1,500 would stop it mid-function, so the floor
     binds instead — fast mode is meant to be lighter, not to emit broken files."""

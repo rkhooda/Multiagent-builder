@@ -46,6 +46,30 @@ MAX_MODELS_PER_PROVIDER = 3
 # expensive direction, and the one the filter exists to prevent.
 CHARS_PER_TOKEN = 3.0
 
+# Agents barred from the expansion tier because their OUTPUT ceiling is already
+# saturated by the incumbent, so a more verbose model cannot fit inside it.
+#
+# Measured 2026-08-11 by the probe's fixed sizing task. Every admitted Mistral
+# model needs 0.91-1.17x what groq needs for the same file — near parity, and
+# comfortably inside every agent ceiling except one:
+#
+#   architecture   ceiling 12,000, measured requirement 11,996 (99.97% — it is
+#                  AT the wall on groq today). At 1.17x it would need ~14,035
+#                  and truncate by ~2,000 tokens.
+#
+# Truncation there is the expensive kind: the architecture document is the input
+# to planning, and at a gemini-shaped ceiling it presents as an error plus a
+# silent failover rather than as visible truncation. So architecture keeps its
+# incumbent chain, and depth for it must come from raising the ceiling on
+# measured evidence — not from quietly routing it somewhere it does not fit.
+#
+# This is the quality floor applied to token budgets rather than to output
+# contracts: the same rule that "never stalls" must not become "never stops
+# producing garbage". Pinned by test_token_budgets.
+# test_expansion_models_fit_every_agent_ceiling, which recomputes the arithmetic
+# from the live ceilings and fails if this set is ever stale in EITHER direction.
+CEILING_SATURATED_AGENTS = {"architecture"}
+
 
 def _load() -> dict:
     try:
@@ -90,6 +114,8 @@ def _rank(row: dict) -> tuple:
 
 def models_for(agent_type: str) -> list:
     """Admitted models this agent may use, best first, capped per provider."""
+    if agent_type in CEILING_SATURATED_AGENTS:
+        return []
     eligible = [r for r in _ROWS
                 if agent_type in (r.get("agents") or []) and _key_configured(r["provider"])]
     eligible.sort(key=_rank)
