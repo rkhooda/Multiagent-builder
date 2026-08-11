@@ -236,46 +236,88 @@ Two consequences that matter:
 8. **A context-window database.** `litellm.get_model_info()` covers mapped
    slugs; the probe fills gaps into the matrix for the rest.
 
-## BLOCKING: the four incumbent keys are placeholders
+## Resolved: duplicate keys in `.env` shadowed the working ones
 
-Found by the same probe run, and far more serious than anything above.
-`backend/.env` currently holds the literal string `your_key_here` for:
+The first probe run reported all four incumbent keys as invalid. The keys were
+never lost. Pasting the `.env.example` block into `.env` to add the three new
+keys **re-declared the four existing names further down the file** as
+`your_key_here`, and **python-dotenv keeps the LAST occurrence of a name**, so
+the placeholders silently won:
 
-    GEMINI_API_KEY   GROQ_API_KEY   OPENROUTER_API_KEY   NVIDIA_API_KEY
+```
+line  1   GEMINI_API_KEY=<real>          <- ignored
+line 23   GEMINI_API_KEY=your_key_here   <- what the process actually loaded
+```
 
-All four return authentication errors on a live call. The file was overwritten
-from `.env.example` while adding the three expansion keys, which replaced the
-working values; `.env` is gitignored, so there is no backup and they must be
-re-issued from each provider's console. All four are free.
+Reading the resolved value shows only the placeholder, which is why the first
+diagnosis was wrong; counting occurrences per name is what found it. The four
+duplicate lines were removed and all five providers now authenticate live.
 
-Consequence: **the pipeline currently cannot run.** Mistral alone is admitted,
-and it is a fallback tier — every agent's primary and fallback are dead. This is
-an environment fault, not a code fault; nothing in the router needs changing.
+Worth generalising: **`.env` has no duplicate-key warning.** A repeated name is
+not an error, not a warning, and invisible to anything that reads the resolved
+value — including every diagnostic in this repo. When a key that should work
+does not, count its occurrences before assuming it is wrong.
 
-It also means these remain **unverified against live traffic**: matrix-admitted
-models serving a real generation, the context filter firing on a real overflow,
-and the whole payoff measurement below.
+`.gitignore` also gained `.env.*` with `!.env.example`: the bare `.env` rule
+matched neither `.env.local` nor the `.env.backup-*` written during this fix, so
+a side file holding the same real keys sat in `git status` as an ordinary
+untracked file waiting to be added.
 
-## Not yet measured
+## Measured: the verbosity ratio
 
-- **The verbosity baseline.** `baseline_output_tokens` is null in the matrix
-  because the incumbent probe could not authenticate, so no `verbosity_ratio`
-  exists yet. Until it does, the ceiling pin cannot assert that an admitted
-  model's output requirement fits the agent's budget — the guard against the
-  ceiling-starvation defect is designed and unarmed. Re-running the probe with
-  restored keys fills this in.
-- **The payoff number.** Whether a two-arm A/B now fits in a day's budget, and
-  which UNPROVEN verdicts (Improvements 01 and 02) can finally be settled,
-  cannot be answered until a full run completes.
+With all keys working, the re-probe produced the baseline the ceiling pin needs.
+`groq/llama-3.3-70b-versatile` = **230 tokens** on the fixed sizing task.
+
+| Model | Output tokens | Ratio |
+|---|---|---|
+| `mistral/mistral-small-latest` | 210 | 0.91 |
+| `mistral/mistral-medium-latest`, `-3.5` | 249 | 1.08 |
+| `mistral/mistral-medium`, `glm-5-2`, `zai-glm-5-2` | 254 | 1.10 |
+| `mistral/magistral-small-latest` | 268 | **1.17** |
+| `gemini/gemini-2.5-flash` *(incumbent)* | **1,726** | **7.5** |
+
+Two findings:
+
+- **Mistral is at parity with Groq** (0.91–1.17×), so it fits every agent
+  ceiling with one exception below.
+- **Gemini costs 7.5× the tokens for the same file.** This is the reasoning tax
+  `docs/PROVIDERS.md` describes qualitatively, now a number. It is measurement,
+  not inference, and it is why any ceiling for a gemini call must be sized for
+  reasoning plus answer.
+
+### The one agent that cannot take the depth
+
+`architecture` has a ceiling of 12,000 against a measured requirement of
+**11,996 — 99.97%, already at the wall on Groq**. At 1.17× it would need ~14,035
+and truncate by ~2,000 tokens. It is therefore excluded from the expansion tier
+(`model_matrix.CEILING_SATURATED_AGENTS`) and keeps its incumbent chain.
+
+That truncation is the expensive kind: the architecture document is the input to
+planning, and at a reasoning-shaped ceiling it presents as an error plus a
+silent failover rather than as visible truncation — the defect that starved QA
+for weeks. Depth for architecture must come from raising the ceiling on
+evidence, not from quietly routing it somewhere it does not fit.
+
+The exclusion is pinned in **both directions**: if headroom ever appears, the
+test fails and says to delete the entry, so capacity is not left switched off
+for a reason that stopped being true.
 
 ## Status
 
-Phases 1–3 shipped: providers registered, probe and committed capability matrix,
-matrix-driven routing with the context pre-flight filter, the contract-based
-quality floor, and `ROUTING_MODE=pinned|auto`. Phase 4 (provenance surfacing and
-the numeric payoff) is blocked on the keys above.
+Phases 1–3 shipped and verified live: providers registered, probe and committed
+capability matrix, matrix-driven routing with the context pre-flight filter, the
+contract-based quality floor, the ceiling-saturation guard, and
+`ROUTING_MODE=pinned|auto`.
 
-Offline regression gate at the latest commit: **25/25 green**
-(`test_build_verify` and `test_sandbox_hostile` SKIPPED — no docker daemon on
-this host, so the build-verification ladder and sandbox isolation are not
-covered by this run).
+End-to-end proof, not just unit tests: with all 12 incumbent models marked
+budget-exhausted, a real `frontend_code` call fell through to
+`mistral/mistral-medium-3.5` and returned a clean fence-free component on the
+first attempt — logged and attributed in `metrics.db`.
+
+Offline regression gate: **25/25 green** (`test_build_verify` and
+`test_sandbox_hostile` SKIPPED — no docker daemon on this host, so the
+build-verification ladder and sandbox isolation are not covered by this run).
+
+Still unmeasured: the payoff number — whether a two-arm A/B now fits in a day's
+budget, and which UNPROVEN verdicts (Improvements 01 and 02) can be settled.
+That needs a full pipeline run.
