@@ -180,6 +180,74 @@ the fallback chain, so a thinking-model fallback behind a direct-model
 ceiling can still truncate (ceiling audit finding 4). Visible via the
 truncation flag; per-tier budgets remain their own scoped change.
 
+## Task 5 — before/after, verdicts, and the affordability answer (2026-08-10)
+
+### Before → after (computed from the measured per-agent averages; the next
+### real run's metrics rows are the live confirmation)
+
+| number | before | after | basis |
+|---|---|---|---|
+| Cold run, Groq tokens | 88–96k (whole allowance) | **~58–66k** | 11 `__init__` calls eliminated: 9 backend × 2,831 avg prompt + 2 database × 2,372 ≈ 30.2k prompt (+~2–4k completion), all on groq primaries |
+| Cold run, calls | 96 planned tasks | **85** | package markers rendered, not generated |
+| Restart replay (unchanged stage) | re-spends the stage | **0 provider calls** | proven at agent level: identical rebuilt messages → cache hit (`test_agent_level_restart_replay_is_free`) |
+| Cache death visibility | print-only | counted in `degraded_events` (`cache_fault:read/write`) | Task 1 |
+| Coder context budget | ≤4K respected, unverified assumption of health | verified: 0 trims, max 2,823 tok | section 4b |
+
+Quality: 24/24 offline suites green (was 23/23 — one new suite), golden
+`--rescore` 7/7, no prompt or scoring change shipped. The one deliberate
+output change is `__init__.py` content: derived re-exports of classes that
+verifiably exist, replacing LLM-guessed markers that could re-export
+nonexistent names — proven by the 10-test suite, not asserted.
+
+### Is a two-arm comparison now affordable? — YES, differently per verdict
+
+- **Improvement #2 (incremental QA) — settleable in ONE day.** Its arms
+  differ only in the QA path, and QA's primary pool is **gemini (1M/day),
+  not groq**. Comparing QA modes over the same frozen generated tree costs
+  ~0 groq and ~80k gemini per arm (measured QA stage: 49.7k prompt + 30.3k
+  completion) — two arms ≈ 160k gemini, 16% of that pool's day. The blocked
+  measurement was never groq-bound once the arms stop regenerating code;
+  with restart replay proven and upstream artifacts kept by the checkpoint,
+  they don't. **Its 2026-08-17 review-by can be met.**
+- **Improvement #1 (decomposition/reviewer) — two UTC days, now with
+  headroom.** Its arms produce different plans, so coder generation cannot
+  be cached across arms: each arm ≈ 58–66k groq after the `__init__` fix.
+  One arm per day now leaves **35–40% of the allowance for retries** — the
+  old cost (88–96k/arm) consumed the entire day, which is precisely why
+  both prior attempts died mid-arm. Schedule: arm A day 1, arm B day 2.
+
+Caveat recorded: cross-project identical-brief caching is NOT guaranteed to
+hit for research (its context embeds live search results, which vary); the
+reliable iteration lever is restart-within-project, where upstream artifacts
+are checkpointed and the replay is proven free.
+
+### Verdicts
+
+| change | verdict | basis |
+|---|---|---|
+| Cache fault accounting + agent-level replay proof (Task 1) | **KEEP** | zero healthy-path behavior change; 15/15 cache suite |
+| Provider prompt-caching verification (Task 2) | **KEEP** (docs) | verified against provider docs, dated in PROVIDERS.md |
+| Coder prompt/context trims (Task 2) | **NOT SHIPPED** | quality effect unmeasurable offline; priced; review-by **2026-08-24** |
+| Deterministic `__init__.py` markers (Task 3) | **KEEP** | ~30k groq tok/run, 10-test offline proof, escape hatch `LLM_INIT_FILES` |
+| Multi-file batching (Task 3) | **NOT BUILT** | breaks one-file-per-call machinery; quality needs live A/B; priced (~40–65k tok/run); review-by **2026-09-10** |
+| Budget/fast-mode changes (Task 4) | **NONE NEEDED** | no starvation; pin test already covers both profiles |
+
+### What was deliberately NOT built (ponytail #4, both passes)
+
+1. **No token-optimisation subsystem** — the audit is a re-runnable script
+   over stores that already record everything (`scripts/audit_tokens.py`).
+2. **No new cache and no key change** — the existing key was verified
+   correct by experiment; the fixes were accounting and proof, not surface.
+3. **No new context assembler** — the ≤4K budget is respected with zero
+   trims on real runs; `context_builder`'s degradation order stands unused
+   and unchanged.
+4. **No response batcher** — see Task 3 record.
+5. **No prompt trims and no ceiling cuts** — both would trade a measured
+   quality basis for an unmeasured saving; deferred with dated review-bys
+   instead of shipped on hope.
+6. **No new metrics tables or columns** — fast-mode attribution came from
+   checkpoints, context sizes from the Day 18 log lines already in state.
+
 ## Suites baseline (2026-08-10, before any change)
 
 - Offline gate: **23/23 green** (includes QA-stream, crafted-breakage
