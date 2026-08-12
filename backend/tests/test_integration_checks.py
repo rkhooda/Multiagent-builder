@@ -15,7 +15,8 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app.validation.integration import (  # noqa: E402
-    check_package_markers, check_python_manifest, check_route_registration,
+    check_config_keys, check_orm_symmetry, check_package_markers,
+    check_python_manifest, check_route_registration,
     detect_degeneracy,
     detect_import_time_io,
     detect_truncation, lint_python,
@@ -567,6 +568,96 @@ def test_a_directory_shadowed_by_a_dependency_is_not_a_package():
         "backend/alembic/versions/0001_init.py": "revision = '0001'\n",
     }
     assert check_package_markers(files) == {}
+
+
+# ── Class C: config keys and ORM symmetry ────────────────────────────────────
+
+CRM_SETTINGS = '''\
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_file=".env")
+
+    database_url: str = "sqlite:///./app.db"
+    secret_key: str = "change-me"
+
+
+settings = Settings()
+'''
+
+
+def test_config_key_case_mismatch_is_caught():
+    """Settings defines `database_url`; db/session.py read
+    `settings.DATABASE_URL`. pydantic-settings maps the ENV VAR name to a
+    lowercase field, so the env var really is DATABASE_URL -- which is why this
+    is easy to get wrong and invisible in either file alone."""
+    files = {
+        "backend/app/core/config.py": CRM_SETTINGS,
+        "backend/app/db/session.py":
+            "from app.core.config import settings\n\n"
+            "engine = create_engine(settings.DATABASE_URL)\n",
+    }
+    issues = check_config_keys(files)["backend/app/db/session.py"]
+    assert issues[0].kind == "config_key"
+    assert "settings.DATABASE_URL" in issues[0].message
+    assert "did you mean settings.database_url" in issues[0].message
+
+
+def test_a_field_that_exists_is_not_reported():
+    files = {
+        "backend/app/core/config.py": CRM_SETTINGS,
+        "backend/app/db/session.py":
+            "from app.core.config import settings\n\n"
+            "engine = create_engine(settings.database_url)\n",
+    }
+    assert check_config_keys(files) == {}
+
+
+def test_config_check_is_silent_without_a_settings_class():
+    """A project with no Settings must not produce a finding per read."""
+    assert check_config_keys({"backend/app/x.py": "print(settings.anything)\n"}) == {}
+
+
+# Contact.tags declared back_populates="contacts"; Tag had no `contacts`
+# attribute. SQLAlchemy raises at MAPPER CONFIGURATION -- the first time any
+# mapper is used -- so /health answered 200 and every request touching the
+# database returned 500. The clearest example of "boot is not proof".
+CRM_ORM_PAIR = {
+    "backend/app/models/contact.py": (
+        "from typing import List\n"
+        "from sqlalchemy.orm import Mapped, relationship\n\n\n"
+        "class Contact(Base):\n"
+        "    __tablename__ = 'contacts'\n"
+        "    tags: Mapped[List['Tag']] = relationship(back_populates='contacts')\n"),
+    "backend/app/models/tag.py": (
+        "from sqlalchemy.orm import Mapped, mapped_column\n\n\n"
+        "class Tag(Base):\n"
+        "    __tablename__ = 'tags'\n"
+        "    name: Mapped[str] = mapped_column()\n"),
+}
+
+
+def test_back_populates_naming_a_missing_attribute_is_caught():
+    issues = check_orm_symmetry(CRM_ORM_PAIR)["backend/app/models/contact.py"]
+    assert issues[0].kind == "orm"
+    assert "Tag has no 'contacts' attribute" in issues[0].message
+
+
+def test_a_symmetric_relationship_is_not_reported():
+    ok = dict(CRM_ORM_PAIR)
+    ok["backend/app/models/tag.py"] = ok["backend/app/models/tag.py"] + (
+        "    contacts: Mapped[list['Contact']] = relationship(back_populates='tags')\n")
+    assert check_orm_symmetry(ok) == {}
+
+
+def test_a_relationship_to_a_class_outside_the_tree_is_not_reported():
+    """Nothing to check against — silence beats a guess."""
+    files = {"backend/app/models/contact.py": (
+        "from sqlalchemy.orm import Mapped, relationship\n\n\n"
+        "class Contact(Base):\n"
+        "    org: Mapped['Organisation'] = relationship(back_populates='contacts')\n")}
+    assert check_orm_symmetry(files) == {}
 
 
 def _run_all():

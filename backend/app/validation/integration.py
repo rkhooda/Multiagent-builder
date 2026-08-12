@@ -753,6 +753,142 @@ def check_package_markers(files: dict, root="backend") -> dict:
     return results
 
 
+# ── 7. The class-attribute table ─────────────────────────────────────────────
+#
+# One pass, two consumers: config-key agreement and ORM symmetry. Both ask the
+# same question -- "does this class actually have that attribute" -- which is
+# the whole reason they are one table and not two walkers.
+#
+# ponytail: NAME level only, no type inference. `x.foo` is checked when `x` is
+# resolvably a known class; otherwise it is not reported. A false positive here
+# buys a paid repair of correct code.
+
+
+def class_attributes(files: dict, root="backend") -> dict:
+    """{ClassName: {attribute: line}} across the tree."""
+    table = {}
+    for path, content in (files or {}).items():
+        if PurePosixPath(path).suffix.lower() not in PY_EXTS or not content:
+            continue
+        if root and not path.startswith(root + "/"):
+            continue
+        try:
+            tree = ast.parse(content)
+        except SyntaxError:
+            continue
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ClassDef):
+                continue
+            attrs = table.setdefault(node.name, {})
+            for stmt in node.body:
+                if isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name):
+                    attrs[stmt.target.id] = stmt.lineno
+                elif isinstance(stmt, ast.Assign):
+                    for t in stmt.targets:
+                        if isinstance(t, ast.Name):
+                            attrs[t.id] = stmt.lineno
+                elif isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    attrs[stmt.name] = stmt.lineno
+    return table
+
+
+# ── 8. Config-key agreement ──────────────────────────────────────────────────
+#
+# Settings defined `database_url`; call sites read `settings.DATABASE_URL`.
+# pydantic-settings maps the ENV VAR name to a lowercase field, so the env var
+# really is DATABASE_URL -- which is exactly why this is easy to get wrong and
+# impossible to see in either file alone.
+
+_SETTINGS_READ = re.compile(r"\bsettings\.([A-Za-z_][A-Za-z0-9_]*)")
+
+
+def check_config_keys(files: dict, root="backend", settings_class="Settings") -> dict:
+    """Attributes read off the settings object that it does not define."""
+    attrs = class_attributes(files, root).get(settings_class)
+    if not attrs:
+        return {}
+    results = {}
+    for path, content in sorted((files or {}).items()):
+        if PurePosixPath(path).suffix.lower() not in PY_EXTS or not content:
+            continue
+        for n, line in enumerate(content.splitlines(), start=1):
+            for name in _SETTINGS_READ.findall(line):
+                if name in attrs or name.startswith("model_"):
+                    continue
+                near = _closest(name, attrs)
+                results.setdefault(path, []).append(SyntaxIssue(
+                    path, line=n, kind="config_key",
+                    message=(f"reads settings.{name}, but {settings_class} defines no "
+                             f"such field"
+                             + (f" — did you mean settings.{near}?" if near else "")
+                             + ". pydantic-settings lowercases field names, so the "
+                             f"env var can be right while the attribute is wrong.")))
+    return results
+
+
+def _closest(name: str, attrs) -> str:
+    """The obvious case-or-separator variant, which is the only near-miss worth
+    naming. Not a fuzzy matcher — a wrong suggestion is worse than none."""
+    target = _normalise(name)
+    return next((a for a in attrs if _normalise(a) == target), "")
+
+
+# ── 9. ORM relationship symmetry ─────────────────────────────────────────────
+#
+# Contact.tags declared back_populates="contacts"; Tag had no `contacts`
+# attribute. SQLAlchemy raises at MAPPER CONFIGURATION -- the first time any
+# mapper is used -- so /health answered 200 and every request touching the
+# database returned 500. The single clearest example of "boot is not proof".
+
+_ANNOTATION_CLASS = re.compile(r'["\']([A-Za-z_][A-Za-z0-9_]*)["\']')
+
+
+def check_orm_symmetry(files: dict, root="backend") -> dict:
+    """Every back_populates must name an attribute that exists on the target."""
+    table = class_attributes(files, root)
+    results = {}
+    for path, content in sorted((files or {}).items()):
+        if PurePosixPath(path).suffix.lower() not in PY_EXTS or not content:
+            continue
+        try:
+            tree = ast.parse(content)
+        except SyntaxError:
+            continue
+        for cls in (n for n in ast.walk(tree) if isinstance(n, ast.ClassDef)):
+            for stmt in cls.body:
+                if not isinstance(stmt, ast.AnnAssign) or not isinstance(stmt.value, ast.Call):
+                    continue
+                if _called_name(stmt.value) != "relationship":
+                    continue
+                inverse = next((kw.value.value for kw in stmt.value.keywords
+                                if kw.arg == "back_populates"
+                                and isinstance(kw.value, ast.Constant)), None)
+                if not inverse:
+                    continue
+                target = _relationship_target(stmt)
+                # Unknown target: the class lives outside the generated tree, so
+                # there is nothing to check against. Silence beats a guess.
+                if not target or target not in table:
+                    continue
+                if inverse in table[target]:
+                    continue
+                results.setdefault(path, []).append(SyntaxIssue(
+                    path, line=stmt.lineno, kind="orm",
+                    message=(f"{cls.name}.{stmt.target.id} declares "
+                             f"back_populates='{inverse}', but {target} has no "
+                             f"'{inverse}' attribute. SQLAlchemy raises when the "
+                             f"mappers are first configured, so the app boots and "
+                             f"every request touching the database returns 500.")))
+    return results
+
+
+def _relationship_target(stmt) -> str:
+    """The class a relationship points at: Mapped[List["Tag"]] -> Tag."""
+    found = _ANNOTATION_CLASS.findall(ast.unparse(stmt.annotation)
+                                      if hasattr(ast, "unparse") else "")
+    return found[-1] if found else ""
+
+
 def _shadows(dynamic: str, static: str) -> bool:
     """Would `dynamic` (e.g. /{contact_id}) match `static` (e.g. /search)?"""
     d = [s for s in dynamic.strip("/").split("/") if s]
