@@ -157,6 +157,57 @@ def resolve_max_tokens(agent_type: str, requested: int, fast_mode: bool = False)
     return requested
 
 
+# ── Per-tier budgets: the ceiling is single-valued, the chain is not ─────────
+# The defect this closes, predicted and deliberately deferred by finding #4 of
+# docs/CEILING_AUDIT.md ("NOT fixed today ... its own scoped change"), and
+# collected on 2026-08-12 by project e8935f86:
+#
+# Four agents (frontend_code, backend_code, database, devops) run a DIRECT
+# model as primary (groq llama-3.3) and a THINKING model as fallback
+# (gemini-2.5-flash) behind ONE ceiling sized for the primary. A reasoning
+# model spends completion tokens thinking before it emits any answer text, so
+# when groq rate-limits and the chain falls through, the whole 1,500 is
+# consumed reasoning and the answer is truncated to a few hundred characters.
+#
+# Measured on that run: 7 of its 9 truncations were gemini on the fallback
+# tier, zero were on the direct primary. alembic/env.py spent 2,496 tokens to
+# emit 437 chars; ReminderForm.jsx spent 1,496 to emit 294. Both shipped.
+#
+# WHY a floor and not "+ headroom". Agents whose PRIMARY is a reasoning model
+# (research, requirements, planning, qa, frontend_review) already have ceilings
+# measured WITH reasoning included, so adding headroom would double-count them.
+# max() raises only the ceilings that were sized for a direct model and leaves
+# every measured one untouched: qa stays 6,000, architecture 12,000, planning
+# dynamic. And because non-reasoning models are unaffected, groq's admission
+# cost is unchanged — which was the audit's stated reason for not simply
+# raising the flat ceiling to ~4k.
+#
+# Basis: 1.2 x (worst observed gemini reasoning 2,740 + largest complete coder
+# answer 943) ~= 4,420. Pinned by test_token_budgets.
+REASONING_ANSWER_FLOOR = 4400
+
+# Substrings, not exact slugs: the same model appears under several provider
+# prefixes (nvidia_nim/openai/gpt-oss-20b and openrouter/openai/gpt-oss-20b:free
+# are one model), and Ollama names carry tags. Same matching style as _LOCAL_CODE.
+# ponytail: a hand-kept list beside the chains it describes, not a capability
+# lookup — every entry is already annotated reasoning/non-reasoning in MODELS,
+# NVIDIA_CODE and OPENROUTER_CODE above. Add a slug here when one is added there.
+REASONING_MARKERS = ("gemini-2.5-flash", "gpt-oss", "nemotron", "inkling", "qwen3")
+
+
+def is_reasoning_model(model: str) -> bool:
+    return any(m in (model or "") for m in REASONING_MARKERS)
+
+
+def model_max_tokens(model: str, max_tokens: int) -> int:
+    """This model's effective output budget. A reasoning model gets enough room
+    to think AND answer; a direct model gets exactly what the call site asked
+    for, so nothing about the primary tier's cost changes."""
+    if is_reasoning_model(model):
+        return max(max_tokens, REASONING_ANSWER_FLOOR)
+    return max_tokens
+
+
 def _finish_reason(resp) -> str:
     try:
         return getattr(resp.choices[0], "finish_reason", "") or ""
@@ -1042,7 +1093,8 @@ def call_llm(messages: list, agent_type: str, max_tokens=4000, timeout=None,
         # wait — that last one is not a rate limit and retrying never fixes it.
         chain = [m for m in full_chain
                  if not in_cooldown(m) and not budget_exhausted(m)
-                 and model_matrix.fits_context(m, context_chars, max_tokens)]
+                 and model_matrix.fits_context(
+                     m, context_chars, model_max_tokens(m, max_tokens))]
         if len(chain) < len(full_chain):
             print(f"[LLM] {agent_type}: skipping "
                   f"{', '.join(m for m in full_chain if m not in chain)} "
@@ -1065,6 +1117,8 @@ def call_llm(messages: list, agent_type: str, max_tokens=4000, timeout=None,
 
         rate_limited = False
         for model in chain:
+            # Per-tier: a reasoning model needs room to think before it answers.
+            model_tokens = model_max_tokens(model, max_tokens)
             is_local = _provider_of(model) == "ollama"
             timeout = (max(base_timeout, OLLAMA_TIMEOUT_FLOOR_SECONDS)
                        if is_local else base_timeout)
@@ -1088,7 +1142,7 @@ def call_llm(messages: list, agent_type: str, max_tokens=4000, timeout=None,
                     resp = _traced_completion(
                         model=model,
                         messages=messages,
-                        max_tokens=max_tokens,
+                        max_tokens=model_tokens,
                         temperature=0.3,
                         timeout=timeout,
                         # Sends local calls to the SAME daemon the probe found,
@@ -1098,7 +1152,7 @@ def call_llm(messages: list, agent_type: str, max_tokens=4000, timeout=None,
                         # num_ctx is what stops ollama silently truncating the
                         # prompt to fit its 4k default — see ollama_num_ctx.
                         **({"api_base": OLLAMA_URL,
-                            "num_ctx": ollama_num_ctx(context_chars, max_tokens)}
+                            "num_ctx": ollama_num_ctx(context_chars, model_tokens)}
                            if is_local else {}),
                         # Filterable in the dashboard by project, agent and attempt.
                         # Ignored by the passthrough when tracing is off.

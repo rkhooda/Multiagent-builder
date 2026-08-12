@@ -4,7 +4,9 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from app.llm_router import FAST_MODE_FLOOR, _finish_reason, resolve_max_tokens
+from app.llm_router import (FAST_MODE_FLOOR, REASONING_ANSWER_FLOOR,
+                            _finish_reason, is_reasoning_model,
+                            model_max_tokens, resolve_max_tokens)
 
 
 class _Choice:
@@ -124,6 +126,83 @@ def test_ceilings_cover_measured_requirements():
             f"{agent}: fast-mode effective ceiling {effective_fast} < measured "
             f"requirement {requirement} — exclude it from FAST_MODE_SCALABLE "
             f"or raise FAST_MODE_FLOOR")
+
+
+def test_reasoning_tier_gets_room_to_think_behind_a_direct_primary():
+    """The defect that shipped project e8935f86 (2026-08-12): four agents run a
+    direct primary and a THINKING fallback behind ONE ceiling sized for the
+    primary. When groq rate-limited, gemini spent the whole budget reasoning and
+    the answer was truncated — 7 of that run's 9 truncations, zero on the
+    primary. See docs/VERIFICATION_GAP_ANALYSIS.md and CEILING_AUDIT finding #4,
+    which predicted this exact interaction and deferred it.
+
+    Basis: 1.2 x (worst gemini reasoning 2,740 + largest complete coder answer
+    943) ~= 4,420."""
+    from app.agents.backend_coder_agent import BACKEND_FILE_MAX_TOKENS
+    from app.agents.database_agent import DATABASE_MAX_TOKENS
+    from app.agents.devops_agent import DEVOPS_MAX_TOKENS
+    from app.agents.frontend_coder_agent import FRONTEND_FILE_MAX_TOKENS
+
+    direct, thinking = "groq/llama-3.3-70b-versatile", "gemini/gemini-2.5-flash"
+    assert not is_reasoning_model(direct)
+    assert is_reasoning_model(thinking)
+
+    # The four agents whose fallback is a thinking model. Each must give that
+    # tier room for reasoning AND the largest complete coder answer (943).
+    for name, ceiling in (("frontend_code", FRONTEND_FILE_MAX_TOKENS),
+                          ("backend_code", BACKEND_FILE_MAX_TOKENS),
+                          ("database", DATABASE_MAX_TOKENS),
+                          ("devops", DEVOPS_MAX_TOKENS)):
+        assert model_max_tokens(thinking, ceiling) >= 2740 + 943, name
+        # The primary tier is untouched: raising it would raise groq's TPM
+        # admission cost on every call, which is why the flat raise was rejected.
+        assert model_max_tokens(direct, ceiling) == ceiling, name
+
+    # Ceilings already MEASURED with reasoning included must not be inflated.
+    from app.agents.architecture_agent import ARCHITECTURE_MAX_TOKENS
+    from app.agents.qa_agent import QA_MAX_TOKENS
+    from app.agents.requirements_agent import REQUIREMENTS_MAX_TOKENS
+    for name, ceiling in (("qa", QA_MAX_TOKENS),
+                          ("requirements", REQUIREMENTS_MAX_TOKENS),
+                          ("architecture", ARCHITECTURE_MAX_TOKENS)):
+        assert model_max_tokens(thinking, ceiling) == ceiling, (
+            f"{name}: floor {REASONING_ANSWER_FLOOR} raised a ceiling that was "
+            f"already measured with reasoning included ({ceiling}) — double-counted")
+
+    # Every reasoning slug in the chains is recognised, under either provider
+    # prefix. An unrecognised one silently keeps the direct-tier ceiling.
+    for slug in ("nvidia_nim/openai/gpt-oss-20b", "openrouter/openai/gpt-oss-20b:free",
+                 "nvidia_nim/nvidia/nemotron-3-super-120b-a12b",
+                 "openrouter/nvidia/nemotron-3-super-120b-a12b:free",
+                 "nvidia_nim/thinkingmachines/inkling", "ollama/qwen3:4b"):
+        assert is_reasoning_model(slug), slug
+    for slug in ("groq/llama-3.3-70b-versatile", "mistral/mistral-medium-3.5",
+                 "nvidia_nim/minimaxai/minimax-m3", "ollama/phi4-mini"):
+        assert not is_reasoning_model(slug), slug
+
+
+def test_a_truncated_call_is_a_lower_bound_on_requirement():
+    """The flaw in how `measured` above is built, found 2026-08-13.
+
+    Its numbers are maxima over completions that did NOT truncate. But a
+    truncated call is precisely the evidence that requirement EXCEEDS the
+    ceiling — and excluding it means the table can only ever record numbers
+    below the ceiling, so `ceiling >= requirement` passes by construction while
+    every call truncates. That is how frontend_code stayed pinned at a measured
+    829 through five truncations at 1,496 in the same run.
+
+    The rule: a truncation flag sets requirement > ceiling for that tier, and
+    the pin must be updated from the truncation, not from the survivors."""
+    ceiling = 1500
+    complete_runs = [829, 943, 612]
+    truncated_at = [1496, 1496, 1500]
+
+    naive = max(complete_runs)
+    assert ceiling >= naive          # passes, and means nothing
+    assert truncated_at, "a truncated call proves requirement > ceiling"
+    assert max(truncated_at) >= ceiling - 5
+    # Honest requirement: unknown, but strictly greater than what was cut off.
+    assert ceiling < max(truncated_at) + 1
 
 
 def test_expansion_models_fit_every_agent_ceiling():
