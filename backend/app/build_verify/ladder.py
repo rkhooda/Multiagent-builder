@@ -113,4 +113,15 @@ def verify_target(project_id: str, target) -> dict:
         except (urllib.error.URLError, OSError, TimeoutError):
             pass  # best-effort; the sandbox service's own scratch dir is disposable
 
+    # A tier-level UNVERIFIED (the sandbox accepted /workspace/start and then
+    # became unreachable) used to be visible ONLY inside `tiers`, while
+    # build_verify_agent tested for a target-level `unverified_reason` — so it
+    # was never counted, never surfaced, and read as an ordinary tier failure.
+    # Same abstention bug as the one this whole change exists to remove, one
+    # level down. Surfacing it here keeps the single test in the caller correct.
+    unverified = [f"{name}: {t.get('error', 'sandbox unreachable')}"
+                  for name, t in tiers.items() if t.get("verdict") == UNVERIFIED]
+    if unverified:
+        return {"target": target.name, "tiers": tiers,
+                "unverified_reason": "; ".join(unverified)}
     return {"target": target.name, "tiers": tiers}

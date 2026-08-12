@@ -52,7 +52,8 @@ def test_disabled_short_circuits():
         result = bva.build_verify_agent({"project_id": "test-build-verify-agent"})
     finally:
         bva.BUILD_VERIFY_ENABLED = original
-    check("disabled: enabled=False in report", result["build_verification"] == {"enabled": False})
+    check("disabled: enabled=False in report",
+          result["build_verification"] == {"enabled": False, "status": "not_applicable"})
     check("disabled: qa_report/validation_report untouched", "qa_report" not in result)
 
 
@@ -60,7 +61,8 @@ def test_no_targets_is_not_a_failure():
     def run():
         result = bva.build_verify_agent({"project_id": "test-build-verify-agent", "stack_profile": "react-fastapi"})
         check("no targets: enabled=True, empty targets, no unverified_reason",
-              result["build_verification"] == {"enabled": True, "targets": {}}, result)
+              result["build_verification"] == {"enabled": True, "targets": {},
+                                               "status": "not_applicable"}, result)
     _with_targets((), run)
 
 
@@ -153,6 +155,108 @@ def test_worst_case_wall_clock_stays_bounded():
           stage_worst_case < CEILING_S, worst_per_target)
 
 
+# ── The status vocabulary (verification gap, 2026-08-13) ─────────────────────
+#
+# Project e8935f86 shipped with BOTH targets unverified -- nothing executed --
+# while Gate 4 said "the generated code did not fully install/build/boot".
+# "We checked and it failed" and "we never checked" were the same branch.
+
+def test_unverified_is_not_failed():
+    from app.build_verify.classify import (FAILED, UNVERIFIED_STATUS,
+                                           verification_status)
+    # The CRM's exact report shape: both targets never ran.
+    crm = {"enabled": True, "targets": {
+        "backend": {"target": "backend",
+                    "unverified_reason": "<urlopen error [Errno 8] nodename nor servname provided>"},
+        "frontend": {"target": "frontend",
+                     "unverified_reason": "<urlopen error [Errno 8] nodename nor servname provided>"},
+    }}
+    status = verification_status(crm)
+    check("the CRM report reads unverified, not failed",
+          status == UNVERIFIED_STATUS and status != FAILED, status)
+
+
+def test_a_real_failure_is_failed_not_unverified():
+    from app.build_verify.classify import FAILED, verification_status
+    report = {"enabled": True, "targets": {"backend": {"target": "backend", "tiers": {
+        "install": {"verdict": "pass"}, "build": {"verdict": "fail_code"},
+        "boot": {"verdict": "skipped"}}}}}
+    check("a tier that ran and failed reads failed",
+          verification_status(report) == FAILED, verification_status(report))
+
+
+def test_all_tiers_pass_is_verified():
+    from app.build_verify.classify import VERIFIED, verification_status
+    report = {"enabled": True, "targets": {"backend": {"target": "backend", "tiers": {
+        "install": {"verdict": "pass"}, "build": {"verdict": "pass"},
+        "boot": {"verdict": "pass"}}}}}
+    check("every tier passing reads verified",
+          verification_status(report) == VERIFIED, verification_status(report))
+
+
+def test_one_unverified_tier_outranks_other_passes():
+    """`unverified` beats both `failed` and `verified`: if any part never ran,
+    the truthful statement is "we do not know", and anything else overstates
+    what was established."""
+    from app.build_verify.classify import UNVERIFIED_STATUS, verification_status
+    report = {"enabled": True, "targets": {
+        "backend": {"target": "backend", "tiers": {"install": {"verdict": "pass"}}},
+        "frontend": {"target": "frontend", "tiers": {"install": {"verdict": "unverified"}}},
+    }}
+    check("one unverified tier outranks another target's passes",
+          verification_status(report) == UNVERIFIED_STATUS, verification_status(report))
+
+
+def test_tier_level_unverified_is_surfaced_to_the_target():
+    """The same abstention bug one level down: a tier-level UNVERIFIED lived
+    only inside `tiers`, while build_verify_agent tested for a target-level
+    `unverified_reason` -- so it was never counted and never surfaced."""
+    import app.build_verify.ladder as ladder
+
+    calls = {"cleanup": False}
+
+    def fake_call(endpoint, payload, timeout_s):
+        if endpoint == "/workspace/start":
+            return {"workspace": "/tmp/ws"}
+        if endpoint == "/workspace/cleanup":
+            calls["cleanup"] = True
+            return {}
+        raise OSError("sandbox went away mid-ladder")
+
+    class _Spec:
+        command, image, timeout_s, workdir, env = ("true",), "x", 5, "", None
+
+    class _Target:
+        name, root = "backend", "backend"
+        install, build, boot = _Spec(), None, None
+
+    original = ladder._call
+    ladder._call = fake_call
+    try:
+        result = ladder.verify_target("p1", _Target())
+    finally:
+        ladder._call = original
+
+    check("a tier-level unverified surfaces as target-level unverified_reason",
+          result.get("tiers", {}).get("install", {}).get("verdict") == "unverified"
+          and "unverified_reason" in result, result)
+    check("the workspace is still cleaned up", calls["cleanup"])
+
+
+def test_the_headline_never_calls_an_unrun_check_a_failure():
+    from app.build_verify.classify import (UNVERIFIED_STATUS, render_qa_prefix,
+                                           status_headline)
+    text = status_headline(UNVERIFIED_STATUS)
+    check("the unverified headline says never executed, not 'did not build'",
+          "NOT VERIFIED" in text and "never been executed" in text
+          and "did not" not in text.lower(), text)
+
+    prefix = render_qa_prefix({"enabled": True, "targets": {
+        "backend": {"target": "backend", "unverified_reason": "sandbox unreachable"}}})
+    check("the QA prefix leads with the honest headline",
+          "NOT VERIFIED" in prefix and "NOT CHECKED" in prefix, prefix)
+
+
 def main() -> int:
     for fn in (
         test_disabled_short_circuits,
@@ -161,11 +265,19 @@ def main() -> int:
         test_ladder_exception_never_escapes,
         test_whole_agent_never_raises_on_unexpected_bug,
         test_worst_case_wall_clock_stays_bounded,
+        test_unverified_is_not_failed,
+        test_a_real_failure_is_failed_not_unverified,
+        test_all_tiers_pass_is_verified,
+        test_one_unverified_tier_outranks_other_passes,
+        test_tier_level_unverified_is_surfaced_to_the_target,
+        test_the_headline_never_calls_an_unrun_check_a_failure,
     ):
         print(f"-- {fn.__name__}")
         fn()
     print(f"\n{passed} passed, {failed} failed")
     return 1 if failed else 0
+
+
 
 
 if __name__ == "__main__":

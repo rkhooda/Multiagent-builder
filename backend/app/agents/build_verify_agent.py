@@ -14,7 +14,8 @@ semantics: unverified must never read as pass, and never happen silently.
 import os
 from concurrent.futures import ThreadPoolExecutor
 
-from ..build_verify.classify import render_qa_prefix
+from ..build_verify.classify import (NOT_APPLICABLE, UNVERIFIED_STATUS,
+                                     render_qa_prefix, verification_status)
 from ..build_verify.ladder import verify_target
 from ..observability import degraded
 from ..observability.metrics_store import record_agent_run
@@ -97,13 +98,14 @@ def build_verify_agent(state: dict) -> dict:
     try:
         if not BUILD_VERIFY_ENABLED:
             log.append("build_verify_agent: disabled (BUILD_VERIFY_ENABLED=false)")
-            return {"build_verification": {"enabled": False}, "log": log}
+            return {"build_verification": {"enabled": False, "status": NOT_APPLICABLE}, "log": log}
 
         profile = active_profile(state)
         targets = profile.verify_targets
         if not targets:
             log.append(f"build_verify_agent: profile '{profile.name}' declares no verify targets")
-            return {"build_verification": {"enabled": True, "targets": {}}, "log": log}
+            return {"build_verification": {"enabled": True, "targets": {},
+                                       "status": NOT_APPLICABLE}, "log": log}
 
         log.append(f"build_verify_agent: verifying {len(targets)} target(s)")
         with ThreadPoolExecutor(max_workers=len(targets)) as pool:
@@ -114,8 +116,13 @@ def build_verify_agent(state: dict) -> dict:
                 degraded.record(project_id, "build_verify_unavailable")
 
         report = {"enabled": True, "targets": {r["target"]: r for r in results}}
+        # Persisted so every downstream surface reads ONE computed status
+        # instead of re-deriving it from the tier tree and disagreeing.
+        report["status"] = verification_status(report)
         _record_metrics(project_id, report)
-        log.append(f"build_verify_agent: done - {_summary(report)}")
+        # "done" was the wrong word for a run where nothing executed.
+        verb = "NOT VERIFIED" if report["status"] == UNVERIFIED_STATUS else "done"
+        log.append(f"build_verify_agent: {verb} - {_summary(report)}")
         return {
             "build_verification": report,
             "validation_report": _merged_validation_report(state, report),
@@ -127,6 +134,8 @@ def build_verify_agent(state: dict) -> dict:
         degraded.record(project_id, "build_verify_error")
         log.append(f"build_verify_agent: unverified — {type(e).__name__}: {e}")
         return {
-            "build_verification": {"enabled": True, "targets": {}, "unverified_reason": str(e)},
+            "build_verification": {"enabled": True, "targets": {},
+                                   "unverified_reason": str(e),
+                                   "status": UNVERIFIED_STATUS},
             "log": log,
         }

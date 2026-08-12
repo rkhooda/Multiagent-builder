@@ -47,6 +47,9 @@ _TIER_PHRASE = {
     TIMEOUT: {"install": "dependency install timed out", "build": "build timed out",
               "boot": "boot timed out"},
     SKIPPED: {"install": "install skipped", "build": "build skipped", "boot": "boot skipped"},
+    UNVERIFIED: {"install": "install NOT CHECKED (sandbox unreachable)",
+                 "build": "build NOT CHECKED (sandbox unreachable)",
+                 "boot": "boot NOT CHECKED (sandbox unreachable)"},
 }
 
 
@@ -64,12 +67,73 @@ def render_qa_prefix(report: dict) -> str:
     for name, r in targets.items():
         tiers = r.get("tiers")
         if not tiers:
-            lines.append(f"{name} — unverified ({r.get('unverified_reason', 'sandbox unavailable')})")
+            lines.append(f"{name} — NOT CHECKED ({r.get('unverified_reason', 'sandbox unavailable')})")
             continue
         phrases = [_TIER_PHRASE.get(v.get("verdict"), {}).get(tier, str(v.get("verdict")))
                    for tier, v in tiers.items()]
         lines.append(f"{name} — " + "; ".join(phrases) + ".")
-    return "**BUILD VERIFICATION**: " + " ".join(lines)
+    # The headline leads, so a reader who stops after one sentence still gets
+    # the honest state rather than a per-tier list they have to interpret.
+    return ("**BUILD VERIFICATION**: " + status_headline(verification_status(report))
+            + " " + " ".join(lines))
+
+
+# ── The one status vocabulary ────────────────────────────────────────────────
+#
+# The defect this closes: project e8935f86 shipped with BOTH targets
+# `unverified` (the backend ran outside compose, so http://sandbox:8100 did not
+# resolve) and Gate 4 told the user "the generated code did not fully
+# install/build/boot". Nothing had been run. "We checked and it failed" and "we
+# never checked" were rendered by the same branch, and the one that shipped was
+# the second.
+#
+# So the distinction gets a name, and every surface reads it from here rather
+# than re-deriving it: Gate 4, the project list, the summary PDF, and
+# VERIFICATION.md inside the ZIP.
+VERIFIED = "verified"          # every declared tier of every target passed
+FAILED = "failed"              # something ran and did not pass -- a real defect
+UNVERIFIED_STATUS = "unverified"   # nothing ran; we know NOTHING about this code
+NOT_APPLICABLE = "not_applicable"  # disabled, or the profile declares no targets
+
+_STATUS_HEADLINE = {
+    VERIFIED: "Verified: dependencies install, the project builds, and it boots.",
+    FAILED: "Build verification FAILED — the generated code did not install, "
+            "build or boot.",
+    UNVERIFIED_STATUS: "NOT VERIFIED — the build sandbox could not be reached, so "
+                       "none of these checks ran. This project has never been "
+                       "executed. It may or may not work.",
+    NOT_APPLICABLE: "Build verification did not run for this project.",
+}
+
+
+def verification_status(report: dict) -> str:
+    """The honest one-word state of a build_verification report.
+
+    `unverified` OUTRANKS `failed` deliberately. If any target never ran, the
+    truthful statement about the project is "we do not know", and reporting a
+    partial failure instead would overstate how much was actually established.
+    """
+    if not report or not report.get("enabled"):
+        return NOT_APPLICABLE
+    if report.get("unverified_reason"):
+        return UNVERIFIED_STATUS
+    targets = report.get("targets") or {}
+    if not targets:
+        return NOT_APPLICABLE
+    if any(r.get("unverified_reason") or not r.get("tiers") for r in targets.values()):
+        return UNVERIFIED_STATUS
+    if any(t.get("verdict") == UNVERIFIED
+           for r in targets.values() for t in (r.get("tiers") or {}).values()):
+        return UNVERIFIED_STATUS
+    if all(t.get("verdict") == PASS
+           for r in targets.values() for t in (r.get("tiers") or {}).values()):
+        return VERIFIED
+    return FAILED
+
+
+def status_headline(status: str) -> str:
+    """The sentence every surface shows. One wording, four places."""
+    return _STATUS_HEADLINE.get(status, _STATUS_HEADLINE[NOT_APPLICABLE])
 
 
 def classify_failure(stderr: str) -> str:

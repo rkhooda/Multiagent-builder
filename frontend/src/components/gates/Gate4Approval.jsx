@@ -118,16 +118,30 @@ const VERDICT_LABELS = {
   timeout: 'Timed out', skipped: 'Skipped', unverified: 'Unverified',
 }
 
+// `status` is computed once in the backend (build_verify/classify.py) and
+// persisted on the report, so Gate 4, the project list, the summary PDF and
+// VERIFICATION.md cannot disagree. Recomputed here ONLY for checkpoints
+// written before that field existed.
+function verificationStatus(bv) {
+  if (!bv || !bv.enabled) return 'not_applicable'
+  if (bv.status) return bv.status
+  if (bv.unverified_reason) return 'unverified'
+  const targets = bv.targets || {}
+  const names = Object.keys(targets)
+  if (names.length === 0) return 'not_applicable'
+  const tierList = (n) => Object.values(targets[n].tiers || {})
+  if (names.some((n) => targets[n].unverified_reason || !targets[n].tiers)) return 'unverified'
+  if (names.some((n) => tierList(n).some((t) => t.verdict === 'unverified'))) return 'unverified'
+  if (names.every((n) => tierList(n).every((t) => t.verdict === 'pass'))) return 'verified'
+  return 'failed'
+}
+
 function buildVerificationSummary(bv) {
   if (!bv || !bv.enabled) return null
   const targets = bv.targets || {}
-  const names = Object.keys(targets)
-  if (names.length === 0) return null
-  const allPass = names.every((name) => {
-    const tiers = targets[name].tiers
-    return tiers && Object.values(tiers).every((t) => t.verdict === 'pass')
-  })
-  return { targets, allPass }
+  if (Object.keys(targets).length === 0) return null
+  const status = verificationStatus(bv)
+  return { targets, status, allPass: status === 'verified' }
 }
 
 function BuildVerificationBanner({ buildVerification }) {
@@ -135,15 +149,36 @@ function BuildVerificationBanner({ buildVerification }) {
   const summary = buildVerificationSummary(buildVerification)
   if (!summary || summary.allPass) return null
 
+  // The defect this wording fixes: project e8935f86 shipped with BOTH targets
+  // unverified — nothing had been executed — and this banner told the user the
+  // code "did not fully install/build/boot". "We checked and it failed" and
+  // "we never checked" rendered identically, and the one that shipped was the
+  // second. Unverified is also the more alarming of the two, so it gets the
+  // error colour rather than the softer warning one.
+  const unverified = summary.status === 'unverified'
+  // Literal class strings: Tailwind scans source text, so an interpolated
+  // `text-${tone}` is purged from the build and renders unstyled.
+  const headText = unverified ? 'text-err' : 'text-warn'
+  const bodyText = unverified ? 'text-err' : 'text-warn'
+  const linkText = unverified
+    ? 'text-err underline hover:brightness-110'
+    : 'text-warn underline hover:brightness-110'
+
   return (
-    <div className="rounded-lg border border-warn/45 bg-warn/10 p-3">
+    <div className={`rounded-lg border p-3 ${unverified ? 'border-err/60 bg-err/10' : 'border-warn/45 bg-warn/10'}`}>
       <div className="flex items-start gap-2">
-        <span aria-hidden="true" className="text-base leading-none">⚠</span>
+        <span aria-hidden="true" className="text-base leading-none">{unverified ? '⨯' : '⚠'}</span>
         <div className="flex-1">
-          <p className="text-sm font-semibold text-warn">
-            Build verification found a problem — the generated code did not fully install/build/boot.
+          <p className={`text-sm font-semibold ${headText}`}>
+            {unverified
+              ? 'NOT VERIFIED — this project has never been executed.'
+              : 'Build verification FAILED — the generated code did not install, build or boot.'}
           </p>
-          <p className="mt-0.5 text-xs text-warn">Download remains available. Review the error below before shipping.</p>
+          <p className={`mt-0.5 text-xs ${bodyText}`}>
+            {unverified
+              ? 'The build sandbox could not be reached, so none of these checks ran. Nothing here says the code works, and nothing says it is broken — it is unknown. Download remains available.'
+              : 'Download remains available. Review the error below before shipping.'}
+          </p>
           {Object.entries(summary.targets).map(([name, r]) => {
             const tiers = r.tiers
             return (
@@ -152,11 +187,11 @@ function BuildVerificationBanner({ buildVerification }) {
                   type="button"
                   onClick={() => setOpenTarget((cur) => (cur === name ? null : name))}
                   aria-expanded={openTarget === name}
-                  className="text-xs font-semibold text-warn underline hover:brightness-110"
+                  className={`text-xs font-semibold ${linkText}`}
                 >
                   {name}: {tiers
                     ? Object.entries(tiers).map(([t, v]) => `${TIER_LABELS[t] || t}=${VERDICT_LABELS[v.verdict] || v.verdict}`).join(', ')
-                    : `unverified (${r.unverified_reason || 'sandbox unavailable'})`}
+                    : `NOT CHECKED (${r.unverified_reason || 'sandbox unavailable'})`}
                   {' '}{openTarget === name ? '— hide error' : '— show error'}
                 </button>
                 {openTarget === name && tiers && (
@@ -190,6 +225,9 @@ const DEGRADED_LABELS = {
   review_failed_open: 'Reviewer failed open (file treated as pass)',
   revision_failed_open: 'Revision call failed (original kept)',
   revision_withheld_budget: 'Revision withheld (repair budget)',
+  build_verify_unavailable: 'Build verification could NOT RUN — the sandbox was unreachable, so the code was never executed',
+  build_verify_error: 'Build verification crashed — the code was never executed',
+  validation_lint_unavailable: 'Python linting unavailable — undefined names NOT checked',
 }
 
 function degradedLabel(key) {
@@ -282,12 +320,17 @@ function SummaryCard({ filesData, projectState, severityCounts }) {
           <span className="ml-1 text-[10px] font-normal text-ink-3">incl. reviews</span>
         </Stat>
         <Stat label="Build">
+          {/* "⚠ Issues" was shown for the CRM run, where nothing had been
+              executed at all. Not verified is its own state, and reads as
+              worse than a failure, because a failure is at least knowledge. */}
           {!buildSummary ? (
             <span className="text-ink-3">n/a</span>
-          ) : buildSummary.allPass ? (
-            <span className="text-run">✓ Pass</span>
+          ) : buildSummary.status === 'verified' ? (
+            <span className="text-run">✓ Verified</span>
+          ) : buildSummary.status === 'unverified' ? (
+            <span className="text-err">⨯ Not verified</span>
           ) : (
-            <span className="text-warn">⚠ Issues</span>
+            <span className="text-warn">⚠ Failed</span>
           )}
         </Stat>
         {/* The old "Token Cost $0.00" stat moved to MetricsPanel below: on free
