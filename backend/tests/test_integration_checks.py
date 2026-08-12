@@ -15,7 +15,8 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app.validation.integration import (  # noqa: E402
-    check_python_manifest, check_route_registration, detect_degeneracy,
+    check_package_markers, check_python_manifest, check_route_registration,
+    detect_degeneracy,
     detect_import_time_io,
     detect_truncation, lint_python,
 )
@@ -500,6 +501,50 @@ def test_a_single_correct_registration_is_silent():
                                 "app = FastAPI()\n\napp.include_router(auth_router)\n"),
     }
     assert check_route_registration(tree) == {}
+
+
+# ── Class C: packaging structure ─────────────────────────────────────────────
+
+
+def test_missing_package_marker_is_caught():
+    """The CRM shipped no __init__.py anywhere. Python 3 imports such a
+    directory as a NAMESPACE package, so nothing raises -- `import app.models`
+    succeeds and registers nothing, and create_all() created no tables. The
+    hand-repaired copy adds nine markers; this reports exactly those nine."""
+    files = {
+        "backend/requirements.txt": "fastapi==0.115.6\nsqlalchemy==2.0.36\n",
+        "backend/app/main.py": "from app.models.contact import Contact\n",
+        "backend/app/models/contact.py": "class Contact:\n    pass\n",
+    }
+    found = check_package_markers(files)
+    messages = [i.message for v in found.values() for i in v]
+    assert any("backend/app/models/__init__.py" in m for m in messages), messages
+    assert any("backend/app/__init__.py" in m for m in messages), messages
+    assert all(i.kind == "packaging" for v in found.values() for i in v)
+
+
+def test_present_markers_are_not_reported():
+    files = {
+        "backend/requirements.txt": "fastapi==0.115.6\n",
+        "backend/app/__init__.py": "",
+        "backend/app/models/__init__.py": "from app.models.contact import Contact\n",
+        "backend/app/main.py": "from app.models.contact import Contact\n",
+        "backend/app/models/contact.py": "class Contact:\n    pass\n",
+    }
+    assert check_package_markers(files) == {}
+
+
+def test_a_directory_shadowed_by_a_dependency_is_not_a_package():
+    """backend/alembic/ holds migrations and is deliberately NOT a package --
+    `from alembic import context` resolves to the installed distribution. Found
+    by running this against the WORKING copy, which has all nine real markers
+    and still triggered on alembic."""
+    files = {
+        "backend/requirements.txt": "alembic==1.14.0\n",
+        "backend/alembic/env.py": "from alembic import context\n",
+        "backend/alembic/versions/0001_init.py": "revision = '0001'\n",
+    }
+    assert check_package_markers(files) == {}
 
 
 def _run_all():

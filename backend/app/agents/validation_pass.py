@@ -288,7 +288,8 @@ def validation_pass(state: dict) -> dict:
                   integration.detect_degeneracy,
                   integration.detect_import_time_io,
                   integration.check_python_manifest,
-                  integration.check_route_registration):
+                  integration.check_route_registration,
+                  integration.check_package_markers):
         for path, issues in check(generated_files).items():
             issues_by_file.setdefault(path, []).extend(issues)
 

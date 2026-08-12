@@ -678,6 +678,69 @@ def _shadowed_routes(path: str, tree) -> list:
     return issues
 
 
+# ── 6. Packaging structure ───────────────────────────────────────────────────
+#
+# The CRM shipped no __init__.py anywhere. Python 3 still imports such
+# directories as NAMESPACE packages, so nothing raises — `import app.models`
+# succeeds and registers nothing, so SQLAlchemy's create_all() created no
+# tables. Silence all the way down; the hand-repaired copy adds nine of them.
+#
+# render_package_inits() in utils/backend_infra.py already builds these
+# deterministically, but only for __init__.py tasks the PLAN declares, and this
+# plan declared none. So the check is here and the fix costs no tokens.
+
+
+def check_package_markers(files: dict, root="backend") -> dict:
+    """Directories in the import graph with no __init__.py."""
+    if not files:
+        return {}
+    present = set(files)
+    packages = {}
+    for path in files:
+        if PurePosixPath(path).suffix.lower() not in PY_EXTS:
+            continue
+        if root and not path.startswith(root + "/"):
+            continue
+        parent = str(PurePosixPath(path).parent)
+        if parent in (".", "", root):
+            continue
+        packages.setdefault(parent, path)
+
+    # Only report a directory whose package path is actually IMPORTED as one —
+    # a directory of loose scripts is not a package and does not need a marker.
+    imported = set()
+    for content in files.values():
+        for module, _ in _python_imports(content or ""):
+            parts = module.split(".")
+            for i in range(1, len(parts) + 1):
+                imported.add(".".join(parts[:i]))
+
+    # A local directory whose name is also a DECLARED DEPENDENCY is not the
+    # thing being imported. `backend/alembic/` holds migrations and is
+    # deliberately not a package; `from alembic import context` resolves to the
+    # installed distribution. Caught by running this against the working copy,
+    # which has all nine real markers and still triggered on alembic.
+    shadowed = {name for name, _ in
+                _requirement_names((files or {}).get(f"{root}/requirements.txt", ""))}
+    shadowed = {_normalise(n.split("[", 1)[0]) for n in shadowed}
+
+    results = {}
+    for directory, example in sorted(packages.items()):
+        if f"{directory}/__init__.py" in present:
+            continue
+        dotted = _module_of(directory, root)
+        if dotted not in imported or _normalise(dotted.split(".")[0]) in shadowed:
+            continue
+        results.setdefault(example, []).append(SyntaxIssue(
+            example, line=1, kind="packaging",
+            message=(f"'{directory}/__init__.py' is missing, but '{dotted}' is "
+                     f"imported as a package. Python treats the directory as a "
+                     f"namespace package, so the import SUCCEEDS and registers "
+                     f"nothing — models never reach the metadata and create_all() "
+                     f"creates no tables.")))
+    return results
+
+
 def _shadows(dynamic: str, static: str) -> bool:
     """Would `dynamic` (e.g. /{contact_id}) match `static` (e.g. /search)?"""
     d = [s for s in dynamic.strip("/").split("/") if s]
