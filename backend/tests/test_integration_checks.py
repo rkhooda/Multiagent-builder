@@ -207,6 +207,28 @@ def test_a_complete_file_is_not_called_truncated():
         assert detect_truncation({"f.py": content}) == {}, content
 
 
+def test_real_world_file_endings_are_not_truncation():
+    """Every one of these was an actual false positive produced by an earlier
+    version of the tails table, found by running it against the WORKING copy
+    and against ordinary web files. A truncation finding sends the file back to
+    be REGENERATED, so a false positive is the expensive direction."""
+    probes = {
+        # `>` -- every html and svg file ends this way. crm-logo.svg is
+        # byte-identical in the generated and repaired trees and was flagged.
+        "frontend/src/assets/logo.svg": '<svg viewBox="0 0 24 24">\n  <path d="M0 0"/>\n</svg>',
+        "frontend/index.html": '<!doctype html>\n<html>\n<body></body>\n</html>',
+        # `*` and `/` -- JSDoc continuation and block-comment close.
+        "frontend/src/f.js": '/**\n * Does a thing.\n *\n */\nexport const f = () => 1;\n',
+        # a bare comment marker is a spacer, not a sentence cut in half
+        "frontend/src/g.js": 'const a = 1;\n//\n',
+        "backend/app/h.py": 'x = 1\n# TODO\n',
+        "backend/app/i.py": 'import os\n# This module is finished.\n',
+        # `:` -- a YAML mapping key
+        "docker-compose.yml": 'services:\n  api:\n    build: .\nvolumes:\n  data:\n',
+    }
+    assert detect_truncation(probes) == {}
+
+
 def test_a_trailing_colon_is_not_truncation():
     """The CRM's own docker-compose.yml ends on `postgres_data:` and is
     complete. A trailing colon is how a YAML key and a Python block header both

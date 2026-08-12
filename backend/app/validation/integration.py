@@ -189,14 +189,20 @@ def _is_forward_reference(content: str, line: int, message: str) -> bool:
 # trailing comment, which is exactly how three of the CRM's truncated files
 # passed the parser, so the comment case is judged by what precedes it.
 _TRUNCATION_TAILS = (
-    (re.compile(r",\s*$"), "ends on a trailing comma"),
     (re.compile(r"[({\[]\s*$"), "ends on an unclosed bracket"),
-    # No `:` here. A trailing colon is how a YAML mapping key, a JSON-ish block
-    # and a Python block header all legitimately end -- the CRM's own
-    # docker-compose.yml ends on `postgres_data:` and is complete. Including it
-    # cost one false positive on a correct file, which is the expensive
-    # direction: a truncation finding sends the file back to be REGENERATED.
-    (re.compile(r"(?:=|\+|\*|/|<|>|&|\|)\s*$"), "ends on a dangling operator"),
+    # Deliberately narrow, and narrowed twice by running against the WORKING
+    # copy. Each excluded character is a real false positive it produced:
+    #
+    #   :   a YAML mapping key or Python block header -- docker-compose.yml
+    #       ends on `postgres_data:` and is complete
+    #   >   EVERY html and svg file ends on `>` -- crm-logo.svg ends `</svg>`
+    #   /   a bare `//` comment line, and `*/` block-comment ends
+    #   *   a JSDoc continuation line is just ` *`
+    #
+    # The surviving operators must also follow a word character, so a decorative
+    # or comment line never qualifies. A truncation finding sends the file back
+    # to be REGENERATED, so a false positive is the expensive direction.
+    (re.compile(r"\w\s*(?:=|\+|&|\||,)\s*$"), "ends on a dangling operator"),
     (re.compile(r"\b(?:def|class|if|for|while|return|import|from|const|let|var|function)\s*$"),
      "ends on an incomplete statement"),
 )
@@ -250,8 +256,14 @@ def _ends_mid_comment(last: str) -> bool:
     stripped = last.strip()
     if not (stripped.startswith("#") or stripped.startswith("//")):
         return False
+    # An EMPTY or one-word comment (`//`, `# TODO`) is not a sentence cut in
+    # half -- it is a spacer. Requiring several words is what separates
+    # "(YYYY-MM-DDTH" from a blank comment line closing a file.
+    body = stripped.lstrip("#/").strip()
+    if len(body.split()) < 3:
+        return False
     # A finished comment sentence ends in punctuation or a closing bracket.
-    return not stripped.rstrip().endswith((".", ":", ")", "]", "}", "!", "?"))
+    return not body.endswith((".", ":", ")", "]", "}", "!", "?"))
 
 
 # A repetition loop is not a code smell, it is the generator failing. alembic.ini
