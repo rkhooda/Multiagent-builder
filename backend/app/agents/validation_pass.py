@@ -287,7 +287,8 @@ def validation_pass(state: dict) -> dict:
     for check in (lambda f: integration.detect_truncation(f, truncated_paths),
                   integration.detect_degeneracy,
                   integration.detect_import_time_io,
-                  integration.check_python_manifest):
+                  integration.check_python_manifest,
+                  integration.check_route_registration):
         for path, issues in check(generated_files).items():
             issues_by_file.setdefault(path, []).extend(issues)
 

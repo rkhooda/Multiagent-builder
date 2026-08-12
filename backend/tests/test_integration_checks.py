@@ -15,7 +15,8 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app.validation.integration import (  # noqa: E402
-    check_python_manifest, detect_degeneracy, detect_import_time_io,
+    check_python_manifest, check_route_registration, detect_degeneracy,
+    detect_import_time_io,
     detect_truncation, lint_python,
 )
 
@@ -371,6 +372,134 @@ def test_a_distribution_named_differently_from_its_import_is_accepted():
         "backend/app/core/security.py": "from jose import jwt\nimport dotenv\n",
     }
     assert check_python_manifest(files) == {}
+
+
+# ── Class C: route registration ──────────────────────────────────────────────
+
+# The CRM's shape, reduced. main.py includes each endpoint router DIRECTLY and
+# also includes api.py's router, which includes the same ones again -- and
+# api.py repeats each router's own prefix, so /auth/register really lived at
+# /api/v1/auth/auth/register.
+CRM_ENDPOINT_AUTH = '''\
+from fastapi import APIRouter
+
+router = APIRouter(prefix="/auth", tags=["auth"])
+
+
+@router.post("/register")
+def register():
+    return {}
+'''
+
+CRM_API_AGGREGATOR = '''\
+from fastapi import APIRouter
+
+from app.api.v1.endpoints import auth
+
+router = APIRouter(prefix="/api/v1")
+
+router.include_router(auth.router, prefix="/auth", tags=["auth"])
+'''
+
+CRM_MAIN = '''\
+from fastapi import FastAPI
+
+from app.api.v1.endpoints.auth import router as auth_router
+from app.api.v1.api import router as api_router
+
+app = FastAPI()
+
+app.include_router(auth_router)
+app.include_router(api_router)
+'''
+
+CRM_ROUTE_TREE = {
+    "backend/app/api/v1/endpoints/auth.py": CRM_ENDPOINT_AUTH,
+    "backend/app/api/v1/api.py": CRM_API_AGGREGATOR,
+    "backend/app/main.py": CRM_MAIN,
+}
+
+
+def test_doubled_prefix_is_caught():
+    messages = [i.message for v in check_route_registration(CRM_ROUTE_TREE).values()
+                for i in v]
+    assert any("already declares prefix='/auth'" in m for m in messages), messages
+
+
+def test_router_registered_twice_is_caught():
+    messages = [i.message for v in check_route_registration(CRM_ROUTE_TREE).values()
+                for i in v]
+    assert any("registered 2 times" in m for m in messages), messages
+
+
+def test_the_duplicate_is_reported_at_both_registration_sites():
+    """Both files need editing, so both must be marked -- the threshold counts
+    unresolved FILES, and fixing only one leaves the routes still doubled."""
+    found = check_route_registration(CRM_ROUTE_TREE)
+    assert "backend/app/main.py" in found
+    assert "backend/app/api/v1/api.py" in found
+
+
+# contacts.py declared GET "/{contact_id}" at line 26 and GET "/search" at line
+# 74. FastAPI matches in declaration order, so /contacts/search parsed "search"
+# as a contact_id and returned 422 forever.
+CRM_CONTACTS_ROUTES = '''\
+from fastapi import APIRouter
+
+router = APIRouter(prefix="/contacts", tags=["contacts"])
+
+
+@router.get("/")
+def list_contacts():
+    return []
+
+
+@router.get("/{contact_id}")
+def get_contact(contact_id: int):
+    return {}
+
+
+@router.get("/search")
+def search_contacts(q: str):
+    return []
+'''
+
+
+def test_static_route_shadowed_by_a_dynamic_one_is_caught():
+    found = check_route_registration(
+        {"backend/app/api/v1/endpoints/contacts.py": CRM_CONTACTS_ROUTES})
+    issues = found["backend/app/api/v1/endpoints/contacts.py"]
+    assert any("'/search' is declared after '/{contact_id}'" in i.message
+               for i in issues), [i.message for i in issues]
+    assert all(i.kind == "route" for i in issues)
+
+
+def test_correct_route_order_is_not_flagged():
+    """The same two routes the right way round must be silent."""
+    ok = CRM_CONTACTS_ROUTES.replace(
+        '@router.get("/{contact_id}")\ndef get_contact(contact_id: int):\n    return {}\n\n\n', ""
+    ).replace('@router.get("/search")\ndef search_contacts(q: str):\n    return []\n',
+              '@router.get("/search")\ndef search_contacts(q: str):\n    return []\n\n\n'
+              '@router.get("/{contact_id}")\ndef get_contact(contact_id: int):\n    return {}\n')
+    assert check_route_registration({"backend/app/api/v1/endpoints/contacts.py": ok}) == {}
+
+
+def test_a_different_method_does_not_shadow():
+    """POST /search is not shadowed by GET /{id} -- method must match."""
+    src = ('from fastapi import APIRouter\n\nrouter = APIRouter()\n\n\n'
+           '@router.get("/{contact_id}")\ndef g(contact_id: int):\n    return {}\n\n\n'
+           '@router.post("/search")\ndef s():\n    return []\n')
+    assert check_route_registration({"backend/app/api/v1/endpoints/c.py": src}) == {}
+
+
+def test_a_single_correct_registration_is_silent():
+    tree = {
+        "backend/app/api/v1/endpoints/auth.py": CRM_ENDPOINT_AUTH,
+        "backend/app/main.py": ("from fastapi import FastAPI\n"
+                                "from app.api.v1.endpoints.auth import router as auth_router\n\n"
+                                "app = FastAPI()\n\napp.include_router(auth_router)\n"),
+    }
+    assert check_route_registration(tree) == {}
 
 
 def _run_all():

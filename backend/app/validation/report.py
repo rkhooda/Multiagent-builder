@@ -48,7 +48,7 @@ REPAIR_PREFIX = "repair:"
 # a real defect, but it is a design finding for the human rather than a
 # mechanical failure of the file, and it has no unambiguous automatic fix.
 UNRESOLVED_KINDS = {"syntax", "phantom_import", "missing_package", "artifact",
-                    "lint", "truncated", "degenerate", "manifest"}
+                    "lint", "truncated", "degenerate", "manifest", "route"}
 
 
 def repair_key(filepath: str) -> str:
@@ -172,6 +172,7 @@ def aggregate(issues: list, *, files_checked: int, repaired: list, repair_failed
         # ceiling or a generation loop, upstream of the file), and import-time
         # I/O is a design finding for the human.
         "manifest_errors": len(by_kind.get("manifest", [])),
+        "route_errors": len(by_kind.get("route", [])),
         "lint_errors": len(by_kind.get("lint", [])),
         "lint_info": len(by_kind.get("lint_info", [])),
         "truncated_files": len(by_kind.get("truncated", [])),
@@ -208,6 +209,8 @@ def render_summary(report: dict) -> str:
         parts.append(f"{report['coherence_warnings']} page-composition warnings")
     if report.get("manifest_errors"):
         parts.append(f"{report['manifest_errors']} dependency manifest errors")
+    if report.get("route_errors"):
+        parts.append(f"{report['route_errors']} route registration errors")
     if report.get("lint_errors"):
         parts.append(f"{report['lint_errors']} undefined/redefined names")
     if report.get("truncated_files"):

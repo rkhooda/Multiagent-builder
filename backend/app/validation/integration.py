@@ -508,6 +508,186 @@ def _first_use(files, root, symbol):
     return None
 
 
+# ── 5. Route registration: uniqueness, prefixes, ordering ────────────────────
+#
+# Three defects the CRM shipped, none of them visible in any single file:
+#
+#   1. main.py included all nine endpoint routers DIRECTLY and also included
+#      api.py's router, which includes the same nine. Every route existed twice.
+#   2. auth.py declares APIRouter(prefix="/auth") and api.py includes it with
+#      prefix="/auth" again, so the real path was /api/v1/auth/auth/register.
+#   3. contacts.py declares GET "/{contact_id}" at line 26 and GET "/search" at
+#      line 74. FastAPI matches in declaration order, so /contacts/search parsed
+#      "search" as a contact_id and returned 422 forever.
+#
+# This is also the static route table the frontend-contract check needs, and
+# when the boot rung succeeds it is cross-checked against the real
+# /openapi.json — one mechanism, three uses.
+
+_HTTP_METHODS = ("get", "post", "put", "patch", "delete", "head", "options")
+
+
+def _router_prefix(tree) -> str:
+    """The prefix of the module-level `router = APIRouter(prefix=...)`."""
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign):
+            continue
+        call = node.value
+        if not (isinstance(call, ast.Call) and _called_name(call) == "APIRouter"):
+            continue
+        for kw in call.keywords:
+            if kw.arg == "prefix" and isinstance(kw.value, ast.Constant):
+                return str(kw.value.value or "")
+    return ""
+
+
+def _module_of(path: str, root: str) -> str:
+    """backend/app/api/v1/endpoints/auth.py -> app.api.v1.endpoints.auth"""
+    rel = path[len(root) + 1:] if root and path.startswith(root + "/") else path
+    return rel[:-3].replace("/", ".") if rel.endswith(".py") else rel.replace("/", ".")
+
+
+def _include_router_calls(tree, imports):
+    """(target module, prefix, line) for each include_router call."""
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Call) and _called_name(node) == "include_router"):
+            continue
+        if not node.args:
+            continue
+        target = node.args[0]
+        # `auth.router` -> the module `auth`; `some_router` -> an alias.
+        if isinstance(target, ast.Attribute) and isinstance(target.value, ast.Name):
+            name = target.value.id
+        elif isinstance(target, ast.Name):
+            name = target.id
+        else:
+            continue
+        prefix = ""
+        for kw in node.keywords:
+            if kw.arg == "prefix" and isinstance(kw.value, ast.Constant):
+                prefix = str(kw.value.value or "")
+        yield imports.get(name, name), prefix, node.lineno
+
+
+def _imported_modules(tree) -> dict:
+    """local name -> dotted module it refers to, for both import styles:
+        from app.api.v1.endpoints import auth        -> auth  -> ...endpoints.auth
+        from app.api.v1.endpoints.auth import router as a -> a -> ...endpoints.auth
+    """
+    out = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module:
+            for alias in node.names:
+                local = alias.asname or alias.name
+                if alias.name == "router" or alias.asname:
+                    out[local] = node.module
+                else:
+                    out[local] = f"{node.module}.{alias.name}"
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                out[alias.asname or alias.name.split(".")[0]] = alias.name
+    return out
+
+
+def check_route_registration(files: dict, root="backend") -> dict:
+    """Duplicate registrations, doubled prefixes, and shadowed static routes."""
+    results = {}
+    modules = {}          # dotted module -> (path, tree, own prefix)
+    for path, content in (files or {}).items():
+        if PurePosixPath(path).suffix.lower() not in PY_EXTS or not content:
+            continue
+        if root and not path.startswith(root + "/"):
+            continue
+        try:
+            tree = ast.parse(content)
+        except SyntaxError:
+            continue
+        modules[_module_of(path, root)] = (path, tree, _router_prefix(tree))
+
+    includers = {}        # included module -> [(includer path, prefix, line)]
+    for dotted, (path, tree, _) in modules.items():
+        for target, prefix, line in _include_router_calls(tree, _imported_modules(tree)):
+            includers.setdefault(target, []).append((path, prefix, line))
+
+    for target, sites in sorted(includers.items()):
+        entry = modules.get(target)
+        # Doubled prefix: the module's own APIRouter prefix repeated by the
+        # includer. Real path becomes /auth/auth/... .
+        if entry:
+            own = entry[2]
+            for path, prefix, line in sites:
+                if own and prefix and prefix.rstrip("/") == own.rstrip("/"):
+                    results.setdefault(path, []).append(SyntaxIssue(
+                        path, line=line, kind="route",
+                        message=(f"includes {target} with prefix='{prefix}', but that "
+                                 f"router already declares prefix='{own}'. Every path "
+                                 f"under it becomes '{prefix}{own}/...'. Remove one.")))
+        if len(sites) > 1:
+            where = ", ".join(f"{p}:{ln}" for p, _, ln in sites)
+            for path, _, line in sites:
+                results.setdefault(path, []).append(SyntaxIssue(
+                    path, line=line, kind="route",
+                    message=(f"router '{target}' is registered {len(sites)} times "
+                             f"({where}). Each registration mounts the same routes at "
+                             f"a different path — include it once.")))
+
+    for path, (_, tree, _prefix) in ((p, m) for p, m in
+                                     ((v[0], (dotted, v[1], v[2]))
+                                      for dotted, v in modules.items())):
+        for issue in _shadowed_routes(path, tree):
+            results.setdefault(path, []).append(issue)
+    return results
+
+
+def _shadowed_routes(path: str, tree) -> list:
+    """A static segment declared AFTER a dynamic one that swallows it.
+
+    FastAPI (and Flask, and Express) match in declaration order, so
+    GET /{contact_id} declared first means GET /search is never reached and
+    "search" is parsed as an id.
+    """
+    routes = []          # (method, template, line)
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        for dec in node.decorator_list:
+            if not (isinstance(dec, ast.Call) and isinstance(dec.func, ast.Attribute)):
+                continue
+            method = dec.func.attr.lower()
+            if method not in _HTTP_METHODS or not dec.args:
+                continue
+            arg = dec.args[0]
+            if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+                routes.append((method, arg.value, dec.lineno))
+    routes.sort(key=lambda r: r[2])
+
+    issues = []
+    for i, (method, template, line) in enumerate(routes):
+        if "{" in template:
+            continue                            # this one IS the dynamic route
+        for earlier_method, earlier, earlier_line in routes[:i]:
+            if earlier_method == method and _shadows(earlier, template):
+                issues.append(SyntaxIssue(
+                    path, line=line, kind="route",
+                    message=(f"{method.upper()} '{template}' is declared after "
+                             f"'{earlier}' (line {earlier_line}), which matches it "
+                             f"first — routes are matched in declaration order, so "
+                             f"'{template.strip('/')}' is parsed as a path parameter "
+                             f"and this handler never runs. Move it above.")))
+                break
+    return issues
+
+
+def _shadows(dynamic: str, static: str) -> bool:
+    """Would `dynamic` (e.g. /{contact_id}) match `static` (e.g. /search)?"""
+    d = [s for s in dynamic.strip("/").split("/") if s]
+    s = [s for s in static.strip("/").split("/") if s]
+    if len(d) != len(s) or not d:
+        return False
+    return all(a == b or (a.startswith("{") and a.endswith("}")) for a, b in zip(d, s)) \
+        and any(a.startswith("{") for a in d)
+
+
 _STDLIB = frozenset(getattr(sys, "stdlib_module_names", ())) | {
     # sys.stdlib_module_names exists from 3.10. On an older interpreter the
     # frozenset is empty, which would make the stdlib check silently do nothing
