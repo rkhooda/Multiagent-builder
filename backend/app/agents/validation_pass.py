@@ -291,7 +291,9 @@ def validation_pass(state: dict) -> dict:
                   integration.check_route_registration,
                   integration.check_package_markers,
                   integration.check_config_keys,
-                  integration.check_orm_symmetry):
+                  integration.check_orm_symmetry,
+                  integration.check_config_references,
+                  integration.check_password_hashing):
         for path, issues in check(generated_files).items():
             issues_by_file.setdefault(path, []).extend(issues)
 

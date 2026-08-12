@@ -889,6 +889,202 @@ def _relationship_target(stmt) -> str:
     return found[-1] if found else ""
 
 
+# ── 10. Config files that name things which do not exist ────────────────────
+#
+# Every one of these parses as valid YAML/Dockerfile, so validate_artifact
+# reported them clean. None of them resolves:
+#
+#   docker-compose  builds ./backend/Dockerfile; the file is at the repo root
+#   Dockerfile      CMD runs `uvicorn main:app`; the app is app.main:app
+#   ci.yml          runs `npm run lint` (no such script) and `pytest` (no tests)
+#
+# CI failed at step one, which is the tell: a config file is a set of CLAIMS
+# about the repository, and nothing was checking them against the repository.
+
+
+def check_config_references(files: dict) -> dict:
+    """Paths, modules and scripts a config file names but the tree lacks."""
+    results = {}
+    _check_compose(files, results)
+    _check_dockerfiles(files, results)
+    _check_ci_workflows(files, results)
+    return results
+
+
+def _yaml_load(text: str):
+    try:
+        import yaml
+        return yaml.safe_load(text or "") or {}
+    except Exception:                              # noqa: BLE001 — parse errors
+        return {}                                  # are validate_artifact's job
+
+
+def _check_compose(files, results):
+    for path in [p for p in files if PurePosixPath(p).name
+                 in ("docker-compose.yml", "docker-compose.yaml", "compose.yml")]:
+        doc = _yaml_load(files[path])
+        base = str(PurePosixPath(path).parent)
+        for name, service in (doc.get("services") or {}).items():
+            build = (service or {}).get("build")
+            if not build:
+                continue
+            if isinstance(build, str):
+                context, dockerfile = build, "Dockerfile"
+            else:
+                context = build.get("context", ".")
+                dockerfile = build.get("dockerfile", "Dockerfile")
+            target = _join(base, context, dockerfile)
+            if target in files:
+                continue
+            elsewhere = [p for p in files if PurePosixPath(p).name == PurePosixPath(dockerfile).name]
+            results.setdefault(path, []).append(SyntaxIssue(
+                path, line=_line_of(files[path], str(context)), kind="config_ref",
+                message=(f"service '{name}' builds '{target}', which does not exist"
+                         + (f" — it is at '{elsewhere[0]}'" if elsewhere else "")
+                         + ". `docker compose build` fails immediately.")))
+
+
+def _join(*parts) -> str:
+    out = []
+    for part in parts:
+        for seg in str(part).split("/"):
+            if seg in ("", "."):
+                continue
+            if seg == ".." and out:
+                out.pop()
+            else:
+                out.append(seg)
+    return "/".join(out)
+
+
+def _line_of(content: str, needle: str) -> int:
+    for n, line in enumerate((content or "").splitlines(), start=1):
+        if needle and needle in line:
+            return n
+    return 1
+
+
+# CMD ["uvicorn", "app.main:app", ...] and CMD uvicorn app.main:app
+_ENTRYPOINT_MODULE = re.compile(
+    r"\b(?:uvicorn|gunicorn|hypercorn)\b[^\n]*?[\"'\s]([A-Za-z_][\w.]*):(\w+)")
+
+
+def _check_dockerfiles(files, results):
+    for path in [p for p in files if PurePosixPath(p).name.startswith("Dockerfile")]:
+        content = files[path] or ""
+        base = str(PurePosixPath(path).parent)
+        for n, line in enumerate(content.splitlines(), start=1):
+            if not line.strip().upper().startswith(("CMD", "ENTRYPOINT")):
+                continue
+            match = _ENTRYPOINT_MODULE.search(line)
+            if not match:
+                continue
+            module = match.group(1)
+            rel = module.replace(".", "/") + ".py"
+            # The image's workdir is not knowable from here, so accept the
+            # module resolving anywhere plausible: beside the Dockerfile, or
+            # under any directory that holds it. Only report when it resolves
+            # NOWHERE — the CRM's `main:app` matched no main.py at any level.
+            if any(p == _join(base, rel) or p.endswith("/" + rel) or p == rel
+                   for p in files):
+                continue
+            actual = [p for p in files if p.endswith("/main.py") or p == "main.py"]
+            hint = ""
+            if actual:
+                dotted = actual[0][:-3].replace("/", ".").split(".", 1)
+                hint = f" — did you mean '{dotted[-1] if len(dotted) > 1 else actual[0]}:{match.group(2)}'?"
+            results.setdefault(path, []).append(SyntaxIssue(
+                path, line=n, kind="config_ref",
+                message=(f"{line.strip().split()[0]} runs '{module}:{match.group(2)}', "
+                         f"but no '{rel}' exists in the image{hint}. The container "
+                         f"starts and exits immediately.")))
+
+
+_NPM_SCRIPT = re.compile(r"\bnpm\s+run\s+([\w:-]+)")
+
+
+def _check_ci_workflows(files, results):
+    scripts, pkg_path = {}, None
+    for path in [p for p in files if PurePosixPath(p).name == "package.json"]:
+        try:
+            scripts = json.loads(files[path] or "{}").get("scripts") or {}
+            pkg_path = path
+        except json.JSONDecodeError:
+            pass
+    has_tests = any(PurePosixPath(p).name.startswith("test_")
+                    or PurePosixPath(p).name.endswith(("_test.py", ".test.js",
+                                                       ".test.jsx", ".spec.js"))
+                    for p in files)
+
+    for path in [p for p in files if "/workflows/" in p and p.endswith((".yml", ".yaml"))]:
+        content = files[path] or ""
+        for n, line in enumerate(content.splitlines(), start=1):
+            for script in _NPM_SCRIPT.findall(line):
+                if pkg_path and script not in scripts:
+                    results.setdefault(path, []).append(SyntaxIssue(
+                        path, line=n, kind="config_ref",
+                        message=(f"runs `npm run {script}`, but {pkg_path} defines no "
+                                 f"'{script}' script (has: {', '.join(sorted(scripts)) or 'none'}). "
+                                 f"The job fails at this step.")))
+            if re.search(r"^\s*(?:-\s*)?(?:run:\s*)?(?:python\s+-m\s+)?pytest\b", line) \
+                    and not has_tests:
+                results.setdefault(path, []).append(SyntaxIssue(
+                    path, line=n, kind="config_ref",
+                    message=("runs pytest, but the project contains no test files. "
+                             "pytest exits 5 (no tests collected) and fails the job.")))
+
+
+# ── 11. Security smoke — narrow, high-signal, one rule ───────────────────────
+#
+# crud_user.py assigned `hashed_password=user.password`. get_password_hash()
+# existed and was never called, so passwords were stored in plaintext AND login
+# could never succeed. QA DID find this and the project shipped anyway.
+#
+# ponytail: exactly one rule. Twenty heuristics that cry wolf make a panel
+# people stop reading, and this one is a fact about the code, not a smell.
+
+_HASH_FUNCTIONS = ("get_password_hash", "hash_password", "pwd_context")
+
+
+def check_password_hashing(files: dict, root="backend") -> dict:
+    """A hashed_* field assigned a value that never went through the hasher."""
+    results = {}
+    for path, content in sorted((files or {}).items()):
+        if PurePosixPath(path).suffix.lower() not in PY_EXTS or not content:
+            continue
+        if root and not path.startswith(root + "/"):
+            continue
+        try:
+            tree = ast.parse(content)
+        except SyntaxError:
+            continue
+        for node in ast.walk(tree):
+            target = None
+            if isinstance(node, ast.keyword) and (node.arg or "").startswith("hashed_"):
+                target, value = node.arg, node.value
+            elif isinstance(node, ast.Assign) and len(node.targets) == 1:
+                t = node.targets[0]
+                name = t.id if isinstance(t, ast.Name) else (
+                    t.attr if isinstance(t, ast.Attribute) else "")
+                if name.startswith("hashed_"):
+                    target, value = name, node.value
+            if target is None or _passes_through_hasher(value):
+                continue
+            results.setdefault(path, []).append(SyntaxIssue(
+                path, line=getattr(value, "lineno", 0), kind="security",
+                message=(f"'{target}' is assigned a value that never passes through "
+                         f"a hashing function. The password is stored in plaintext, "
+                         f"and any login that compares a hash will always fail.")))
+    return results
+
+
+def _passes_through_hasher(value) -> bool:
+    return any(isinstance(n, ast.Call) and
+               (_called_name(n) in _HASH_FUNCTIONS
+                or any(h in ast.dump(n.func) for h in _HASH_FUNCTIONS))
+               for n in ast.walk(value))
+
+
 def _shadows(dynamic: str, static: str) -> bool:
     """Would `dynamic` (e.g. /{contact_id}) match `static` (e.g. /search)?"""
     d = [s for s in dynamic.strip("/").split("/") if s]

@@ -15,7 +15,8 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app.validation.integration import (  # noqa: E402
-    check_config_keys, check_orm_symmetry, check_package_markers,
+    check_config_keys, check_config_references, check_orm_symmetry,
+    check_package_markers, check_password_hashing,
     check_python_manifest, check_route_registration,
     detect_degeneracy,
     detect_import_time_io,
@@ -658,6 +659,108 @@ def test_a_relationship_to_a_class_outside_the_tree_is_not_reported():
         "class Contact(Base):\n"
         "    org: Mapped['Organisation'] = relationship(back_populates='contacts')\n")}
     assert check_orm_symmetry(files) == {}
+
+
+# ── Class F: config files naming things that do not exist ────────────────────
+
+
+def test_compose_building_a_missing_dockerfile_is_caught():
+    """docker-compose built ./backend/Dockerfile; the file was at the repo root.
+    Valid YAML, so validate_artifact reported it clean."""
+    files = {
+        "docker-compose.yml": ("services:\n  backend:\n    build:\n"
+                               "      context: ./backend\n      dockerfile: Dockerfile\n"),
+        "Dockerfile": "FROM python:3.11-slim\n",
+    }
+    issues = check_config_references(files)["docker-compose.yml"]
+    assert issues[0].kind == "config_ref"
+    assert "backend/Dockerfile" in issues[0].message
+    assert "it is at 'Dockerfile'" in issues[0].message
+
+
+def test_compose_pointing_at_a_real_dockerfile_is_silent():
+    files = {
+        "docker-compose.yml": ("services:\n  backend:\n    build:\n"
+                               "      context: ./backend\n      dockerfile: Dockerfile\n"),
+        "backend/Dockerfile": "FROM python:3.11-slim\n",
+    }
+    assert check_config_references(files) == {}
+
+
+def test_ci_running_a_missing_npm_script_is_caught():
+    """CI ran `npm run lint`; package.json had dev/build/preview only, so the
+    workflow failed at step one."""
+    files = {
+        ".github/workflows/ci.yml": "jobs:\n  b:\n    steps:\n      - run: npm run lint\n",
+        "frontend/package.json": '{"scripts": {"dev": "vite", "build": "vite build"}}',
+    }
+    issues = check_config_references(files)[".github/workflows/ci.yml"]
+    assert "npm run lint" in issues[0].message
+    assert "build, dev" in issues[0].message
+
+
+def test_ci_running_pytest_without_tests_is_caught():
+    files = {".github/workflows/ci.yml": "jobs:\n  b:\n    steps:\n      - run: pytest\n",
+             "backend/app/main.py": "app = 1\n"}
+    issues = check_config_references(files)[".github/workflows/ci.yml"]
+    assert "no test files" in issues[0].message
+
+
+def test_ci_running_pytest_with_tests_is_silent():
+    files = {".github/workflows/ci.yml": "jobs:\n  b:\n    steps:\n      - run: pytest\n",
+             "backend/tests/test_api.py": "def test_x():\n    pass\n"}
+    assert check_config_references(files) == {}
+
+
+def test_an_entrypoint_module_that_resolves_nowhere_is_caught():
+    """Deliberately lenient: the image's WORKDIR is not knowable from the
+    Dockerfile alone, so this only fires when the module resolves at NO level.
+    The CRM's `uvicorn main:app` (app is at app.main:app) is therefore NOT
+    caught here -- the compose finding already sends you to the same file, and
+    the boot rung catches it exactly, by the container starting and exiting."""
+    files = {"Dockerfile": 'FROM python:3.11\nCMD ["uvicorn", "server.wsgi:app"]\n',
+             "backend/app/main.py": "app = 1\n"}
+    issues = check_config_references(files)["Dockerfile"]
+    assert "server/wsgi.py" in issues[0].message
+
+
+# ── Class H: security ────────────────────────────────────────────────────────
+
+# crud_user.py:18. get_password_hash() existed and was never called, so
+# passwords were stored in plaintext AND login could never succeed. QA DID find
+# this and the project shipped anyway.
+CRM_CRUD_USER = '''\
+from app.core.security import get_password_hash
+from app.models.user import User
+
+
+def create_user(db, user):
+    db_user = User(
+        email=user.email,
+        hashed_password=user.password,
+    )
+    db.add(db_user)
+    return db_user
+'''
+
+
+def test_plaintext_password_assignment_is_caught():
+    issues = check_password_hashing({"backend/app/crud/crud_user.py": CRM_CRUD_USER})
+    found = issues["backend/app/crud/crud_user.py"]
+    assert found[0].kind == "security"
+    assert "plaintext" in found[0].message
+
+
+def test_a_hashed_assignment_is_not_reported():
+    ok = CRM_CRUD_USER.replace("hashed_password=user.password,",
+                               "hashed_password=get_password_hash(user.password),")
+    assert check_password_hashing({"backend/app/crud/crud_user.py": ok}) == {}
+
+
+def test_pwd_context_hashing_is_recognised():
+    src = ("from app.core.security import pwd_context\n\n\n"
+           "def f(u):\n    return User(hashed_password=pwd_context.hash(u.password))\n")
+    assert check_password_hashing({"backend/app/crud/crud_user.py": src}) == {}
 
 
 def _run_all():
