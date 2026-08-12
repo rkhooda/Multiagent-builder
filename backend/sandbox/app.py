@@ -94,6 +94,9 @@ class ProbeRequest(BaseModel):
     ready_timeout_s: int = 30
     workdir: str = ""
     env: Optional[dict] = None
+    #: Run the journey smoke after the container reports healthy.
+    #: Boot alone proves a process started; this proves the app answers.
+    journey: bool = False
 
 
 @app.post("/probe")
@@ -102,6 +105,6 @@ def probe(req: ProbeRequest):
     result = probe_boot(
         workspace, req.command, image=req.image, port=req.port,
         health_path=req.health_path, ready_timeout_s=req.ready_timeout_s,
-        workdir=req.workdir, env=req.env,
+        workdir=req.workdir, env=req.env, journey=req.journey,
     )
     return result.__dict__

@@ -281,7 +281,13 @@ VERIFY_TARGETS = (
         boot=TierSpec(
             command=("python3", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"),
             image="python:3.11-slim", timeout_s=30, env={"PYTHONPATH": ".deps"},
-            port=8000, health_path="/health", ready_timeout_s=20),
+            port=8000, health_path="/health", ready_timeout_s=20,
+            # Boot is not proof. In project e8935f86 this exact health_path
+            # returned 200 while /openapi.json returned 500 (a schema module
+            # used `datetime` without importing it) and every route touching
+            # the database returned 500 (a back_populates naming an attribute
+            # that did not exist). The journey rung is what sees that.
+            journey=True),
     ),
     VerifyTarget(
         name="frontend", root="frontend",

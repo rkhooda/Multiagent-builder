@@ -112,7 +112,7 @@ function QualityThresholdBanner({ report }) {
 // a disposable sandbox — the first check in this pipeline that proves the
 // code runs rather than inferring it from parsing. WARNS, never blocks, same
 // stance as every banner here: download stays enabled, the human decides.
-const TIER_LABELS = { install: 'Install', build: 'Build', boot: 'Boot' }
+const TIER_LABELS = { install: 'Install', build: 'Build', boot: 'Boot', journey: 'API smoke' }
 const VERDICT_LABELS = {
   pass: 'OK', fail_code: 'Failed', fail_environment: 'Failed (environment)',
   timeout: 'Timed out', skipped: 'Skipped', unverified: 'Unverified',

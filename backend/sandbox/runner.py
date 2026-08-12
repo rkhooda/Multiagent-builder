@@ -11,6 +11,7 @@ lives in `backend/sandbox/`, a separate service from `backend/app/` — the
 See docs/SANDBOX_THREAT_MODEL.md for the isolation contract this enforces and
 backend/tests/test_sandbox_hostile.py for the proof.
 """
+import json
 import os
 import shutil
 import subprocess
@@ -213,6 +214,82 @@ class BootResult:
     exit_code: Optional[int]
     logs: str
     duration_s: float
+    #: Journey-smoke result, when the caller asked for one. None means it was
+    #: not requested; a dict is {"ok": bool, "checked": int, "failures": [...]}.
+    journey: Optional[dict] = None
+
+
+# The journey smoke, as a script executed INSIDE the booted container by the
+# same `docker exec python3` mechanism the health probe already uses.
+#
+# WHY this exists (docs/VERIFICATION_GAP_ANALYSIS.md): in project e8935f86
+# /health returned 200 while every real request returned 500. `boot` proves a
+# process started and answered one trivial path. It proves nothing about the
+# application. Two defects that a boot-only ladder cannot see:
+#
+#   schemas/tag.py used `datetime` without importing it, so building the
+#   OpenAPI schema raised and /openapi.json returned 500 -- while /health
+#   stayed 200.
+#
+#   Contact.tags back-populated a Tag.contacts that did not exist, so
+#   SQLAlchemy raised at mapper configuration and EVERY route touching the
+#   database returned 500 -- while /health stayed 200.
+#
+# WHY the journey is derived from the app's own /openapi.json rather than from
+# the plan's user story: it needs no per-project configuration, no path
+# guessing and no plan parsing, and it necessarily covers whatever the app
+# actually exposes. Every parameterless GET is called; only 5xx counts as a
+# failure, because 401/403/422 are the app working and declining, which is a
+# correct answer to an unauthenticated smoke request.
+#
+# ponytail: a string executed by the probe we already have, not a new service,
+# not a test framework in the image, no new dependency in the boot image.
+_JOURNEY_SCRIPT = r"""
+import json, sys, urllib.error, urllib.request
+
+BASE = "http://localhost:%d"
+failures, checked = [], 0
+
+def fetch(path):
+    try:
+        with urllib.request.urlopen(BASE + path, timeout=5) as r:
+            return r.status, r.read()
+    except urllib.error.HTTPError as e:
+        return e.code, e.read()
+    except Exception as e:
+        return 0, str(e).encode()
+
+status, body = fetch("/openapi.json")
+if status != 200:
+    failures.append({"path": "/openapi.json", "status": status,
+                     "detail": body[:400].decode("utf-8", "replace")})
+    print(json.dumps({"ok": False, "checked": 1, "failures": failures}))
+    sys.exit(0)
+
+try:
+    spec = json.loads(body)
+except Exception as e:
+    print(json.dumps({"ok": False, "checked": 1, "failures": [
+        {"path": "/openapi.json", "status": 200,
+         "detail": "200 but not valid JSON: %%s" %% e}]}))
+    sys.exit(0)
+
+checked = 1
+for path, methods in (spec.get("paths") or {}).items():
+    get = (methods or {}).get("get")
+    if get is None or "{" in path:
+        continue
+    if any(p.get("required") for p in (get.get("parameters") or [])):
+        continue
+    code, detail = fetch(path)
+    checked += 1
+    # 5xx is the app breaking. 401/403/422 is the app working and declining.
+    if code >= 500 or code == 0:
+        failures.append({"path": path, "status": code,
+                         "detail": detail[:400].decode("utf-8", "replace")})
+
+print(json.dumps({"ok": not failures, "checked": checked, "failures": failures[:10]}))
+"""
 
 
 def probe_boot(
@@ -226,6 +303,7 @@ def probe_boot(
     network: str = NETWORK,
     workdir: str = "",
     env: dict = None,
+    journey: bool = False,
 ) -> BootResult:
     """Tier 3: start `command` detached, poll `health_path` until it answers
     or `ready_timeout_s` runs out, then unconditionally stop the container —
@@ -275,6 +353,14 @@ def probe_boot(
                 break  # the process exited on its own — a crash, not a slow start
             time.sleep(1)
 
+        # The journey runs only against a container that became healthy —
+        # otherwise there is nothing to ask, and the boot verdict already says
+        # so. Its own failure NEVER downgrades a healthy boot to crashed: the
+        # two are separate rungs with separate verdicts.
+        journey_result = None
+        if healthy and journey:
+            journey_result = _run_journey(name, port)
+
         logs = subprocess.run(["docker", "logs", name], capture_output=True, text=True)
         inspect_exit = subprocess.run(
             ["docker", "inspect", "-f", "{{.State.Running}}", name],
@@ -297,7 +383,28 @@ def probe_boot(
     return BootResult(
         healthy=healthy, crashed=crashed, exit_code=exit_code,
         logs=_truncate(logs.stdout + logs.stderr), duration_s=time.monotonic() - start,
+        journey=journey_result,
     )
+
+
+def _run_journey(container: str, port: int) -> dict:
+    """Execute the journey smoke inside `container`. Never raises: a smoke that
+    cannot run is `unverified`, never a silent pass — the same rule the rest of
+    this change enforces."""
+    try:
+        proc = subprocess.run(
+            ["docker", "exec", container, "python3", "-c", _JOURNEY_SCRIPT % port],
+            capture_output=True, text=True, timeout=120,
+        )
+    except (subprocess.TimeoutExpired, OSError) as exc:
+        return {"ok": False, "unverified": True, "checked": 0,
+                "failures": [{"path": "-", "status": 0, "detail": str(exc)}]}
+    try:
+        return json.loads((proc.stdout or "").strip().splitlines()[-1])
+    except (json.JSONDecodeError, IndexError):
+        return {"ok": False, "unverified": True, "checked": 0,
+                "failures": [{"path": "-", "status": 0,
+                              "detail": _truncate(proc.stderr or proc.stdout)}]}
 
 
 def demo() -> None:

@@ -10,8 +10,8 @@ import os
 import urllib.error
 import urllib.request
 
-from .classify import (FAIL_ENVIRONMENT, MAX_ENV_RETRIES, PASS, SKIPPED,
-                        TIMEOUT, UNVERIFIED, classify_failure)
+from .classify import (FAIL_CODE, FAIL_ENVIRONMENT, MAX_ENV_RETRIES, PASS,
+                        SKIPPED, TIMEOUT, UNVERIFIED, classify_failure)
 
 SANDBOX_URL = os.environ.get("SANDBOX_URL", "http://sandbox:8100")
 
@@ -66,6 +66,7 @@ def _boot_tier(workspace: str, target, spec) -> tuple:
             "image": spec.image, "port": spec.port,
             "health_path": spec.health_path, "ready_timeout_s": spec.ready_timeout_s,
             "workdir": _workdir(target, spec), "env": spec.env,
+            "journey": bool(spec.journey),
         }, spec.ready_timeout_s)
     except (urllib.error.URLError, OSError, TimeoutError) as exc:
         return UNVERIFIED, {"error": str(exc)}
@@ -75,6 +76,30 @@ def _boot_tier(workspace: str, target, spec) -> tuple:
     if result.get("crashed"):
         return classify_failure(result.get("logs", "")), result
     return TIMEOUT, result  # never healthy, never exited -> the ready window ran out
+
+
+def _journey_tier(boot_detail: dict) -> tuple:
+    """The journey smoke, promoted out of the boot result into its own rung.
+
+    Separate from `boot` on purpose. In project e8935f86 /health returned 200
+    while every real request returned 500, so a ladder that stops at boot
+    reports a healthy project that does not work. Folding this into the boot
+    verdict would lose exactly the distinction it exists to draw.
+    """
+    journey = (boot_detail or {}).get("journey")
+    if journey is None:
+        return SKIPPED, {}
+    if journey.get("unverified"):
+        return UNVERIFIED, {"error": _first_detail(journey), **journey}
+    if journey.get("ok"):
+        return PASS, journey
+    return FAIL_CODE, {"stderr": _first_detail(journey), **journey}
+
+
+def _first_detail(journey: dict) -> str:
+    failures = journey.get("failures") or []
+    return "\n".join(f"{f.get('status')} {f.get('path')}: {f.get('detail', '')}"
+                     for f in failures[:5]) or "journey smoke failed"
 
 
 def verify_target(project_id: str, target) -> dict:
@@ -107,6 +132,15 @@ def verify_target(project_id: str, target) -> dict:
             tiers[tier_name] = {"verdict": verdict, **detail}
             if verdict != PASS:
                 upstream_ok = False
+
+            # The journey rides the boot probe (same container, same exec
+            # mechanism) but reports as its own rung — see _journey_tier.
+            if tier_name == "boot" and spec.journey:
+                jverdict, jdetail = (_journey_tier(detail) if verdict == PASS
+                                     else (SKIPPED, {}))
+                tiers["journey"] = {"verdict": jverdict, **jdetail}
+                if jverdict != PASS:
+                    upstream_ok = False
     finally:
         try:
             _call("/workspace/cleanup", {"workspace": workspace}, 30)

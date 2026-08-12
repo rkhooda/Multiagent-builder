@@ -38,18 +38,22 @@ _ENV_PATTERNS = (
 
 
 _TIER_PHRASE = {
-    PASS: {"install": "dependencies installed OK", "build": "build OK", "boot": "boot OK"},
+    PASS: {"install": "dependencies installed OK", "build": "build OK", "boot": "boot OK",
+           "journey": "the API answers real requests"},
     FAIL_CODE: {"install": "dependency install failed (see error)",
-                "build": "build failed (see error)", "boot": "boot failed (see error)"},
+                "build": "build failed (see error)", "boot": "boot failed (see error)",
+                "journey": "BOOTED BUT DOES NOT WORK — real requests return 5xx"},
     FAIL_ENVIRONMENT: {"install": "dependency install failed (environment issue, not code)",
                         "build": "build failed (environment issue, not code)",
                         "boot": "boot failed (environment issue, not code)"},
     TIMEOUT: {"install": "dependency install timed out", "build": "build timed out",
-              "boot": "boot timed out"},
-    SKIPPED: {"install": "install skipped", "build": "build skipped", "boot": "boot skipped"},
+              "boot": "boot timed out", "journey": "API smoke timed out"},
+    SKIPPED: {"install": "install skipped", "build": "build skipped", "boot": "boot skipped",
+              "journey": "API smoke skipped"},
     UNVERIFIED: {"install": "install NOT CHECKED (sandbox unreachable)",
                  "build": "build NOT CHECKED (sandbox unreachable)",
-                 "boot": "boot NOT CHECKED (sandbox unreachable)"},
+                 "boot": "boot NOT CHECKED (sandbox unreachable)",
+                 "journey": "API smoke NOT CHECKED (sandbox unreachable)"},
 }
 
 

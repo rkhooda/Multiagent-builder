@@ -64,6 +64,11 @@ class TierSpec:
     port: Optional[int] = None
     health_path: str = "/health"
     ready_timeout_s: int = 30
+    #: Boot tiers only. Run the journey smoke once the container is
+    #: healthy: fetch /openapi.json, then call every parameterless GET it
+    #: declares and fail on any 5xx. Boot proves a process started;
+    #: this proves the application answers. See sandbox/runner.py.
+    journey: bool = False
 
 
 @dataclass(frozen=True)

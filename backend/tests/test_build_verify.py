@@ -137,6 +137,69 @@ def test_install_failure_skips_higher_tiers():
     check("boot is skipped, not attempted", tiers.get("boot", {}).get("verdict") == "skipped", tiers.get("boot"))
 
 
+# The CRM's exact shape (docs/VERIFICATION_GAP_ANALYSIS.md): /health returned
+# 200 while /openapi.json returned 500 and every real route returned 500.
+# A boot-only ladder calls that project healthy.
+BOOTS_BUT_BROKEN = '''\
+from fastapi import FastAPI
+from pydantic import BaseModel
+
+app = FastAPI()
+
+
+# The defect: `datetime` is annotated but never imported, so FastAPI cannot
+# build this model's schema and /openapi.json raises. Identical to the
+# generated schemas/tag.py, and it PARSES.
+class Thing(BaseModel):
+    created_at: "datetime"        # noqa: F821 -- deliberate, this is the fixture
+
+
+@app.get("/health")
+async def health():
+    return {"status": "ok"}
+
+
+@app.get("/things", response_model=list[Thing])
+async def things():
+    return []
+'''
+
+
+def test_boot_passes_but_journey_catches_a_broken_app():
+    """The rung that converts "it started" into "it works".
+
+    Boot must still PASS -- /health genuinely answers 200 -- and the journey
+    rung must FAIL on /openapi.json. If both moved together the distinction
+    would be lost, which is the whole point of separating them."""
+    main_py = OUTPUTS_DIR / "backend" / "app" / "main.py"
+    original = main_py.read_text()
+    main_py.write_text(BOOTS_BUT_BROKEN)
+    try:
+        result = _exec_ladder("backend")
+    finally:
+        main_py.write_text(original)
+
+    tiers = result.get("tiers", {})
+    check("boot still passes — /health really does answer 200",
+          tiers.get("boot", {}).get("verdict") == "pass", tiers.get("boot"))
+    check("the journey rung FAILS where boot passed",
+          tiers.get("journey", {}).get("verdict") == "fail_code", tiers.get("journey"))
+    failures = tiers.get("journey", {}).get("failures") or []
+    check("it names /openapi.json as the failure",
+          any(f.get("path") == "/openapi.json" and f.get("status") >= 500 for f in failures),
+          failures)
+
+
+def test_journey_passes_on_a_working_app():
+    """A false positive here would fail every correct project."""
+    result = _exec_ladder("backend")
+    tiers = result.get("tiers", {})
+    check("journey passes on the working fixture",
+          tiers.get("journey", {}).get("verdict") == "pass", tiers.get("journey"))
+    check("it actually checked something",
+          (tiers.get("journey", {}).get("checked") or 0) >= 1, tiers.get("journey"))
+
+
 def main() -> int:
     if not _docker_available():
         print("SKIPPED (docker daemon unavailable) — build verification ladder NOT verified this run")
@@ -148,6 +211,8 @@ def main() -> int:
             test_backend_target_passes_all_three_tiers,
             test_frontend_target_passes_all_three_tiers,
             test_install_failure_skips_higher_tiers,
+        test_journey_passes_on_a_working_app,
+        test_boot_passes_but_journey_catches_a_broken_app,
         ):
             print(f"-- {fn.__name__}")
             fn()
