@@ -364,6 +364,69 @@ Each is now pinned by a test that asserts silence.
 - **C8 two competing DB layers** — an `AsyncSession` injected into sync CRUD
   surfaces on the first real request, not in any file. Journey smoke.
 
+## Phase 2 result — the ladder, and the egress question
+
+### ponytail #2: the egress work was already done
+
+The brief's premise was that the sandbox could not reach package registries
+and that egress had been restricted deliberately. **That is not this
+codebase.** `sandbox-net` exists, is created by `runner.ensure_network`, is
+documented under "Network policy" above, and `test_build_verify.py` proves
+`pip install` and `npm install` both succeed against real registries. The
+document even records what was explicitly *not* built (a registry allowlist
+proxy, a pre-warmed cache) and why.
+
+The CRM's `"<urlopen error [Errno 8] nodename nor servname provided>"` is the
+**backend** failing to resolve the hostname `sandbox`, not the sandbox failing
+to reach PyPI. `SANDBOX_URL` defaults to `http://sandbox:8100`, which only
+resolves inside Compose; that run had the backend on the host. A
+deployment-mode mismatch, not a network policy problem — and an egress proxy
+would have fixed exactly none of it.
+
+So the ponytail answer to "what is the narrowest workable egress" is: **none,
+it exists.** What was missing was never egress. It was that a deployment in
+which verification *cannot run* was indistinguishable from one in which it ran
+and passed.
+
+### What was built instead
+
+**One status vocabulary** (`build_verify/classify.py`) — `verified` / `failed`
+/ `unverified` / `not_applicable`, computed once and persisted, with
+`unverified` outranking both `failed` and `verified`. Gate 4, the project
+list, the summary PDF and VERIFICATION.md read it rather than each re-deriving
+it from the tier tree.
+
+**The second abstention path, still live**, fixed: a tier-level `UNVERIFIED`
+(`ladder.py:50`) lived only inside the `tiers` dict while
+`build_verify_agent.py:113` tested for a target-level `unverified_reason`, so
+a sandbox that died mid-ladder was never counted at all.
+
+**The journey rung** — `install → build → boot → journey`. Derived from the
+app's own `/openapi.json`: fetch it, then call every parameterless `GET` it
+declares; 5xx fails, 401/403/422 passes (the app working and declining). No
+per-project config, no plan parsing. It runs as a `docker exec` inside the
+already-healthy boot container, so it adds nothing to the sandbox's exposure
+surface.
+
+Proved by fixture rather than asserted: a `main.py` carrying the exact
+`schemas/tag.py` defect **boots healthy and fails the journey on
+`/openapi.json`**, in a single test that requires boot to still pass. If the
+two moved together the distinction would be lost, which is the whole reason
+the journey is its own rung.
+
+### Still not built, and why
+
+- **The headless-browser rung.** The four causes of the CRM's blank page
+  (`ReactDOM.render()` under React 19, `react-dom` vs `react-dom/client`, an
+  unimported stylesheet, an unmounted provider) are now caught statically and
+  for free. A browser smoke needs a ~500MB chromium image in the sandbox and
+  would catch *those four* no more reliably. It remains the only honest way to
+  catch a blank page whose cause is **not** on that list, and it is the largest
+  remaining gap in the ladder.
+- **The `migrate` rung and migration↔model parity.** Needs `alembic check`
+  against live metadata inside the container.
+- **`docs-executable`** — running the generated README's own commands verbatim.
+
 ## Design decisions (ponytail #1 — the integration-check surface)
 
 **Where the checks live.** `validation_pass` is already the whole-tree batch

@@ -169,10 +169,52 @@ ceiling every build container gets, and by `sandbox` never being reachable
 from the public internet (no host port published for it in
 `docker-compose.yml`).
 
-## Verdict semantics (forward reference to Phase 2)
+## The journey smoke (added 2026-08-13)
+
+The ladder gained a rung above `boot`: once the boot container reports
+healthy, the runner fetches `/openapi.json` inside it and then calls every
+parameterless `GET` the spec declares, failing on any 5xx. See
+`sandbox/runner.py`'s `_JOURNEY_SCRIPT` and
+`docs/VERIFICATION_GAP_ANALYSIS.md` for why (`/health` returned 200 while
+every real request returned 500).
+
+**What this adds to the exposure surface: nothing.** It is a `docker exec
+python3 -c` against the *already-running* boot container — the same mechanism
+and the same container the health probe has always used — issuing requests to
+`localhost` inside it. No new container, no new image, no new port, no new
+network, no host-reachable surface, and no egress beyond what the boot tier
+already had. The generated application was already executing during `boot`;
+the journey only asks it questions.
+
+Two bounds worth stating explicitly:
+
+- The script is executed with `python3 -c` from a **module-level constant**
+  with only the port interpolated. No generated content is ever interpolated
+  into it, so a hostile project cannot inject shell or Python through a path
+  or a schema value — it is not built from the spec, it only *reads* the spec
+  at runtime inside the sandbox.
+- It inherits the boot tier's wall-clock ceiling and adds its own 120s cap.
+  A project that declares thousands of paths costs bounded time, and the cap
+  expiring is `unverified`, not `pass`.
+
+## Verdict semantics
 
 A sandbox that cannot start (Docker unavailable, image pull failed, `sandbox`
 service unreachable) must report **`unverified`**, never `pass` and never
 silently nothing — see Constraints in the improvement brief ("silence is the
-enemy"). Classification detail lives in Phase 2's own design; this document
-only pins the non-negotiable: unverified is not pass.
+enemy"). This document pins the non-negotiable: unverified is not pass.
+
+Implemented in `app/build_verify/classify.py` as one status vocabulary —
+`verified` / `failed` / `unverified` / `not_applicable` — computed once and
+persisted on the report so every surface reads the same value.
+**`unverified` outranks both `failed` and `verified`**: if any part never ran,
+the truthful statement about the project is "we do not know", and reporting a
+partial failure or a partial pass overstates what was established.
+
+The failure this encodes actually happened. Project `e8935f86` shipped with
+both targets unverified — the backend was running outside Compose, so
+`http://sandbox:8100` never resolved and nothing was executed — while Gate 4
+told the user the code "did not fully install/build/boot". Those are opposite
+claims. **A deployment in which verification cannot run must never be
+presentable as one in which it ran**, and the wording for the two cases is now
+separate at the source.
