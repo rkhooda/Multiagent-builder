@@ -28,3 +28,11 @@ duckduckgo-search==8.1.1
 PyYAML==6.0.3
 # Day 24 PDF summary export (app/utils/summary_pdf.py).
 reportlab==5.0.0
+# Linting of GENERATED Python (app/validation/integration.py). The cheapest
+# verification layer in the pipeline and, until now, entirely absent: the
+# validation pass only ever asked whether a file PARSES, and every file that
+# shipped broken in project e8935f86 parses. Static analysis only — ruff reads
+# and never executes the code it is pointed at, so this runs in the builder and
+# needs no sandbox. JS linting is the opposite (eslint needs the project's own
+# config and node_modules) and belongs to the sandbox ladder instead.
+ruff==0.16.2

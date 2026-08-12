@@ -20,9 +20,10 @@ import json
 
 from ..core.connection_manager import manager
 from ..llm_router import call_llm
+from ..observability import metrics_store
 from ..utils.code_cleaner import strip_code_fences
 from ..utils.file_writer import write_project_file
-from ..validation import report as vreport
+from ..validation import integration, report as vreport
 from ..validation.syntax import (
     JsToolUnavailable, js_syntax_heuristic, validate_artifact, validate_content,
     validate_js_batch, validate_js_imports, validate_page_composition,
@@ -256,6 +257,39 @@ def validation_pass(state: dict) -> dict:
     for path, issues in validate_page_composition(generated_files, plan_tasks).items():
         issues_by_file.setdefault(path, []).extend(issues)
 
+    # ── 3c. The layer above parsing (docs/VERIFICATION_GAP_ANALYSIS.md) ─────
+    # Every file that shipped broken in project e8935f86 PARSED. These four
+    # checks ask the two questions parsing cannot: does every name resolve
+    # within a file, and did the file finish being written at all.
+    #
+    # Truncation's authoritative signal is the provider's own finish_reason,
+    # already recorded per call as `llm_truncated:{agent}`. The per-file paths
+    # come from the metrics store for this project, so a cached or unrecorded
+    # response falls back to the content heuristics inside detect_truncation.
+    try:
+        for path, issues in integration.lint_python(generated_files).items():
+            issues_by_file.setdefault(path, []).extend(issues)
+    except integration.RuffUnavailable as e:
+        note = f"Python linting unavailable — undefined names NOT checked ({e})"
+        degraded_tools.append(note)
+        print(f"[Validation] DEGRADED: {note}", flush=True)
+        log.append(f"validation_pass: {note}")
+        errors.append(f"validation: {note}")
+        from ..observability import degraded
+        degraded.record(project_id, "validation_lint_unavailable")
+
+    # metrics_store.truncations() already records the per-call flag with the
+    # filepath in `label` — the store's own docstring notes this is the only
+    # place a truncated completion is visible, since it returns normally at the
+    # call site and gets written to disk like any other.
+    truncated_paths = {row.get("label") for row in metrics_store.truncations(project_id)
+                       if row.get("label")}
+    for check in (lambda f: integration.detect_truncation(f, truncated_paths),
+                  integration.detect_degeneracy,
+                  integration.detect_import_time_io):
+        for path, issues in check(generated_files).items():
+            issues_by_file.setdefault(path, []).extend(issues)
+
     # ── 4. Bounded repair of syntax/artifact defects ────────────────────────
     repaired, repair_failed = [], []
     budget_exhausted = False
@@ -338,6 +372,9 @@ def validation_pass(state: dict) -> dict:
         f"{report['auto_repaired']} repaired, "
         f"{report['phantom_imports'] + report['missing_packages']} import warnings, "
         f"{report.get('coherence_warnings', 0)} coherence warnings, "
+        f"{report.get('lint_errors', 0)} undefined names, "
+        f"{report.get('truncated_files', 0)} truncated, "
+        f"{report.get('degenerate_files', 0)} degenerate, "
         f"{report['repair_calls_spent']}/{report['repair_ceiling']} repair calls spent")
     print(f"[Validation] Done. {vreport.render_summary(report)}", flush=True)
 

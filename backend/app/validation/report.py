@@ -39,7 +39,16 @@ REPAIR_CEILING_PER_RUN = int(os.getenv("REPAIR_CEILING_PER_RUN", "14"))
 REPAIR_PREFIX = "repair:"
 
 # Issue kinds that count as an UNRESOLVED mechanical defect for the threshold.
-UNRESOLVED_KINDS = {"syntax", "phantom_import", "missing_package", "artifact"}
+# `lint` and `truncated`/`degenerate` ARE unresolved defects: each is a
+# deterministic statement that the artifact does not run, not an opinion about
+# style. `lint_info` (unused imports) is deliberately absent — 66 of them
+# against 4 real defects on the CRM tree.
+#
+# `import_time_io` is absent too: a module that opens a connection at import is
+# a real defect, but it is a design finding for the human rather than a
+# mechanical failure of the file, and it has no unambiguous automatic fix.
+UNRESOLVED_KINDS = {"syntax", "phantom_import", "missing_package", "artifact",
+                    "lint", "truncated", "degenerate"}
 
 
 def repair_key(filepath: str) -> str:
@@ -157,6 +166,16 @@ def aggregate(issues: list, *, files_checked: int, repaired: list, repair_failed
         # of the file, and letting it move the quality threshold would make the
         # A/B's own instrument respond to the change under test.
         "coherence_warnings": len(by_kind.get("coherence_warning", [])),
+        # The layer above parsing (docs/VERIFICATION_GAP_ANALYSIS.md). Counted
+        # separately because the REMEDIES differ: a lint finding is repaired in
+        # place, a truncated or degenerate file is REGENERATED (the cause is a
+        # ceiling or a generation loop, upstream of the file), and import-time
+        # I/O is a design finding for the human.
+        "lint_errors": len(by_kind.get("lint", [])),
+        "lint_info": len(by_kind.get("lint_info", [])),
+        "truncated_files": len(by_kind.get("truncated", [])),
+        "degenerate_files": len(by_kind.get("degenerate", [])),
+        "import_time_io": len(by_kind.get("import_time_io", [])),
         "generation_failed": len(failed_files),
         "repair_calls_spent": repairs_spent_total(retry_counts),
         "repair_ceiling": REPAIR_CEILING_PER_RUN,
@@ -186,6 +205,14 @@ def render_summary(report: dict) -> str:
         parts.append(f"{report['artifact_errors']} invalid JSON/YAML artifacts")
     if report.get("coherence_warnings"):
         parts.append(f"{report['coherence_warnings']} page-composition warnings")
+    if report.get("lint_errors"):
+        parts.append(f"{report['lint_errors']} undefined/redefined names")
+    if report.get("truncated_files"):
+        parts.append(f"{report['truncated_files']} truncated files")
+    if report.get("degenerate_files"):
+        parts.append(f"{report['degenerate_files']} files the generator looped on")
+    if report.get("import_time_io"):
+        parts.append(f"{report['import_time_io']} modules doing I/O at import time")
     if report["generation_failed"]:
         parts.append(f"{report['generation_failed']} files failed generation")
 
