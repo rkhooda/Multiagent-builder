@@ -150,6 +150,53 @@ def test_duplicate_filepath_is_rejected():
     assert any("Duplicate filepath" in e for e in errors), errors
 
 
+def test_lockfile_task_is_rejected():
+    """Reproduces the exact defect from project e8935f86 (CRM system II).
+
+    The plan claimed frontend/package-lock.json. Two models tried it, both
+    truncated at the 1,500 ceiling, and the ZIP shipped a 130-byte lockfile
+    against a real one of 75,501 bytes — so `npm ci` installed nothing. The
+    profile's own verify target already runs `npm install` rather than `npm ci`
+    because "this pipeline cannot produce a truthful one"
+    (react_fastapi.py:288); nothing had ever told the PLANNER that."""
+    from app.profiles import get_profile
+    from app.validation import _plan_shape
+
+    tasks = [dict(t) for t in GOOD_PLAN]
+    tasks[1] = {**tasks[1], "filepath": "frontend/package-lock.json"}
+    errors = _plan_shape(_plan_of(tasks), get_profile("react-fastapi"))
+    assert any("package-lock.json" in e and "lockfile" in e for e in errors), errors
+
+
+def test_binary_asset_task_is_rejected():
+    """Same run: frontend/public/favicon.ico was planned, generated as text,
+    and landed in the validation report's unresolved_files."""
+    from app.profiles import get_profile
+    from app.validation import _plan_shape
+
+    tasks = [dict(t) for t in GOOD_PLAN]
+    tasks[1] = {**tasks[1], "filepath": "frontend/public/favicon.ico"}
+    errors = _plan_shape(_plan_of(tasks), get_profile("react-fastapi"))
+    assert any("binary" in e for e in errors), errors
+
+
+def test_ordinary_source_files_are_not_mistaken_for_ungeneratable():
+    """The check keys on the FILENAME, so a source file whose name merely
+    contains 'lock' (a lock helper, a locked-account page) must sail through —
+    a false positive here deletes a real task from the plan."""
+    from app.profiles import get_profile
+    from app.validation import _plan_shape
+
+    for path in ("frontend/src/lib/lock.js", "frontend/src/pages/LockedOut.jsx",
+                 "backend/app/core/locking.py", "frontend/package.json",
+                 "frontend/src/assets/logo.svg"):
+        tasks = [dict(t) for t in GOOD_PLAN]
+        tasks[1] = {**tasks[1], "filepath": path}
+        errors = _plan_shape(_plan_of(tasks), get_profile("react-fastapi"))
+        assert not any("cannot be authored" in e or "lockfile" in e or "binary" in e
+                       for e in errors), (path, errors)
+
+
 def test_undecomposed_plan_produces_no_decomposition_errors():
     """A plain v1.0 plan has no sections at all and must sail through — the
     validator only judges what decomposition actually produced."""

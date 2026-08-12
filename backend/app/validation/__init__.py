@@ -226,10 +226,47 @@ def _decomposition_integrity(plan) -> list:
     return errors
 
 
+# Files a language model cannot author truthfully, so no task may claim one.
+#
+# A lockfile pins a fully resolved transitive dependency tree, which is only
+# knowable by resolving it against a registry — react_fastapi.py:288 already
+# says this, and its verify target already runs `npm install` rather than
+# `npm ci` for exactly this reason. The planner was never told, so it kept
+# planning them: project e8935f86 spent 3,000 tokens and two truncation flags
+# producing a 130-byte package-lock.json, against a real one of 75,501 bytes.
+# `npm ci` then installed nothing.
+#
+# Binary formats have the same shape of problem — a model emits text, and the
+# ZIP gets a corrupt file. That run's favicon.ico ended up in unresolved_files.
+#
+# Checked at plan time, where the remedy is free, rather than as a coder guard:
+# a planned file that no one may write is a defect in the plan.
+UNGENERATABLE_FILES = frozenset({
+    "package-lock.json", "yarn.lock", "pnpm-lock.yaml",
+    "poetry.lock", "Pipfile.lock", "Cargo.lock", "composer.lock", "go.sum",
+})
+UNGENERATABLE_SUFFIXES = (
+    ".ico", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".woff", ".woff2",
+    ".ttf", ".eot", ".pdf", ".zip", ".mp4", ".webm",
+)
+
+
+def _ungeneratable(filepath: str) -> str:
+    """Why this path may not be generated, or '' if it may."""
+    name = (filepath or "").rsplit("/", 1)[-1]
+    if name in UNGENERATABLE_FILES:
+        return ("a lockfile records a resolved dependency tree, which is only "
+                "knowable by resolving it against the registry — it is produced "
+                "by the install step, never written by hand")
+    if name.lower().endswith(UNGENERATABLE_SUFFIXES):
+        return "a binary file cannot be emitted as text"
+    return ""
+
+
 def _plan_shape(plan, profile) -> list:
     """Improvement 03: is this plan a legal SHAPE for the active profile?
 
-    Four questions, each with a concrete failure behind it. Absent phases are
+    Five questions, each with a concrete failure behind it. Absent phases are
     deliberately NOT one of them — a static-site plan with no database tasks is
     the feature working, so only *declared* phases and *resolvable, acyclic*
     edges are enforced.
@@ -244,7 +281,9 @@ def _plan_shape(plan, profile) -> list:
          after the earlier phases have already been paid for. Catching it here
          puts it in front of the human at Gate 3 instead;
       4. exactly one task owns each filepath — the Day 19 single-owner rule,
-         checked for every profile rather than only across db/backend.
+         checked for every profile rather than only across db/backend;
+      5. no task claims a file that cannot be authored by a model at all —
+         lockfiles and binaries. See UNGENERATABLE_FILES.
 
     Loud at plan time, by design (ponytail #2): Gate 3 is where a human is
     already reading the plan, and every one of these is cheap to fix there.
@@ -294,6 +333,13 @@ def _plan_shape(plan, profile) -> list:
                 f"{seen[task.filepath]} and {task.id}. Exactly one task may "
                 f"own a file.")
         seen[task.filepath] = task.id
+
+    for task in plan.tasks:
+        why = _ungeneratable(task.filepath)
+        if why:
+            errors.append(
+                f"Task {task.id} plans to generate '{task.filepath}', but {why}. "
+                f"Drop the task — the file is produced by the build, not by an agent.")
     return errors
 
 
