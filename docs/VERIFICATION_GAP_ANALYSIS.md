@@ -312,6 +312,58 @@ paying repair tokens to complete a file the ceiling cut is treating a symptom.
 
 ---
 
+## Phase 1 result — measured, not asserted
+
+The two fixtures are the instrument. The as-generated tree could not install,
+import, build or boot; the hand-repaired tree is verified working. A check that
+fires on the second one is wrong, whatever it claims to have found.
+
+| | blocking findings | files |
+|---|---|---|
+| as-generated | **74** | 31 |
+| hand-repaired (control) | **0** | 0 |
+
+```
+config_key      15     route           27     packaging        9
+truncated        7     manifest         4     lint             4
+config_ref       3     orm              3     degenerate       1
+security         1
+                       lint_info       66  (advisory, not counted)
+                       import_time_io   2  (advisory, not counted)
+```
+
+Running against the working copy is what made this honest. It found four
+false-positive classes that a fixture-only suite would have shipped:
+
+1. **F821 inside quoted forward references** — the working `contact.py` also
+   writes `Mapped[List["Tag"]]` without importing `Tag`; SQLAlchemy resolves
+   those through its registry. 16 findings on a file that runs.
+2. **A trailing `>` read as a dangling operator** — every HTML and SVG file ends
+   that way. `crm-logo.svg` is byte-identical in both trees and was flagged in
+   both.
+3. **`*` and `/` tails** — JSDoc continuation lines and block-comment closes.
+4. **`backend/alembic/` reported as a missing package** — the migrations
+   directory is deliberately not a package, and `from alembic import context`
+   resolves to the installed distribution.
+
+Each is now pinned by a test that asserts silence.
+
+### Defects still not caught statically, and why
+
+- **C6 call-signature agreement** — `crud.get(db, id=...)` against
+  `def get(db, contact_id)`. Needs real call-graph resolution and is the highest
+  false-positive risk in the set; the journey smoke catches it on the first
+  request with a `TypeError`. Deliberately deferred to the ladder.
+- **F2 `uvicorn main:app`** — a Dockerfile does not state its image WORKDIR, so
+  the module check only fires when the module resolves at no level. The compose
+  finding already sends you to the same file, and the boot rung catches it
+  exactly, by the container starting and exiting.
+- **D1–D5 the frontend↔backend contract** — verified against the real
+  `/openapi.json`, which requires the boot rung. Phase 2.
+- **G1 migration↔model parity** — requires a live metadata comparison. Phase 2.
+- **C8 two competing DB layers** — an `AsyncSession` injected into sync CRUD
+  surfaces on the first real request, not in any file. Journey smoke.
+
 ## Design decisions (ponytail #1 — the integration-check surface)
 
 **Where the checks live.** `validation_pass` is already the whole-tree batch
