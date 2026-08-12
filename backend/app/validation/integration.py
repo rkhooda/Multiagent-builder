@@ -1085,6 +1085,100 @@ def _passes_through_hasher(value) -> bool:
                for n in ast.walk(value))
 
 
+# ── 12. Frontend entry-point wiring ──────────────────────────────────────────
+#
+# The blank page. `npm run build` succeeded, the ZIP shipped, and the app
+# rendered nothing. Three defects, all in main.jsx, all static:
+#
+#   ReactDOM.render() -- removed in React 18; package.json pins react ^19.2.8,
+#     so the call threw and nothing ever mounted
+#   import ReactDOM from 'react-dom' -- the createRoot API lives in
+#     'react-dom/client'
+#   ./index.css never imported, so Tailwind was compiled and never loaded
+#
+# and one in App.jsx: AuthProvider was never rendered, so every useAuth()
+# consumer read undefined.
+#
+# WHY static and not a headless browser. A browser smoke is the general-case
+# backstop and the brief asks for one, but it needs a ~500MB chromium image in
+# the sandbox and catches these four specific defects no more reliably than
+# four lines of matching. These are the causes that actually shipped, so they
+# are worth catching first and for free. The browser rung remains the honest
+# way to catch a blank page whose cause is NOT on this list.
+# ponytail: four rules against a known failure, not a React semantic model.
+
+_LEGACY_RENDER = re.compile(r"\bReactDOM\s*\.\s*render\s*\(")
+_JSX_PROVIDER = re.compile(r"<\s*([A-Z]\w*Provider)\b")
+_DEFINES_PROVIDER = re.compile(r"\b(?:export\s+)?(?:const|function)\s+([A-Z]\w*Provider)\b")
+
+
+def check_frontend_entrypoint(files: dict, root="frontend") -> dict:
+    """Does the app actually mount, style itself, and mount its providers."""
+    results = {}
+    src = {p: c for p, c in (files or {}).items()
+           if p.startswith(root + "/") and c}
+    if not src:
+        return {}
+
+    entry = next((p for p in src if p.endswith(("src/main.jsx", "src/main.tsx",
+                                                "src/index.jsx", "src/index.tsx"))), None)
+    react_major = _pinned_major(src.get(f"{root}/package.json"), "react")
+
+    if entry:
+        content = src[entry]
+        match = _LEGACY_RENDER.search(content)
+        if match and (react_major or 0) >= 18:
+            results.setdefault(entry, []).append(SyntaxIssue(
+                entry, line=content[:match.start()].count("\n") + 1, kind="entrypoint",
+                message=(f"calls ReactDOM.render(), which was REMOVED in React 18, "
+                         f"while package.json pins react ^{react_major}. Nothing "
+                         f"mounts: the build succeeds and the page renders blank. "
+                         f"Use createRoot from 'react-dom/client'.")))
+
+        # A stylesheet that exists and is imported nowhere is compiled by the
+        # bundler and never loaded, so the app renders completely unstyled.
+        for style in [p for p in src if p.endswith((".css",))
+                      and "/src/" in p and "node_modules" not in p]:
+            stem = PurePosixPath(style).name
+            if any(stem in (c or "") for p, c in src.items() if p != style):
+                continue
+            results.setdefault(entry, []).append(SyntaxIssue(
+                entry, line=1, kind="entrypoint",
+                message=(f"'{style}' is never imported by any module, so the "
+                         f"bundler never includes it and the app renders "
+                         f"unstyled. Add `import './{stem}'` to {PurePosixPath(entry).name}.")))
+
+    # A context provider that is defined and exported but never rendered: every
+    # consumer of its hook reads undefined, which usually throws on first use.
+    defined = {}
+    for path, content in src.items():
+        for name in _DEFINES_PROVIDER.findall(content):
+            defined.setdefault(name, path)
+    rendered = {n for c in src.values() for n in _JSX_PROVIDER.findall(c)}
+    for name, path in sorted(defined.items()):
+        if name in rendered:
+            continue
+        results.setdefault(path, []).append(SyntaxIssue(
+            path, line=_line_of(src[path], name), kind="entrypoint",
+            message=(f"{name} is defined but never rendered anywhere in the tree, "
+                     f"so every consumer of its context reads undefined. Wrap the "
+                     f"app in <{name}> in App or the entry point.")))
+    return results
+
+
+def _pinned_major(package_json: str, name: str):
+    try:
+        pkg = json.loads(package_json or "{}")
+    except json.JSONDecodeError:
+        return None
+    for key in ("dependencies", "devDependencies"):
+        spec = (pkg.get(key) or {}).get(name)
+        if spec:
+            digits = re.search(r"(\d+)", str(spec))
+            return int(digits.group(1)) if digits else None
+    return None
+
+
 def _shadows(dynamic: str, static: str) -> bool:
     """Would `dynamic` (e.g. /{contact_id}) match `static` (e.g. /search)?"""
     d = [s for s in dynamic.strip("/").split("/") if s]

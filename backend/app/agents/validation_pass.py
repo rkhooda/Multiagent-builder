@@ -293,7 +293,8 @@ def validation_pass(state: dict) -> dict:
                   integration.check_config_keys,
                   integration.check_orm_symmetry,
                   integration.check_config_references,
-                  integration.check_password_hashing):
+                  integration.check_password_hashing,
+                  integration.check_frontend_entrypoint):
         for path, issues in check(generated_files).items():
             issues_by_file.setdefault(path, []).extend(issues)
 

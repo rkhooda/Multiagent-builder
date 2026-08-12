@@ -15,7 +15,8 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app.validation.integration import (  # noqa: E402
-    check_config_keys, check_config_references, check_orm_symmetry,
+    check_config_keys, check_config_references, check_frontend_entrypoint,
+    check_orm_symmetry,
     check_package_markers, check_password_hashing,
     check_python_manifest, check_route_registration,
     detect_degeneracy,
@@ -761,6 +762,77 @@ def test_pwd_context_hashing_is_recognised():
     src = ("from app.core.security import pwd_context\n\n\n"
            "def f(u):\n    return User(hashed_password=pwd_context.hash(u.password))\n")
     assert check_password_hashing({"backend/app/crud/crud_user.py": src}) == {}
+
+
+# ── Class D: the blank page ──────────────────────────────────────────────────
+
+# All three causes lived in main.jsx. `npm run build` succeeded, the ZIP
+# shipped, and the app rendered nothing.
+CRM_MAIN_JSX = """import React from 'react';
+import ReactDOM from 'react-dom';
+import App from './App';
+
+ReactDOM.render(
+  <React.StrictMode>
+    <App />
+  </React.StrictMode>,
+  document.getElementById('root')
+);
+"""
+
+CRM_FRONTEND = {
+    "frontend/package.json": '{"dependencies": {"react": "^19.2.8", "react-dom": "^19.2.8"}}',
+    "frontend/src/main.jsx": CRM_MAIN_JSX,
+    "frontend/src/index.css": "@tailwind base;\n@tailwind components;\n",
+    "frontend/src/App.jsx": "export default function App() { return <div>hi</div>; }\n",
+    "frontend/src/hooks/useAuth.js":
+        "export const AuthProvider = ({ children }) => children;\n"
+        "export const useAuth = () => useContext(AuthContext);\n",
+}
+
+
+def test_legacy_reactdom_render_under_react_19_is_caught():
+    issues = check_frontend_entrypoint(CRM_FRONTEND)["frontend/src/main.jsx"]
+    assert any("REMOVED in React 18" in i.message and "renders blank" in i.message
+               for i in issues), [i.message for i in issues]
+    assert all(i.kind == "entrypoint" for i in issues)
+
+
+def test_reactdom_render_under_react_17_is_not_reported():
+    """The call is correct on React 17 -- the defect is the PAIRING with a
+    pinned major that removed it."""
+    files = dict(CRM_FRONTEND)
+    files["frontend/package.json"] = '{"dependencies": {"react": "^17.0.2"}}'
+    issues = check_frontend_entrypoint(files).get("frontend/src/main.jsx", [])
+    assert not any("REMOVED in React 18" in i.message for i in issues), issues
+
+
+def test_an_unimported_stylesheet_is_caught():
+    issues = check_frontend_entrypoint(CRM_FRONTEND)["frontend/src/main.jsx"]
+    assert any("index.css" in i.message and "never imported" in i.message
+               for i in issues), [i.message for i in issues]
+
+
+def test_an_imported_stylesheet_is_not_reported():
+    files = dict(CRM_FRONTEND)
+    files["frontend/src/main.jsx"] = "import './index.css';\n" + CRM_MAIN_JSX
+    issues = check_frontend_entrypoint(files).get("frontend/src/main.jsx", [])
+    assert not any("never imported" in i.message for i in issues), issues
+
+
+def test_a_provider_that_is_never_rendered_is_caught():
+    issues = check_frontend_entrypoint(CRM_FRONTEND)["frontend/src/hooks/useAuth.js"]
+    assert any("AuthProvider is defined but never rendered" in i.message
+               for i in issues), [i.message for i in issues]
+
+
+def test_a_mounted_provider_is_not_reported():
+    files = dict(CRM_FRONTEND)
+    files["frontend/src/App.jsx"] = (
+        "import { AuthProvider } from './hooks/useAuth';\n"
+        "export default function App() { return <AuthProvider><div/></AuthProvider>; }\n")
+    issues = check_frontend_entrypoint(files).get("frontend/src/hooks/useAuth.js", [])
+    assert not any("never rendered" in i.message for i in issues), issues
 
 
 def _run_all():
