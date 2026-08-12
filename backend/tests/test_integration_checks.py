@@ -15,7 +15,8 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app.validation.integration import (  # noqa: E402
-    detect_degeneracy, detect_import_time_io, detect_truncation, lint_python,
+    check_python_manifest, detect_degeneracy, detect_import_time_io,
+    detect_truncation, lint_python,
 )
 
 
@@ -280,6 +281,96 @@ def test_the_same_call_inside_a_function_is_fine():
     ok = ("from sqlalchemy import create_engine\n\n\n"
           "def get_engine(url):\n    return create_engine(url)\n")
     assert detect_import_time_io({"backend/app/db/session.py": ok} ) == {}
+
+
+# ── Class E: dependency manifest ─────────────────────────────────────────────
+
+# backend/requirements.txt as generated. `csv` is stdlib, so `pip install -r`
+# fails on that line and NOTHING else installs -- the most blocking defect in
+# the whole set. The generator even flagged its own uncertainty and shipped it.
+CRM_REQUIREMENTS = '''\
+alembic==1.14.0
+fastapi==0.115.6
+passlib[bcrypt]==1.7.4
+pydantic==2.10.4
+python-jose[cryptography]==3.3.0
+sqlalchemy==2.0.36
+uvicorn[standard]==0.34.0
+csv  # unpinned: not in known-good map, verify version
+'''
+
+
+def test_stdlib_module_in_requirements_is_rejected():
+    found = check_python_manifest({"backend/requirements.txt": CRM_REQUIREMENTS})
+    issues = found["backend/requirements.txt"]
+    assert any("csv" in i.message and "standard-library" in i.message for i in issues)
+    assert all(i.kind == "manifest" for i in issues)
+    assert issues[0].line == 8
+
+
+def test_a_real_package_is_not_mistaken_for_stdlib():
+    """`email`, `typing` and `io` are stdlib names that also prefix real
+    distributions -- email-validator and typing-extensions must survive."""
+    manifest = "email-validator==2.2.0\ntyping-extensions==4.12.2\nfastapi==0.115.6\n"
+    assert check_python_manifest({"backend/requirements.txt": manifest}) == {}
+
+
+def test_usage_triggered_dependencies_are_caught():
+    """Nothing imports these by name, so no import scan finds them. All three
+    were missing from the CRM manifest and all three are in the repaired one."""
+    files = {
+        "backend/requirements.txt": "fastapi==0.115.6\npydantic==2.10.4\npasslib==1.7.4\n",
+        "backend/app/schemas/user.py":
+            "from pydantic import BaseModel, EmailStr\n\n\n"
+            "class U(BaseModel):\n    email: EmailStr\n",
+        "backend/app/api/auth.py":
+            "from fastapi.security import OAuth2PasswordRequestForm\n",
+        "backend/app/core/security.py":
+            "from passlib.context import CryptContext\n\nctx = CryptContext()\n",
+    }
+    messages = [i.message for v in check_python_manifest(files).values() for i in v]
+    assert any("email-validator" in m for m in messages), messages
+    assert any("python-multipart" in m for m in messages), messages
+    assert any("bcrypt" in m for m in messages), messages
+
+
+def test_declared_usage_dependencies_are_not_reported():
+    files = {
+        "backend/requirements.txt": "fastapi==0.115.6\npydantic==2.10.4\nemail-validator==2.2.0\n",
+        "backend/app/schemas/user.py":
+            "from pydantic import BaseModel, EmailStr\n\n\n"
+            "class U(BaseModel):\n    email: EmailStr\n",
+    }
+    assert check_python_manifest(files) == {}
+
+
+def test_local_packages_are_not_reported_as_missing_dependencies():
+    """`app.core` is this project's own code, not a distribution."""
+    files = {
+        "backend/requirements.txt": "fastapi==0.115.6\n",
+        "backend/app/main.py": "from fastapi import FastAPI\nfrom app.core import config\n",
+        "backend/app/core/config.py": "x = 1\n",
+    }
+    assert check_python_manifest(files) == {}
+
+
+def test_an_undeclared_third_party_import_is_reported():
+    files = {
+        "backend/requirements.txt": "fastapi==0.115.6\n",
+        "backend/app/main.py": "import redis\n",
+    }
+    messages = [i.message for v in check_python_manifest(files).values() for i in v]
+    assert any("redis" in m for m in messages), messages
+
+
+def test_a_distribution_named_differently_from_its_import_is_accepted():
+    """python-jose is imported as `jose`; reporting it would be a false
+    positive on a correct manifest."""
+    files = {
+        "backend/requirements.txt": "python-jose[cryptography]==3.3.0\npython-dotenv==1.0.1\n",
+        "backend/app/core/security.py": "from jose import jwt\nimport dotenv\n",
+    }
+    assert check_python_manifest(files) == {}
 
 
 def _run_all():

@@ -357,3 +357,199 @@ def _called_name(call) -> str:
     if isinstance(func, ast.Attribute):
         return func.attr
     return ""
+
+
+# ── 4. Dependency manifest sanity ────────────────────────────────────────────
+#
+# requirements.txt listed `csv` — a stdlib module, not a PyPI package — so
+# `pip install -r requirements.txt` failed outright. Nothing downstream could
+# run, which makes this the single most blocking defect in the whole set. The
+# generator even knew something was odd and shipped it anyway, annotated
+# "csv  # unpinned: not in known-good map, verify version".
+#
+# The stdlib direction is exact and free: sys.stdlib_module_names is the
+# running interpreter's own list. No curated list to drift.
+
+_REQUIREMENT_NAME = re.compile(r"^\s*([A-Za-z0-9._-]+)")
+
+
+def _requirement_names(manifest: str) -> list:
+    """(name, line) for each real requirement line."""
+    out = []
+    for n, raw in enumerate((manifest or "").splitlines(), start=1):
+        line = raw.split("#", 1)[0].strip()
+        if not line or line.startswith("-"):      # -r, -e, --index-url
+            continue
+        match = _REQUIREMENT_NAME.match(line)
+        if match:
+            out.append((match.group(1), n))
+    return out
+
+
+def _normalise(name: str) -> str:
+    """PEP 503-ish: case- and separator-insensitive."""
+    return re.sub(r"[-_.]+", "_", (name or "").strip().lower())
+
+
+# Distributions whose IMPORT name differs from their PyPI name. Needed only for
+# the "imported but not declared" direction; the stdlib direction needs none.
+#
+# ponytail: deliberately short and one-directional. The complete mapping only
+# exists in each distribution's installed metadata, which we do not have at
+# check time, so this is scored to avoid FALSE POSITIVES — an unrecognised
+# import is reported, and every entry here is a case observed in a generated
+# manifest. A missed one is a false negative the install rung still catches.
+IMPORT_TO_DISTRIBUTION = {
+    "jose": "python-jose", "jwt": "pyjwt", "multipart": "python-multipart",
+    "dotenv": "python-dotenv", "psycopg2": "psycopg2-binary",
+    "email_validator": "email-validator", "yaml": "pyyaml",
+    "sqlalchemy": "sqlalchemy", "dateutil": "python-dateutil",
+    "bs4": "beautifulsoup4", "PIL": "pillow", "cv2": "opencv-python",
+    "sklearn": "scikit-learn", "google": "google-api-python-client",
+    "attr": "attrs", "pkg_resources": "setuptools", "magic": "python-filetype",
+}
+
+
+def check_python_manifest(files: dict, manifest_path="backend/requirements.txt") -> dict:
+    """Two directions over requirements.txt: entries that are not installable,
+    and third-party imports that are not declared."""
+    manifest = (files or {}).get(manifest_path)
+    if manifest is None:
+        return {}
+
+    results = {}
+    declared = {}
+    for name, line in _requirement_names(manifest):
+        base = _normalise(name.split("[", 1)[0])
+        declared[base] = line
+        if base in _STDLIB:
+            results.setdefault(manifest_path, []).append(SyntaxIssue(
+                manifest_path, line=line, kind="manifest",
+                message=(f"'{name}' is a Python standard-library module, not a "
+                         f"PyPI package. `pip install -r {PurePosixPath(manifest_path).name}` "
+                         f"fails on this line, so nothing else installs. "
+                         f"Remove it — `import {name}` needs no dependency.")))
+
+    # Direction two: imported, never declared.
+    root = str(PurePosixPath(manifest_path).parent)
+    local = _local_python_roots(files, root)
+    seen = {}
+    for path, content in (files or {}).items():
+        if PurePosixPath(path).suffix.lower() not in PY_EXTS or not content:
+            continue
+        if root and not path.startswith(root + "/"):
+            continue
+        for module, line in _python_imports(content):
+            top = module.split(".", 1)[0]
+            if not top or top in _STDLIB or top in local:
+                continue
+            candidate = _normalise(IMPORT_TO_DISTRIBUTION.get(top, top))
+            if candidate in declared:
+                continue
+            seen.setdefault(top, (path, line))
+
+    for top, (path, line) in sorted(seen.items()):
+        results.setdefault(path, []).append(SyntaxIssue(
+            path, line=line, kind="manifest",
+            message=(f"imports '{top}', which is not declared in "
+                     f"{manifest_path}. It installs on a developer machine that "
+                     f"happens to have it and fails everywhere else.")))
+
+    _check_usage_dependencies(files, root, declared, manifest_path, results)
+    return results
+
+
+# Dependencies pulled in by USAGE, not by an import statement — so no amount of
+# import scanning finds them. All three were missing from the CRM manifest and
+# all three are in the hand-repaired one.
+#
+#   EmailStr                   pydantic imports email-validator to build it
+#   OAuth2PasswordRequestForm  fastapi needs python-multipart to parse the form
+#   passlib bcrypt handler     passlib[bcrypt] does not itself install bcrypt
+#
+# ponytail: three rules, not a framework model. Each is a symbol that appears
+# verbatim in the source and a distribution that must appear in the manifest.
+# The boot rung would also catch these, but only once egress works, and this
+# names the file, the line and the fix for free.
+USAGE_REQUIRES = (
+    ("EmailStr", "email-validator",
+     "pydantic validates EmailStr through email-validator"),
+    ("OAuth2PasswordRequestForm", "python-multipart",
+     "FastAPI parses form bodies through python-multipart"),
+    ("CryptContext", "bcrypt",
+     "passlib's bcrypt handler needs the bcrypt package at runtime"),
+)
+
+
+def _check_usage_dependencies(files, root, declared, manifest_path, results):
+    for symbol, distribution, why in USAGE_REQUIRES:
+        if _normalise(distribution) in declared:
+            continue
+        where = _first_use(files, root, symbol)
+        if where is None:
+            continue
+        path, line = where
+        results.setdefault(path, []).append(SyntaxIssue(
+            path, line=line, kind="manifest",
+            message=(f"uses {symbol}, so '{distribution}' must be in "
+                     f"{manifest_path} — {why}. Nothing imports it by name, so "
+                     f"this fails at runtime, not at install.")))
+
+
+def _first_use(files, root, symbol):
+    for path in sorted(files or {}):
+        if PurePosixPath(path).suffix.lower() not in PY_EXTS:
+            continue
+        if root and not path.startswith(root + "/"):
+            continue
+        for n, line in enumerate((files[path] or "").splitlines(), start=1):
+            if re.search(rf"\b{re.escape(symbol)}\b", line):
+                return path, n
+    return None
+
+
+_STDLIB = frozenset(getattr(sys, "stdlib_module_names", ())) | {
+    # sys.stdlib_module_names exists from 3.10. On an older interpreter the
+    # frozenset is empty, which would make the stdlib check silently do nothing
+    # — so the entries actually observed in generated manifests are named here
+    # as a floor, not as the list.
+    "csv", "json", "os", "sys", "datetime", "typing", "logging", "pathlib",
+    "sqlite3", "asyncio", "uuid", "hashlib", "secrets", "io", "re", "time",
+    "enum", "abc", "functools", "itertools", "collections", "dataclasses",
+    "subprocess", "tempfile", "shutil", "base64", "math", "random", "string",
+    "smtplib", "email", "http", "urllib", "socket", "threading", "decimal",
+}
+
+
+def _python_imports(content: str):
+    """(dotted module, line) for every import in a Python file."""
+    try:
+        tree = ast.parse(content)
+    except SyntaxError:
+        return
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                yield alias.name, node.lineno
+        elif isinstance(node, ast.ImportFrom):
+            # `from . import x` / `from .y import z` are relative — local by
+            # construction, never a distribution.
+            if node.level == 0 and node.module:
+                yield node.module, node.lineno
+
+
+def _local_python_roots(files: dict, root: str) -> set:
+    """Top-level package/module names that live in this project, so `app.core`
+    is never mistaken for a missing dependency."""
+    local = set()
+    prefix = (root + "/") if root else ""
+    for path in files or {}:
+        if not path.startswith(prefix):
+            continue
+        rest = path[len(prefix):]
+        head = rest.split("/", 1)[0]
+        if head.endswith(".py"):
+            local.add(head[:-3])
+        elif head and "." not in head:
+            local.add(head)
+    return local
